@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;padding:0;overflow:hidden}</style>
+</head>
+<body>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="0.55" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbe4ff"/>
+    </linearGradient>
+  </defs>
+  <!-- rounded-square app tile -->
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bg)"/>
+  <!-- subtle inner highlight -->
+  <rect x="32" y="32" width="960" height="480" rx="220" fill="#ffffff" opacity="0.06"/>
+  <!-- four-point spark -->
+  <path d="M512 220
+           C 542 400, 624 482, 804 512
+           C 624 542, 542 624, 512 804
+           C 482 624, 400 542, 220 512
+           C 400 482, 482 400, 512 220 Z"
+        fill="url(#spark)"/>
+  <!-- small satellite spark -->
+  <path d="M730 250
+           C 742 310, 770 338, 830 350
+           C 770 362, 742 390, 730 450
+           C 718 390, 690 362, 630 350
+           C 690 338, 718 310, 730 250 Z"
+        fill="#ffffff" opacity="0.85"/>
+</svg>
+</body>
+</html>

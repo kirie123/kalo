@@ -1,0 +1,11 @@
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Dependencies & build outputs (sub-project .gitignore files cover the rest)
+node_modules/
+dist/
+target/

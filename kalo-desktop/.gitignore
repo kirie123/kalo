@@ -1,0 +1,5 @@
+node_modules
+dist
+src-tauri/target
+# pi engine binaries are build artifacts; see README "Rebuilding the engine"
+src-tauri/binaries
