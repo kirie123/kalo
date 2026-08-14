@@ -1,7 +1,8 @@
 import hljs from "highlight.js";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { formatApiError } from "../lib/error-format";
 import type { AssistantMessage as AssistantMessageType } from "../types";
 import ThinkingBlock from "./ThinkingBlock";
 
@@ -73,10 +74,40 @@ export default function AssistantMessage({
         // toolCall blocks are rendered via ToolCallGroup (tool execution events)
         return null;
       })}
-      {failed && (
-        <div className="mt-2 rounded-md border border-[var(--error-border)] bg-[var(--error-bg)] px-3 py-2 text-sm text-[var(--danger)]">
-          {message.errorMessage}
-        </div>
+      {failed && <ErrorBanner raw={message.errorMessage!} />}
+    </div>
+  );
+}
+
+/** Clean one-line error summary with the raw payload expandable. */
+function ErrorBanner({ raw }: { raw: string }) {
+  const [open, setOpen] = useState(false);
+  const parsed = formatApiError(raw);
+  return (
+    <div className="mt-2 rounded-md border border-[var(--error-border)] bg-[var(--error-bg)] px-3 py-2 text-sm">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 text-left text-[var(--danger)]"
+      >
+        <span className="min-w-0 flex-1">{parsed.summary}</span>
+        {parsed.detail && (
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className={`shrink-0 opacity-60 transition-transform ${open ? "rotate-90" : ""}`}
+          >
+            <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
+      {open && parsed.detail && (
+        <pre className="mono mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-[var(--error-border)] bg-base p-2 text-xs text-dim">
+          {parsed.detail}
+        </pre>
       )}
     </div>
   );
