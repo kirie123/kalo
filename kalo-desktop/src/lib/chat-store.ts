@@ -501,6 +501,13 @@ export class ChatStore {
     this.set({ attachments: this.state.attachments.filter((a) => a.name !== name) });
   }
 
+  /** Add an image attachment directly (e.g. a clipboard paste). */
+  addImageAttachment(name: string, mimeType: string, dataBase64: string) {
+    this.set({
+      attachments: [...this.state.attachments, { kind: "image", name, mimeType, dataBase64 }],
+    });
+  }
+
   clearAttachments() {
     if (this.state.attachments.length > 0) this.set({ attachments: [] });
   }

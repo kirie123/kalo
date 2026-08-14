@@ -7,6 +7,8 @@ import ModelPicker from "./ModelPicker";
 
 const MAX_TEXTAREA_HEIGHT = 192; // ~8 lines
 
+let pastedImageCounter = 1;
+
 /** File types accepted by the attachment picker (images / office / text). */
 const ATTACHMENT_EXTENSIONS = [
   "png", "jpg", "jpeg", "gif", "webp", "bmp",
@@ -19,6 +21,7 @@ const ATTACHMENT_EXTENSIONS = [
 export default function InputBox() {
   const chat = useChatStore();
   const [text, setText] = useState("");
+  const [previewImage, setPreviewImage] = useState<{ name: string; mimeType: string; dataBase64: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-grow the textarea (1-8 lines).
@@ -48,6 +51,28 @@ export default function InputBox() {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
+    }
+  };
+
+  // Ctrl+V: turn pasted images into attachments.
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    const images = items.filter((it) => it.type.startsWith("image/"));
+    if (images.length === 0) return;
+    e.preventDefault();
+    for (const item of images) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result ?? "");
+        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+        if (base64) {
+          const ext = file.type.split("/")[1] || "png";
+          chatStore.addImageAttachment(`粘贴图片-${pastedImageCounter++}.${ext}`, file.type, base64);
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -88,7 +113,9 @@ export default function InputBox() {
                   <img
                     src={`data:${a.mimeType};base64,${a.dataBase64}`}
                     alt={a.name}
-                    className="h-6 w-6 rounded object-cover"
+                    title="点击查看大图"
+                    onClick={() => setPreviewImage(a)}
+                    className="h-6 w-6 cursor-zoom-in rounded object-cover"
                   />
                 )}
                 <span className="max-w-40 truncate">{a.name}</span>
@@ -110,8 +137,9 @@ export default function InputBox() {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           rows={1}
-          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : "输入消息，Enter 发送，Shift+Enter 换行"}
+          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : "输入消息，Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片"}
           className="max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm outline-none placeholder:text-dim"
         />
 
@@ -185,6 +213,28 @@ export default function InputBox() {
           </svg>
         </button>
       </div>
+
+      {/* Image lightbox */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div className="flex max-h-full max-w-full flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={`data:${previewImage.mimeType};base64,${previewImage.dataBase64}`}
+              alt={previewImage.name}
+              className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+            />
+            <div className="flex items-center gap-3 text-xs text-white/80">
+              <span>{previewImage.name}</span>
+              <button onClick={() => setPreviewImage(null)} className="rounded border border-white/30 px-2 py-0.5 hover:bg-white/10">
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
