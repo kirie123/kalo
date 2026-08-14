@@ -6,7 +6,7 @@ import ToolCallGroup from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
 
 export default function MessageList() {
-  const { timeline, history, loadingOlder } = useChatStore();
+  const { timeline, history, loadingOlder, isStreaming, isCompacting } = useChatStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stick to bottom unless the user scrolled up.
   const stickToBottom = useRef(true);
@@ -54,6 +54,17 @@ export default function MessageList() {
           {timeline.map((entry) => (
             <TimelineItem key={entry.id} entry={entry} />
           ))}
+          {/* Working indicator while the agent is running but nothing visible yet */}
+          {(isStreaming || isCompacting) && (
+            <div className="flex items-center gap-2 px-2 py-1 text-xs text-dim">
+              <span className="typing-dots">
+                <span />
+                <span />
+                <span />
+              </span>
+              {isCompacting ? "正在压缩上下文" : "正在运行"}
+            </div>
+          )}
         </div>
       </div>
 
