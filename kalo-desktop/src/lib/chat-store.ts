@@ -152,6 +152,11 @@ const initialState: ChatState = {
   isCompacting: false,
   models: [],
   customModels: [],
+  // Preload the last used model so the picker shows it before any session.
+  currentModel: (() => {
+    const s = loadLastModel();
+    return s ? ({ id: s.modelId, name: s.name || s.modelId, provider: s.provider } as ModelInfo) : undefined;
+  })(),
   thinkingLevel: "medium",
   thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
   steeringMode: "one-at-a-time",
@@ -168,6 +173,30 @@ let toastCounter = 1;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// ============================================================================
+// Last-used model persistence (survives new chats and app restarts)
+// ============================================================================
+
+const LAST_MODEL_KEY = "kalo.lastModel";
+interface SavedModel {
+  provider: string;
+  modelId: string;
+  name?: string;
+}
+
+function loadLastModel(): SavedModel | null {
+  try {
+    const raw = localStorage.getItem(LAST_MODEL_KEY);
+    return raw ? (JSON.parse(raw) as SavedModel) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastModel(m: SavedModel) {
+  localStorage.setItem(LAST_MODEL_KEY, JSON.stringify(m));
 }
 
 // ============================================================================
@@ -350,6 +379,7 @@ export class ChatStore {
       localStorage.setItem("kalo.lastCwd", cwd);
       await this.waitForEngine(sid);
       await this.fetchSessionMeta(sid);
+      await this.applySavedModel();
       return sid;
     })().finally(() => {
       this.sessionInit = null;
@@ -606,6 +636,7 @@ export class ChatStore {
       const resp = await sendCommand(sid, { type: "set_model", provider, modelId });
       if (resp.success) {
         this.set({ currentModel: resp.data as ModelInfo });
+        saveLastModel({ provider, modelId, name: (resp.data as ModelInfo)?.name });
         return;
       }
       // The running engine reads models.json at spawn, so a provider added
@@ -621,6 +652,7 @@ export class ChatStore {
         const retry = await sendCommand(sid2, { type: "set_model", provider, modelId });
         if (retry.success) {
           this.set({ currentModel: retry.data as ModelInfo });
+          saveLastModel({ provider, modelId, name: (retry.data as ModelInfo)?.name });
           return;
         }
         this.pushToast(`切换模型失败：${retry.error}`, "error");
@@ -629,6 +661,21 @@ export class ChatStore {
       this.pushToast(`切换模型失败：${resp.error}（新添加的模型需开新对话生效）`, "error");
     } catch (err) {
       this.pushToast(`切换模型失败：${errText(err)}`, "error");
+    }
+  }
+
+  /** Re-apply the last used model to a freshly spawned engine (best-effort). */
+  private async applySavedModel() {
+    const saved = loadLastModel();
+    const sid = this.state.sessionId;
+    if (!saved || !sid) return;
+    const cur = this.state.currentModel;
+    if (cur?.provider === saved.provider && cur?.id === saved.modelId) return;
+    try {
+      const resp = await sendCommand(sid, { type: "set_model", provider: saved.provider, modelId: saved.modelId });
+      if (resp.success) this.set({ currentModel: resp.data as ModelInfo });
+    } catch {
+      // Saved model no longer available — keep the engine default.
     }
   }
 
@@ -648,6 +695,7 @@ export class ChatStore {
     this.attachSession(sid, cwd);
     await this.waitForEngine(sid);
     await this.fetchSessionMeta(sid);
+    await this.applySavedModel();
   }
 
   async cycleThinkingLevel() {
