@@ -90,12 +90,12 @@ pub fn list_sessions() -> Result<Vec<ProjectGroup>, String> {
     Ok(out)
 }
 
-/// `%USERPROFILE%/.pi/agent/sessions` (`HOME` as a fallback).
+/// `%USERPROFILE%/.kalo/agent/sessions` (`HOME` as a fallback).
 fn sessions_root() -> Option<PathBuf> {
     let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
     Some(
         PathBuf::from(home)
-            .join(".pi")
+            .join(".kalo")
             .join("agent")
             .join("sessions"),
     )

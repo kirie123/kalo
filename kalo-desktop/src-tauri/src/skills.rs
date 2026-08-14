@@ -23,12 +23,12 @@ pub struct SkillMeta {
     pub is_dir: bool,
 }
 
-/// `~/.pi/agent/skills` (`USERPROFILE`, then `HOME`).
+/// `~/.kalo/agent/skills` (`USERPROFILE`, then `HOME`).
 fn user_skills_root() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".pi").join("agent").join("skills"))
+    Ok(PathBuf::from(home).join(".kalo").join("agent").join("skills"))
 }
 
 fn project_skills_root(cwd: &str) -> PathBuf {

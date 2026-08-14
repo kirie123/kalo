@@ -97,7 +97,7 @@ export default function SettingsPage({ theme, onThemeChange, onBack }: SettingsP
 
         <Section title="会话存储">
           <p className="text-sm leading-relaxed text-dim">
-            会话历史保存在本地目录 <code className="md-inline-code">~/.pi/agent/sessions/</code>
+            会话历史保存在本地目录 <code className="md-inline-code">~/.kalo/agent/sessions/</code>
             ，按项目工作目录分组。删除该目录下的文件会移除对应的历史会话。
           </p>
         </Section>
@@ -212,8 +212,8 @@ function ModelSettings() {
         ))}
       </div>
       <p className="mt-3 text-xs leading-relaxed text-dim">
-        配置写入 <code className="md-inline-code">~/.pi/agent/models.json</code> 与{" "}
-        <code className="md-inline-code">~/.pi/agent/auth.json</code>，对新开的对话生效。
+        配置写入 <code className="md-inline-code">~/.kalo/agent/models.json</code> 与{" "}
+        <code className="md-inline-code">~/.kalo/agent/auth.json</code>，对新开的对话生效。
       </p>
 
       {showEditor && (

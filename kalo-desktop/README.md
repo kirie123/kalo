@@ -1,6 +1,6 @@
 # Kalo
 
-基于 [pi](../kalo-harness) 引擎（`pi --mode rpc`，NDJSON over stdin/stdout）的 Tauri v2 桌面端。
+基于 [pi agent](https://github.com/earendil-works/pi) 引擎（`pi --mode rpc`，NDJSON over stdin/stdout）的 Tauri v2 桌面端。
 
 ## 结构
 

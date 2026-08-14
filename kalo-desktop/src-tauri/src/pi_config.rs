@@ -10,7 +10,7 @@ fn agent_dir() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".pi").join("agent"))
+    Ok(PathBuf::from(home).join(".kalo").join("agent"))
 }
 
 fn read_json_file(path: &PathBuf, fallback: &str) -> Result<serde_json::Value, String> {
