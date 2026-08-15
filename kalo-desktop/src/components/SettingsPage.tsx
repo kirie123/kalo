@@ -10,6 +10,7 @@ import {
   writeModelsConfig,
 } from "../lib/pi-bridge";
 import type { AuthConfig, ModelsConfig, ProviderConfig, SkillMeta } from "../types";
+import GatewaySettings from "./GatewaySettings";
 import MemorySettings from "./MemorySettings";
 import ProviderEditModal from "./ProviderEditModal";
 import SkillEditModal from "./SkillEditModal";
@@ -41,77 +42,135 @@ const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
   { value: "dark", label: "深色" },
 ];
 
-/** Common built-in providers that authenticate with a plain API key. */
-const BUILTIN_KEY_PROVIDERS: Array<{ id: string; label: string }> = [
-  { id: "deepseek", label: "DeepSeek" },
-  { id: "anthropic", label: "Anthropic" },
-  { id: "openai", label: "OpenAI" },
-  { id: "google", label: "Google Gemini" },
-  { id: "kimi-coding", label: "Kimi For Coding" },
-  { id: "minimax-cn", label: "MiniMax（中国）" },
-  { id: "zai-coding-cn", label: "ZAI Coding Plan（中国）" },
-  { id: "qwen-token-plan-cn", label: "Qwen Token Plan（中国）" },
-  { id: "openrouter", label: "OpenRouter" },
+/** Left navigation tabs; the key is persisted across visits. */
+type SettingsTab = "models" | "skills" | "memory" | "appearance" | "gateway" | "about";
+
+const TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: "models", label: "模型" },
+  { id: "skills", label: "Skills" },
+  { id: "memory", label: "记忆" },
+  { id: "appearance", label: "外观" },
+  { id: "gateway", label: "IM 网关" },
+  { id: "about", label: "关于" },
 ];
 
+const TAB_KEY = "kalo.settings.tab";
+
+function loadTab(): SettingsTab {
+  const v = localStorage.getItem(TAB_KEY);
+  return TABS.some((t) => t.id === v) ? (v as SettingsTab) : "models";
+}
+
 export default function SettingsPage({ theme, onThemeChange, onBack }: SettingsPageProps) {
+  const [tab, setTab] = useState<SettingsTab>(() => loadTab());
+
+  const selectTab = (id: SettingsTab) => {
+    setTab(id);
+    localStorage.setItem(TAB_KEY, id);
+  };
+
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-2xl px-6 py-6">
-        <div className="mb-6 flex items-center gap-3">
-          <button onClick={onBack} className="rounded-md p-1.5 text-dim hover:bg-card hover:text-ink" title="返回">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <div className="flex min-h-0 flex-1">
+      {/* Left: tab navigation with the back button pinned to the bottom. */}
+      <aside className="flex w-48 shrink-0 flex-col border-r border-edge bg-card/40">
+        <div className="px-4 pb-1 pt-4 text-xs font-medium uppercase tracking-wider text-dim">设置</div>
+        <nav className="flex flex-col gap-0.5 px-2 py-2">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => selectTab(t.id)}
+              className={`rounded-md px-3 py-1.5 text-left text-sm ${
+                tab === t.id ? "bg-base font-medium text-ink" : "text-dim hover:bg-base/60 hover:text-ink"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto border-t border-edge p-2">
+          <button
+            onClick={onBack}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm text-dim hover:bg-base hover:text-ink"
+            title="返回主页面"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
+            返回主页
           </button>
-          <h1 className="text-lg font-semibold">设置</h1>
         </div>
+      </aside>
 
-        <ModelSettings />
-
-        <SkillsSettings />
-
-        <MemorySettings />
-
-        <Section title="外观">
-          <div className="flex gap-2">
-            {THEME_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => onThemeChange(opt.value)}
-                className={`rounded-md border px-3 py-1.5 text-sm ${
-                  theme === opt.value
-                    ? "border-dim bg-base text-ink"
-                    : "border-edge text-dim hover:text-ink"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="引擎">
-          <p className="text-sm leading-relaxed text-dim">
-            Kalo 通过内置的 pi 引擎子进程运行，前端与引擎之间使用 NDJSON RPC 协议通信（由 Tauri
-            后端负责进程管理）。引擎可执行文件随应用一并打包，无需额外安装。
-          </p>
-        </Section>
-
-        <Section title="会话存储">
-          <p className="text-sm leading-relaxed text-dim">
-            会话历史保存在本地目录 <code className="md-inline-code">~/.kalo/agent/sessions/</code>
-            ，按项目工作目录分组。删除该目录下的文件会移除对应的历史会话。
-          </p>
-        </Section>
-
-        <Section title="关于">
-          <p className="text-sm text-dim">
-            Kalo <span className="mono">v0.1.0</span> — AI coding agent 桌面客户端。
-          </p>
-        </Section>
+      {/* Right: the active tab's panel. */}
+      <div className="min-w-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl px-6 py-6">
+          {tab === "models" && <ModelSettings />}
+          {tab === "skills" && <SkillsSettings />}
+          {tab === "memory" && <MemorySettings />}
+          {tab === "appearance" && <AppearanceSettings theme={theme} onThemeChange={onThemeChange} />}
+          {tab === "gateway" && <GatewaySettings />}
+          {tab === "about" && <AboutSettings />}
+        </div>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// Appearance tab
+// ============================================================================
+
+function AppearanceSettings({ theme, onThemeChange }: { theme: ThemePref; onThemeChange: (t: ThemePref) => void }) {
+  return (
+    <>
+      <Section title="外观">
+        <div className="flex gap-2">
+          {THEME_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => onThemeChange(opt.value)}
+              className={`rounded-md border px-3 py-1.5 text-sm ${
+                theme === opt.value
+                  ? "border-dim bg-base text-ink"
+                  : "border-edge text-dim hover:text-ink"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </Section>
+    </>
+  );
+}
+
+// ============================================================================
+// About tab
+// ============================================================================
+
+function AboutSettings() {
+  return (
+    <>
+      <Section title="引擎">
+        <p className="text-sm leading-relaxed text-dim">
+          Kalo 通过内置的 pi 引擎子进程运行，前端与引擎之间使用 NDJSON RPC 协议通信（由 Tauri
+          后端负责进程管理）。引擎可执行文件随应用一并打包，无需额外安装。
+        </p>
+      </Section>
+
+      <Section title="会话存储">
+        <p className="text-sm leading-relaxed text-dim">
+          会话历史保存在本地目录 <code className="md-inline-code">~/.kalo/agent/sessions/</code>
+          ，按项目工作目录分组。删除该目录下的文件会移除对应的历史会话。
+        </p>
+      </Section>
+
+      <Section title="关于">
+        <p className="text-sm text-dim">
+          Kalo <span className="mono">v0.1.0</span> — AI coding agent 桌面客户端。
+        </p>
+      </Section>
+    </>
   );
 }
 
@@ -159,7 +218,7 @@ function ModelSettings() {
       {/* Custom providers from models.json */}
       <div className="mb-2 text-xs font-medium text-dim">自定义 Provider</div>
       {providers.length === 0 && (
-        <p className="mb-2 text-xs text-dim">尚未配置。点击下方"添加模型"接入中转或本地模型服务。</p>
+        <p className="mb-2 text-xs text-dim">尚未配置。点击下方"添加模型"接入中转或本地模型服务（Ollama / LM Studio 等）。</p>
       )}
       <div className="flex flex-col gap-1.5">
         {providers.map(([id, cfg]) => (
@@ -231,6 +290,19 @@ function ModelSettings() {
     </Section>
   );
 }
+
+/** Common built-in providers that authenticate with a plain API key. */
+const BUILTIN_KEY_PROVIDERS: Array<{ id: string; label: string }> = [
+  { id: "deepseek", label: "DeepSeek" },
+  { id: "anthropic", label: "Anthropic" },
+  { id: "openai", label: "OpenAI" },
+  { id: "google", label: "Google Gemini" },
+  { id: "kimi-coding", label: "Kimi For Coding" },
+  { id: "minimax-cn", label: "MiniMax（中国）" },
+  { id: "zai-coding-cn", label: "ZAI Coding Plan（中国）" },
+  { id: "qwen-token-plan-cn", label: "Qwen Token Plan（中国）" },
+  { id: "openrouter", label: "OpenRouter" },
+];
 
 function BuiltinKeyRow({
   id,

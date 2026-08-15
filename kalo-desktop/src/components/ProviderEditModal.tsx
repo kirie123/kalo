@@ -16,6 +16,50 @@ export interface ProviderEditTarget {
   config: ProviderConfig;
 }
 
+/**
+ * Local services (Ollama, LM Studio, llama.cpp, …) accept any bearer token.
+ * The engine refuses set_model when a provider has no key configured, so an
+ * empty key is persisted as this placeholder instead.
+ */
+const LOCAL_KEY_PLACEHOLDER = "anonymous";
+
+/**
+ * Normalize a provider base URL:
+ * - trim whitespace and trailing slashes,
+ * - for OpenAI-compatible APIs on a bare localhost host (no path), append
+ *   `/v1` — Ollama/LM Studio users usually paste `http://localhost:11434`.
+ */
+function normalizeBaseUrl(raw: string, api: ProviderApi): string {
+  let url = raw.trim().replace(/\/+$/, "");
+  if (api === "openai-completions" || api === "openai-responses") {
+    const m = url.match(/^(https?:\/\/[^/]+)$/i);
+    if (m && /localhost|127\.0\.0\.1|\[::1\]/i.test(m[1])) url += "/v1";
+  }
+  return url;
+}
+
+/** Quick-fill presets for common local model services. */
+const PRESETS: Array<{ label: string; apply: () => Partial<Record<string, string>> }> = [
+  {
+    label: "Ollama",
+    apply: () => ({
+      name: "ollama",
+      api: "openai-completions",
+      baseUrl: "http://localhost:11434/v1",
+      apiKey: LOCAL_KEY_PLACEHOLDER,
+    }),
+  },
+  {
+    label: "LM Studio",
+    apply: () => ({
+      name: "lmstudio",
+      api: "openai-completions",
+      baseUrl: "http://localhost:1234/v1",
+      apiKey: LOCAL_KEY_PLACEHOLDER,
+    }),
+  },
+];
+
 interface Props {
   /** Pre-filled values when editing an existing provider. */
   editing?: ProviderEditTarget;
@@ -69,9 +113,11 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
       if (noReasoningEffort) compat.supportsReasoningEffort = false;
 
       providers[name.trim()] = {
-        baseUrl: baseUrl.trim(),
+        baseUrl: normalizeBaseUrl(baseUrl, api),
         api,
-        ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        // The engine treats a provider without any key as unauthenticated and
+        // refuses set_model, so always persist one; local services ignore it.
+        apiKey: apiKey.trim() || LOCAL_KEY_PLACEHOLDER,
         ...(Object.keys(compat).length > 0 ? { compat } : {}),
         models: modelLines
           .split("\n")
@@ -108,6 +154,27 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
       >
         <h3 className="mb-4 text-base font-semibold">{isEdit ? "编辑模型" : "添加模型"}</h3>
 
+        {!isEdit && (
+          <div className="mb-3 flex items-center gap-2">
+            <span className="text-xs text-dim">快速填充：</span>
+            {PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => {
+                  const v = p.apply();
+                  if (v.name !== undefined) setName(v.name);
+                  if (v.api !== undefined) setApi(v.api as ProviderApi);
+                  if (v.baseUrl !== undefined) setBaseUrl(v.baseUrl);
+                  if (v.apiKey !== undefined) setApiKey(v.apiKey);
+                }}
+                className="rounded-md border border-edge px-2.5 py-1 text-xs text-dim hover:text-ink"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <Field label="Provider 名称" hint="唯一标识，如 my-relay、ollama">
             <input
@@ -133,7 +200,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
             </select>
           </Field>
 
-          <Field label="Base URL" hint="如 https://api.example.com/v1">
+          <Field label="Base URL" hint="Ollama 填 http://localhost:11434/v1">
             <input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
@@ -142,7 +209,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
             />
           </Field>
 
-          <Field label="API Key" hint="可留空（如本地 Ollama）">
+          <Field label="API Key" hint="本地服务会自动填占位 Key，可任意填">
             <input
               type="password"
               value={apiKey}

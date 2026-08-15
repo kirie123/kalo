@@ -26,6 +26,7 @@
     "targets": ["nsis"],
     "resources": [
       "binaries/pi-x86_64-pc-windows-msvc.exe",
+      "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe",
       "binaries/photon_rs_bg.wasm",
       "binaries/package.json",
       "binaries/theme",

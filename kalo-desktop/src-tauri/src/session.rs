@@ -159,9 +159,12 @@ impl PiProcess {
             }
         });
 
-        // stdout reader: frame NDJSON and emit each object to the frontend.
+        // stdout reader: frame NDJSON and emit each object to the frontend,
+        // and forward the same line to the IM gateway when one is running.
         {
             let event_name = format!("pi-event:{session_id}");
+            let session_id = session_id.to_string();
+            let cwd = cwd.to_string();
             let app = app.clone();
             thread::spawn(move || {
                 let mut framer = NdjsonFramer::new();
@@ -172,6 +175,7 @@ impl PiProcess {
                         Ok(n) => {
                             for line in framer.push(&chunk[..n]) {
                                 emit_json_line(&app, &event_name, &line);
+                                forward_to_gateway(&app, &session_id, &cwd, &line);
                             }
                         }
                         Err(e) => {
@@ -182,6 +186,7 @@ impl PiProcess {
                 }
                 if let Some(line) = framer.finish() {
                     emit_json_line(&app, &event_name, &line);
+                    forward_to_gateway(&app, &session_id, &cwd, &line);
                 }
             });
         }
@@ -221,6 +226,7 @@ impl PiProcess {
         // exit watcher: report the exit code once the child terminates.
         {
             let event_name = format!("pi-exit:{session_id}");
+            let session_id = session_id.to_string();
             let child = Arc::clone(&child);
             thread::spawn(move || {
                 let code = match child.lock() {
@@ -239,6 +245,7 @@ impl PiProcess {
                 if let Err(e) = app.emit(&event_name, serde_json::json!({ "code": code })) {
                     eprintln!("[kalo] emit {event_name} failed: {e}");
                 }
+                crate::gateway::forward_engine_exit(&app, &session_id, code);
             });
         }
 
@@ -275,6 +282,18 @@ fn emit_json_line(app: &AppHandle, event_name: &str, line: &str) {
             }
         }
         Err(e) => eprintln!("[kalo] non-JSON line from pi stdout ({e}): {line}"),
+    }
+}
+
+/// Forward one engine stdout line to the IM gateway sidecar. Parsing is
+/// skipped entirely when no gateway is running (the common case).
+fn forward_to_gateway(app: &AppHandle, session_id: &str, cwd: &str, line: &str) {
+    use tauri::Manager;
+    if app.try_state::<crate::gateway::GatewayManager>().is_none() {
+        return;
+    }
+    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
+        crate::gateway::forward_engine_event(app, session_id, cwd, &payload);
     }
 }
 
