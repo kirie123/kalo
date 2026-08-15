@@ -168,6 +168,12 @@ fn resolve_pi_path() -> Result<PathBuf, String> {
 pub struct PiProcess {
     child: Arc<Mutex<Child>>,
     stdin_tx: mpsc::Sender<String>,
+    /// Working directory the engine was spawned in (job center display).
+    pub cwd: String,
+    /// Who spawned this session: "desktop" (user UI) or "gateway" (scheduled task).
+    pub source: String,
+    /// ISO-ish start timestamp (job center display).
+    pub started_at: String,
 }
 
 impl PiProcess {
@@ -307,7 +313,16 @@ impl PiProcess {
             });
         }
 
-        Ok(Self { child, stdin_tx })
+        Ok(Self {
+            child,
+            stdin_tx,
+            cwd: cwd.to_string(),
+            source: "desktop".to_string(),
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default(),
+        })
     }
 
     /// Queue one NDJSON line for the child's stdin.

@@ -69,6 +69,19 @@ struct GatewayInner {
     schedules: Vec<serde_json::Value>,
 }
 
+impl GatewayInner {
+    fn take_schedules(&self) -> Vec<serde_json::Value> {
+        self.schedules.clone()
+    }
+}
+
+impl GatewayManager {
+    /// Latest scheduler snapshot for the job center (P1-B).
+    pub fn schedules_snapshot(&self) -> Vec<serde_json::Value> {
+        self.lock().take_schedules()
+    }
+}
+
 impl Default for GatewayInner {
     fn default() -> Self {
         Self {
@@ -462,13 +475,14 @@ fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
     }
 
     let session_id = crate::gen_session_id();
-    let process = match PiProcess::spawn(&session_id, &cwd, app.clone()) {
+    let mut process = match PiProcess::spawn(&session_id, &cwd, app.clone()) {
         Ok(p) => p,
         Err(e) => {
             report_failure(e);
             return;
         }
     };
+    process.source = "gateway".to_string();
     {
         let sessions = app.state::<SessionManager>();
         let Ok(mut map) = sessions.sessions.lock() else {

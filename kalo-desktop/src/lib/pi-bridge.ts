@@ -14,6 +14,8 @@
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   schedule_list / schedule_upsert / schedule_remove / schedule_run
  *   list_knowledge_cards / read_knowledge_card / write_knowledge_card / delete_knowledge_card
+ *   read_mcp_config / write_mcp_config / read_mcp_status
+ *   jobs_list {} -> JobsSnapshot
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   read_attachment { path } -> AttachmentDraft (image base64 or text)
@@ -37,7 +39,10 @@ import type {
   FileMatch,
   FileTextContent,
   GatewayStatus,
+  JobsSnapshot,
   KnowledgeCardMeta,
+  McpConfig,
+  McpStatus,
   MemoryEntry,
   MemoryMeta,
   ModelsConfig,
@@ -248,6 +253,32 @@ export function onScheduleStatus(cb: (tasks: ScheduleTaskInfo[]) => void) {
 /** Subscribe to `schedule-error` (async validation failures of schedule_upsert). */
 export function onScheduleError(cb: (message: string) => void) {
   return listen<string>("schedule-error", (e) => cb(e.payload));
+}
+
+// ============================================================================
+// MCP servers (~/.kalo/agent/mcp.json + engine-written status)
+// ============================================================================
+
+export function readMcpConfig(): Promise<McpConfig> {
+  return invoke<McpConfig>("read_mcp_config", {});
+}
+
+export function writeMcpConfig(config: McpConfig): Promise<void> {
+  return invoke<void>("write_mcp_config", { config });
+}
+
+/** Engine handshake mirror; empty servers until a session has run. */
+export function readMcpStatus(): Promise<McpStatus> {
+  return invoke<McpStatus>("read_mcp_status", {});
+}
+
+// ============================================================================
+// Job center (P1-B)
+// ============================================================================
+
+/** Running engine sessions + latest gateway task snapshot. */
+export function jobsList(): Promise<JobsSnapshot> {
+  return invoke<JobsSnapshot>("jobs_list", {});
 }
 
 // ============================================================================

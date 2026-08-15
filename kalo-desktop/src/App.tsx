@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView";
 import EmptyState from "./components/EmptyState";
 import FilePanel from "./components/FilePanel";
+import JobsCenter from "./components/JobsCenter";
 import SettingsPage, { applyTheme, loadTheme, type ThemePref } from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
 import { listSessions, deleteSession, closeSession } from "./lib/pi-bridge";
@@ -104,18 +105,21 @@ export default function App() {
               <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
                 {chat.cwd || "未选择目录"}
               </span>
-              <button
-                onClick={() => setPanelOpen((v) => !v)}
-                title="文件面板"
-                className={`shrink-0 rounded-md p-1.5 hover:bg-card ${
-                  panelOpen ? "text-ink" : "text-dim hover:text-ink"
-                }`}
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-                  <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                  <path d="M9.5 3v10" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-1">
+                <JobsCenter />
+                <button
+                  onClick={() => setPanelOpen((v) => !v)}
+                  title="文件面板"
+                  className={`shrink-0 rounded-md p-1.5 hover:bg-card ${
+                    panelOpen ? "text-ink" : "text-dim hover:text-ink"
+                  }`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+                    <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                    <path d="M9.5 3v10" />
+                  </svg>
+                </button>
+              </div>
             </header>
 
             <div className="flex min-h-0 flex-1">

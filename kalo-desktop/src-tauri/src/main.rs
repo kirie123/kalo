@@ -8,6 +8,7 @@
 mod files;
 mod gateway;
 mod knowledge;
+mod mcp;
 mod memory;
 mod session;
 mod session_paging;
@@ -66,6 +67,47 @@ fn close_session(session_id: String, state: State<SessionManager>) -> Result<(),
 #[tauri::command]
 fn list_sessions() -> Result<Vec<ProjectGroup>, String> {
     sessions_store::list_sessions()
+}
+
+/// Job center snapshot (P1-B): running engine sessions plus the gateway's
+/// scheduled-task table, unified into one list for the top-bar panel.
+#[tauri::command]
+fn jobs_list(
+    state: State<SessionManager>,
+    gateway: State<GatewayManager>,
+) -> Result<serde_json::Value, String> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RunningSession {
+        id: String,
+        kind: &'static str,
+        name: String,
+        source: String,
+        cwd: String,
+        state: &'static str,
+        started_at: String,
+    }
+
+    let mut running: Vec<RunningSession> = Vec::new();
+    {
+        let sessions = lock_sessions(&state)?;
+        for (id, process) in sessions.iter() {
+            running.push(RunningSession {
+                id: id.clone(),
+                kind: "session",
+                name: format!("{} 会话", if process.source == "gateway" { "定时" } else { "桌面" }),
+                source: process.source.clone(),
+                cwd: process.cwd.clone(),
+                state: "running",
+                started_at: process.started_at.clone(),
+            });
+        }
+    }
+
+    let tasks = gateway.schedules_snapshot();
+    Ok(serde_json::json!({ "running": running, "tasks": tasks }))
 }
 
 /// Delete one historical session file (guarded to the sessions root).
@@ -382,6 +424,10 @@ fn main() {
             read_knowledge_card,
             write_knowledge_card,
             delete_knowledge_card,
+            mcp::read_mcp_config,
+            mcp::write_mcp_config,
+            mcp::read_mcp_status,
+            jobs_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Kalo");

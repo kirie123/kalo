@@ -493,3 +493,55 @@ export interface KnowledgeCardMeta {
   /** Absolute path. */
   path: string;
 }
+
+// ============================================================================
+// MCP servers (~/.kalo/agent/mcp.json, engine-side stdio clients)
+// ============================================================================
+
+/** One MCP server definition; enabled defaults to true. */
+export interface McpServerDef {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
+
+/** Shape of mcp.json: { servers: { [name]: McpServerDef } }. */
+export interface McpConfig {
+  servers: Record<string, McpServerDef>;
+}
+
+/** Engine-written handshake result per server (mcp-status.json). */
+export interface McpServerStatus {
+  ok: boolean;
+  tools: Array<{ name: string; description?: string }>;
+  error?: string;
+}
+
+export interface McpStatus {
+  servers: Record<string, McpServerStatus>;
+  updatedAt: string | null;
+}
+
+// ============================================================================
+// Job center (P1-B: running sessions + gateway task table)
+// ============================================================================
+
+/** One running engine session in the job center. */
+export interface RunningJobSession {
+  id: string;
+  kind: "session";
+  name: string;
+  /** desktop | gateway */
+  source: string;
+  cwd: string;
+  state: "running";
+  /** Unix seconds (string) — engine spawn time. */
+  startedAt: string;
+}
+
+/** jobs_list payload: live sessions plus the latest task snapshot. */
+export interface JobsSnapshot {
+  running: RunningJobSession[];
+  tasks: ScheduleTaskInfo[];
+}
