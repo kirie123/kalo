@@ -1,7 +1,7 @@
 //! Skill management for pi Agent Skills.
 //!
 //! Skills live in two scopes:
-//! - user (global): `~/.kalo/agent/skills/`
+//! - user (global): `~/.kalo/skills/`
 //! - project: `<cwd>/.kalo/skills/`
 //!
 //! Each skills root holds single-file skills (`<root>/<name>.md`) and
@@ -23,12 +23,12 @@ pub struct SkillMeta {
     pub is_dir: bool,
 }
 
-/// `~/.kalo/agent/skills` (`USERPROFILE`, then `HOME`).
+/// `~/.kalo/skills` (`USERPROFILE`, then `HOME`).
 fn user_skills_root() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("agent").join("skills"))
+    Ok(PathBuf::from(home).join(".kalo").join("skills"))
 }
 
 fn project_skills_root(cwd: &str) -> PathBuf {

@@ -24,17 +24,17 @@ Pi implements the [Agent Skills standard](https://agentskills.io/specification),
 Pi loads skills from:
 
 - Global:
-  - `~/.pi/agent/skills/`
+  - `~/.kalo/skills/`
   - `~/.agents/skills/`
 - Project (only after the project is trusted):
-  - `.pi/skills/`
+  - `.kalo/skills/`
   - `.agents/skills/` in `cwd` and ancestor directories (up to git repo root, or filesystem root when not in a repo)
 - Packages: `skills/` directories or `pi.skills` entries in `package.json`
 - Settings: `skills` array with files or directories
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
 
 Discovery rules:
-- In `~/.pi/agent/skills/` and `.pi/skills/`, direct root `.md` files are discovered as individual skills
+- In `~/.kalo/skills/` and `.kalo/skills/`, direct root `.md` files are discovered as individual skills
 - In all skill locations, directories containing `SKILL.md` are discovered recursively
 - In `~/.agents/skills/` and project `.agents/skills/`, root `.md` files are ignored
 
@@ -53,7 +53,7 @@ To use skills from Claude Code or OpenAI Codex, add their directories to setting
 }
 ```
 
-For project-level Claude Code skills, add to `.pi/settings.json`:
+For project-level Claude Code skills, add to `.kalo/settings.json`:
 
 ```json
 {
@@ -65,10 +65,12 @@ For project-level Claude Code skills, add to `.pi/settings.json`:
 
 1. At startup, pi scans skill locations and extracts names and descriptions
 2. The system prompt includes available skills in XML format per the [specification](https://agentskills.io/integrate-skills)
-3. When a task matches, the agent uses `read` to load the full SKILL.md (models don't always do this; use prompting or `/skill:name` to force it)
+3. When a task matches, the agent uses the `use_skill` tool to load the full SKILL.md by name (models don't always do this; use prompting or `/skill:name` to force it)
 4. The agent follows the instructions, using relative paths to reference scripts and assets
 
 This is progressive disclosure: only descriptions are always in context, full instructions load on-demand.
+
+The user and project skill directories are watched during a session; added, edited, or removed skills are re-scanned automatically and apply from the next turn.
 
 ## Skill Commands
 

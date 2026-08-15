@@ -2362,7 +2362,7 @@ export class DefaultPackageManager implements PackageManager {
 
 		const userDirs = {
 			extensions: join(globalBaseDir, "extensions"),
-			skills: join(globalBaseDir, "skills"),
+			skills: resolve(globalBaseDir, "..", "skills"),
 			prompts: join(globalBaseDir, "prompts"),
 			themes: join(globalBaseDir, "themes"),
 		};
@@ -2454,13 +2454,19 @@ export class DefaultPackageManager implements PackageManager {
 			globalBaseDir,
 		);
 
-		// User skills from ~/.pi/agent/
+		// User skills from ~/.kalo/skills/ (sibling of the agent dir; override
+		// base is its parent so "skills/<name>" resolves correctly)
+		const userSkillsBaseDir = dirname(userDirs.skills);
+		const userSkillsMetadata: PathMetadata = {
+			...userMetadata,
+			baseDir: userSkillsBaseDir,
+		};
 		addResources(
 			"skills",
 			collectAutoSkillEntries(userDirs.skills, "pi"),
-			userMetadata,
+			userSkillsMetadata,
 			userOverrides.skills,
-			globalBaseDir,
+			userSkillsBaseDir,
 		);
 
 		// User skills from ~/.agents/ (with its own baseDir)

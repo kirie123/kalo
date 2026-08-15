@@ -809,7 +809,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		const normalizedPath = resolve(filePath);
 		const agentRoots = [
-			join(this.agentDir, "skills"),
+			resolve(this.agentDir, "..", "skills"),
 			join(this.agentDir, "prompts"),
 			join(this.agentDir, "themes"),
 			join(this.agentDir, "extensions"),

@@ -3,7 +3,7 @@
  *
  * - Registers a `use_skill` tool so the model loads skill instructions by
  *   name instead of resolving file paths through the read tool.
- * - Watches the user (~/.kalo/agent/skills) and project (<cwd>/.kalo/skills)
+ * - Watches the user (~/.kalo/skills) and project (<cwd>/.kalo/skills)
  *   skill directories; on change it re-scans and the next agent turn's
  *   system prompt gets a fresh <available_skills> catalog.
  *
@@ -15,7 +15,7 @@
  */
 
 import { existsSync, type FSWatcher, readdirSync, readFileSync, watch } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Type } from "typebox";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
@@ -41,7 +41,7 @@ export default function skillExtension(pi: ExtensionAPI): void {
 	let lastCtx: ExtensionContext | undefined;
 
 	function skillDirs(): string[] {
-		return [join(getAgentDir(), "skills"), join(cwd, CONFIG_DIR_NAME, "skills")];
+		return [resolve(getAgentDir(), "..", "skills"), join(cwd, CONFIG_DIR_NAME, "skills")];
 	}
 
 	function rescan(): void {

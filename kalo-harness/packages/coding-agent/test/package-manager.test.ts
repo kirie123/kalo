@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.ts";
@@ -123,7 +123,7 @@ describe("DefaultPackageManager", () => {
 		});
 
 		it("should resolve skill paths from settings", async () => {
-			const skillDir = join(agentDir, "skills", "my-skill");
+			const skillDir = join(agentDir, "..", "skills", "my-skill");
 			mkdirSync(skillDir, { recursive: true });
 			const skillFile = join(skillDir, "SKILL.md");
 			writeFileSync(
@@ -143,8 +143,8 @@ Content`,
 		});
 
 		it("should auto-discover root markdown skills from .pi skill dirs", async () => {
-			const skillFile = join(agentDir, "skills", "single-file.md");
-			mkdirSync(join(agentDir, "skills"), { recursive: true });
+			const skillFile = join(agentDir, "..", "skills", "single-file.md");
+			mkdirSync(join(agentDir, "..", "skills"), { recursive: true });
 			writeFileSync(
 				skillFile,
 				`---
@@ -213,7 +213,7 @@ Content`,
 				mkdirSync(join(agentDir), { recursive: true });
 				mkdirSync(join(tempDir, ".pi"), { recursive: true });
 				symlinkSync(sharedExtensionsDir, join(agentDir, "extensions"), "dir");
-				symlinkSync(sharedSkillsDir, join(agentDir, "skills"), "dir");
+				symlinkSync(sharedSkillsDir, join(agentDir, "..", "skills"), "dir");
 				symlinkSync(sharedPromptsDir, join(agentDir, "prompts"), "dir");
 				symlinkSync(sharedThemesDir, join(agentDir, "themes"), "dir");
 				symlinkSync(sharedExtensionsDir, join(tempDir, ".pi", "extensions"), "dir");
@@ -298,9 +298,9 @@ Content`,
 	});
 
 	describe("auto-discovered skill metadata", () => {
-		it("should use the agent dir as baseDir for user .pi/agent skills", async () => {
-			const skillPath = join(agentDir, "skills", "user-pi", "SKILL.md");
-			mkdirSync(join(agentDir, "skills", "user-pi"), { recursive: true });
+		it("should use the skills dir parent as baseDir for user skills", async () => {
+			const skillPath = join(agentDir, "..", "skills", "user-pi", "SKILL.md");
+			mkdirSync(join(agentDir, "..", "skills", "user-pi"), { recursive: true });
 			writeFileSync(skillPath, "---\nname: user-pi\ndescription: user pi\n---\n");
 
 			const result = await packageManager.resolve();
@@ -308,7 +308,7 @@ Content`,
 
 			expect(skill?.metadata.source).toBe("auto");
 			expect(skill?.metadata.scope).toBe("user");
-			expect(skill?.metadata.baseDir).toBe(agentDir);
+			expect(skill?.metadata.baseDir).toBe(dirname(join(agentDir, "..", "skills")));
 		});
 
 		it("should use the project .pi dir as baseDir for project .pi skills", async () => {
@@ -501,7 +501,7 @@ Content`,
 			process.env.HOME = tempDir;
 
 			try {
-				const agentSkillsDir = join(agentDir, "skills");
+				const agentSkillsDir = join(agentDir, "..", "skills");
 				const agentsSkillsDir = join(tempDir, ".agents", "skills");
 				mkdirSync(agentsSkillsDir, { recursive: true });
 				// Use junction on Windows to avoid EPERM when symlink privileges are unavailable.
@@ -528,7 +528,7 @@ Content`,
 
 	describe("ignore files", () => {
 		it("should respect .gitignore in skill directories", async () => {
-			const skillsDir = join(agentDir, "skills");
+			const skillsDir = join(agentDir, "..", "skills");
 			mkdirSync(skillsDir, { recursive: true });
 			writeFileSync(join(skillsDir, ".gitignore"), "venv\n__pycache__\n");
 
@@ -1530,7 +1530,7 @@ Content`,
 		});
 
 		it("should filter skills with exclusion pattern", async () => {
-			const skillsDir = join(agentDir, "skills");
+			const skillsDir = join(agentDir, "..", "skills");
 			mkdirSync(join(skillsDir, "good-skill"), { recursive: true });
 			mkdirSync(join(skillsDir, "bad-skill"), { recursive: true });
 			writeFileSync(

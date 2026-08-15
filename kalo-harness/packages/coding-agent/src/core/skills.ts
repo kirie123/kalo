@@ -428,11 +428,11 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
+		addSkills(loadSkillsFromDirInternal(resolve(resolvedAgentDir, "..", "skills"), "user", true));
 		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
 	}
 
-	const userSkillsDir = join(resolvedAgentDir, "skills");
+	const userSkillsDir = resolve(resolvedAgentDir, "..", "skills");
 	const projectSkillsDir = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
 
 	const isUnderPath = (target: string, root: string): boolean => {

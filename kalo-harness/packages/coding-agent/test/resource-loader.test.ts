@@ -41,7 +41,7 @@ describe("DefaultResourceLoader", () => {
 		});
 
 		it("should discover skills from agentDir", async () => {
-			const skillsDir = join(agentDir, "skills");
+			const skillsDir = join(agentDir, "..", "skills");
 			mkdirSync(skillsDir, { recursive: true });
 			writeFileSync(
 				join(skillsDir, "test-skill.md"),
@@ -60,7 +60,7 @@ Skill content here.`,
 		});
 
 		it("should ignore extra markdown files in auto-discovered skill dirs", async () => {
-			const skillDir = join(agentDir, "skills", "pi-skills", "browser-tools");
+			const skillDir = join(agentDir, "..", "skills", "pi-skills", "browser-tools");
 			mkdirSync(skillDir, { recursive: true });
 			writeFileSync(
 				join(skillDir, "SKILL.md"),
@@ -108,7 +108,7 @@ Prompt content.`,
 			writeFileSync(userPromptPath, "User prompt");
 			writeFileSync(projectPromptPath, "Project prompt");
 
-			const userSkillDir = join(agentDir, "skills", "collision-skill");
+			const userSkillDir = join(agentDir, "..", "skills", "collision-skill");
 			const projectSkillDir = join(cwd, ".pi", "skills", "collision-skill");
 			mkdirSync(userSkillDir, { recursive: true });
 			mkdirSync(projectSkillDir, { recursive: true });
@@ -312,7 +312,7 @@ export default function(pi) {
 			mkdirSync(extensionsDir, { recursive: true });
 			writeFileSync(join(extensionsDir, "disabled.ts"), "export default function() {}");
 
-			const skillDir = join(agentDir, "skills", "skip-skill");
+			const skillDir = join(agentDir, "..", "skills", "skip-skill");
 			mkdirSync(skillDir, { recursive: true });
 			writeFileSync(
 				join(skillDir, "SKILL.md"),
@@ -762,7 +762,7 @@ Extension prompt content`,
 
 	describe("noSkills option", () => {
 		it("should skip skill discovery when noSkills is true", async () => {
-			const skillsDir = join(agentDir, "skills");
+			const skillsDir = join(agentDir, "..", "skills");
 			mkdirSync(skillsDir, { recursive: true });
 			writeFileSync(
 				join(skillsDir, "test-skill.md"),

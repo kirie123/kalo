@@ -262,7 +262,7 @@ describe("skills", () => {
 			const introText = result.substring(0, xmlStart);
 
 			expect(introText).toContain("The following skills provide specialized instructions");
-			expect(introText).toContain("Use the read tool to load a skill's file");
+			expect(introText).toContain("Use the use_skill tool to load a skill's full instructions");
 		});
 
 		it("should escape XML special characters", () => {
@@ -346,7 +346,9 @@ describe("skills", () => {
 	});
 
 	describe("loadSkills with options", () => {
-		const emptyAgentDir = resolve(__dirname, "fixtures/empty-agent");
+		// Nested so the user skills dir (sibling of agentDir) does not collide
+		// with test/fixtures/skills.
+		const emptyAgentDir = resolve(__dirname, "fixtures/empty-agent/agent");
 		const emptyCwd = resolve(__dirname, "fixtures/empty-cwd");
 
 		it("should load from explicit skillPaths", () => {
