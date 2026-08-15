@@ -17,6 +17,7 @@ import type {
   ModelInfo,
   PiEvent,
   PiEventPayload,
+  PiExitInfo,
   RpcExtensionUIRequest,
   RpcResponse,
   ThinkingLevel,
@@ -35,6 +36,7 @@ import {
   readAttachment,
   readModelsConfig,
   readSessionPage,
+  rejectSessionPending,
   resolveResponse,
   sendCommand,
   sendRawCommand,
@@ -127,7 +129,7 @@ export interface ChatState {
   isStreaming: boolean;
   isCompacting: boolean;
   models: ModelInfo[];
-  /** Models declared in ~/.pi/agent/models.json, merged into the picker even before a session starts. */
+  /** Models declared in ~/.kalo/agent/models.json, merged into the picker even before a session starts. */
   customModels: ModelInfo[];
   currentModel?: ModelInfo;
   thinkingLevel: ThinkingLevel;
@@ -141,6 +143,8 @@ export interface ChatState {
   attachments: AttachmentDraft[];
   /** Context-window usage from get_session_stats; null fields right after compaction. */
   contextUsage?: { tokens: number | null; contextWindow: number | null; percent: number | null };
+  /** On-disk session file of the live engine session, used for crash recovery. */
+  sessionFile?: string;
 }
 
 const initialState: ChatState = {
@@ -211,6 +215,8 @@ export class ChatStore {
   private sessionToken = 0;
   private sessionInit: Promise<string> | null = null;
   private compactionNoticeId: string | null = null;
+  /** Auto-recovery attempts for the current session lifecycle (capped). */
+  private recoveryCount = 0;
   // Stream batching: high-frequency deltas mutate entries in place and are
   // flushed to listeners at ~20fps, cloning only the touched entries so
   // memoized timeline items can skip re-rendering.
@@ -292,6 +298,7 @@ export class ChatStore {
   newChat() {
     this.detach();
     this.clearHistory();
+    this.recoveryCount = 0;
     this.set({
       sessionId: null,
       sessionName: undefined,
@@ -304,6 +311,7 @@ export class ChatStore {
       inputDraft: undefined,
       attachments: [],
       contextUsage: undefined,
+      sessionFile: undefined,
     });
   }
 
@@ -329,6 +337,7 @@ export class ChatStore {
       inputDraft: undefined,
       attachments: [],
       contextUsage: undefined,
+      sessionFile: undefined,
     });
 
     const track = (p: Promise<() => void>) =>
@@ -345,26 +354,104 @@ export class ChatStore {
     );
     track(
       onPiExit(sessionId, (info) => {
+        // Stale generation: the user already moved on (new chat / switch /
+        // deliberate restart), so this exit is intentional — ignore it.
         if (token !== this.sessionToken) return;
-        this.set({ isStreaming: false, isCompacting: false });
-        this.pushToast(`引擎进程已退出（退出码 ${info.code ?? "未知"}）`, "warning");
+        void this.handleEngineExit(sessionId, info);
       }),
     );
   }
 
   /**
-   * Probe the engine with get_state until it answers (or we give up).
-   * Commands sent before the RPC dispatch loop is up are silently dropped,
-   * so the probe may need a few retries right after spawn.
+   * Unexpected engine exit: settle the dead generation first (pending
+   * commands get an outcome, streaming entries stop spinning), then try to
+   * rebuild the session from its on-disk file.
    */
-  private async waitForEngine(sid: string, attempts = 10) {
-    for (let i = 0; i < attempts; i++) {
+  private async handleEngineExit(deadSid: string, info: PiExitInfo) {
+    rejectSessionPending(deadSid, new Error("engine process exited"));
+    this.finalizeStreamingEntries();
+    this.set({ isStreaming: false, isCompacting: false });
+
+    const file = this.state.sessionFile;
+    if (!file || this.recoveryCount >= 2) {
+      this.pushToast(
+        file
+          ? "引擎进程退出，自动恢复次数已用尽，请重新发起对话"
+          : `引擎进程已退出（退出码 ${info.code ?? "未知"}），会话未落盘，请重新发起对话`,
+        "error",
+      );
+      return;
+    }
+
+    this.recoveryCount++;
+    this.pushToast(`引擎进程已退出（退出码 ${info.code ?? "未知"}），正在自动恢复会话…`, "warning");
+    try {
+      const cwd = this.state.cwd || localStorage.getItem("kalo.lastCwd") || ".";
+      const sid = await this.spawnSession(cwd);
+      await this.waitForEngine(sid);
+      const sw = await sendCommand(sid, { type: "switch_session", sessionPath: file }, 15000);
+      if (!sw.success) throw new Error(sw.error);
+      await this.fetchSessionMeta(sid);
+      await this.applySavedModel();
+      await this.reloadLatestPage(file);
+      this.pushToast("引擎已重启，会话已恢复", "info");
+    } catch (err) {
+      this.pushToast(`自动恢复失败：${errText(err)}，请重新发起对话`, "error");
+    }
+  }
+
+  /** Stop streaming indicators on any still-streaming assistant entries. */
+  private finalizeStreamingEntries() {
+    const t = this.state.timeline;
+    if (!t.some((e) => e.kind === "assistant" && e.streaming)) return;
+    this.set({
+      timeline: t.map((e) => (e.kind === "assistant" && e.streaming ? { ...e, streaming: false } : e)),
+    });
+  }
+
+  /** Reload the latest page of a session file into the timeline. */
+  private async reloadLatestPage(path: string) {
+    const page = await readSessionPage(path, undefined, 30);
+    this.historyMessages = page.messages;
+    const timeline = buildTimeline(page.messages);
+    this.historyLiveBase = timeline.length;
+    this.set({ timeline, history: { path, start: page.start, hasMore: page.hasMore } });
+  }
+
+  /** Spawn with retry: transient failures (busy binary, AV scans) happen. */
+  private async spawnSession(cwd: string): Promise<string> {
+    let lastErr: unknown;
+    for (const delay of [0, 500, 1500]) {
+      if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
-        await sendCommand(sid, { type: "get_state" }, 1000);
+        const sid = await createSession(cwd);
+        this.attachSession(sid, cwd);
+        return sid;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  /**
+   * Probe the engine with get_state until it answers (or the budget runs
+   * out). Commands sent before the RPC dispatch loop is up are silently
+   * dropped, so the probe retries with exponential backoff + jitter.
+   */
+  private async waitForEngine(sid: string, budgetMs = 20000) {
+    const start = Date.now();
+    let delay = 250;
+    while (Date.now() - start < budgetMs) {
+      try {
+        await sendCommand(sid, { type: "get_state" }, 2000);
         return;
       } catch {
-        // Not ready yet — retry.
+        // Not ready yet — back off and retry.
       }
+      const jitter = delay * (0.75 + Math.random() * 0.5);
+      await new Promise((r) => setTimeout(r, jitter));
+      delay = Math.min(delay * 2, 2000);
     }
     throw new Error("引擎无响应");
   }
@@ -374,8 +461,7 @@ export class ChatStore {
     if (this.sessionInit) return this.sessionInit;
     this.sessionInit = (async () => {
       const cwd = this.state.cwd || localStorage.getItem("kalo.lastCwd") || ".";
-      const sid = await createSession(cwd);
-      this.attachSession(sid, cwd);
+      const sid = await this.spawnSession(cwd);
       localStorage.setItem("kalo.lastCwd", cwd);
       await this.waitForEngine(sid);
       await this.fetchSessionMeta(sid);
@@ -397,27 +483,20 @@ export class ChatStore {
    * window of messages straight from the session file.
    */
   async resumeSession(sessionPath: string, cwd: string) {
+    this.recoveryCount = 0;
     try {
-      const sid = await createSession(cwd);
-      this.attachSession(sid, cwd);
+      const sid = await this.spawnSession(cwd);
       localStorage.setItem("kalo.lastCwd", cwd);
       await this.waitForEngine(sid);
-      const sw = await sendCommand(sid, { type: "switch_session", sessionPath });
+      const sw = await sendCommand(sid, { type: "switch_session", sessionPath }, 15000);
       if (!sw.success) {
-        this.pushToast(`恢复会话失败：${sw.error}`, "error");
-        return;
+        // Degrade to read-only history: the file itself is still renderable.
+        this.pushToast(`会话无法续聊（${sw.error}），已切换为只读历史`, "warning");
       }
       await this.fetchSessionMeta(sid);
       // Render only the latest page; older messages load on scroll-up.
       try {
-        const page = await readSessionPage(sessionPath, undefined, 30);
-        this.historyMessages = page.messages;
-        const timeline = buildTimeline(page.messages);
-        this.historyLiveBase = timeline.length;
-        this.set({
-          timeline,
-          history: { path: sessionPath, start: page.start, hasMore: page.hasMore },
-        });
+        await this.reloadLatestPage(sessionPath);
       } catch (err) {
         this.pushToast(`加载历史消息失败：${errText(err)}`, "error");
       }
@@ -458,9 +537,9 @@ export class ChatStore {
   private async fetchSessionMeta(sid: string) {
     try {
       const [stateResp, modelsResp, levelsResp] = await Promise.all([
-        sendCommand(sid, { type: "get_state" }),
-        sendCommand(sid, { type: "get_available_models" }),
-        sendCommand(sid, { type: "get_available_thinking_levels" }),
+        sendCommand(sid, { type: "get_state" }, 15000),
+        sendCommand(sid, { type: "get_available_models" }, 15000),
+        sendCommand(sid, { type: "get_available_thinking_levels" }, 15000),
       ]);
       const partial: Partial<ChatState> = {};
       if (stateResp.success) {
@@ -471,6 +550,7 @@ export class ChatStore {
         partial.isStreaming = s.isStreaming;
         partial.sessionName = s.sessionName;
         partial.engineSessionId = s.sessionId;
+        partial.sessionFile = s.sessionFile;
       }
       if (modelsResp.success) partial.models = (modelsResp.data as { models: ModelInfo[] }).models;
       if (levelsResp.success) partial.thinkingLevels = (levelsResp.data as { levels: ThinkingLevel[] }).levels;
@@ -553,7 +633,7 @@ export class ChatStore {
     if (!sid || this.contextInflight) return;
     this.contextInflight = true;
     try {
-      const resp = await sendCommand(sid, { type: "get_session_stats" });
+      const resp = await sendCommand(sid, { type: "get_session_stats" }, 15000);
       if (resp.success) {
         const usage = (resp.data as { contextUsage?: ChatState["contextUsage"] } | undefined)?.contextUsage;
         if (usage !== undefined) this.set({ contextUsage: usage });
@@ -640,7 +720,7 @@ export class ChatStore {
   async setModel(provider: string, modelId: string) {
     try {
       const sid = await this.ensureSession();
-      const resp = await sendCommand(sid, { type: "set_model", provider, modelId });
+      const resp = await sendCommand(sid, { type: "set_model", provider, modelId }, 15000);
       if (resp.success) {
         this.set({ currentModel: resp.data as ModelInfo });
         saveLastModel({ provider, modelId, name: (resp.data as ModelInfo)?.name });
@@ -656,7 +736,7 @@ export class ChatStore {
         await this.restartSession();
         const sid2 = this.state.sessionId;
         if (!sid2) throw new Error("session restart failed");
-        const retry = await sendCommand(sid2, { type: "set_model", provider, modelId });
+        const retry = await sendCommand(sid2, { type: "set_model", provider, modelId }, 15000);
         if (retry.success) {
           this.set({ currentModel: retry.data as ModelInfo });
           saveLastModel({ provider, modelId, name: (retry.data as ModelInfo)?.name });
@@ -679,7 +759,7 @@ export class ChatStore {
     const cur = this.state.currentModel;
     if (cur?.provider === saved.provider && cur?.id === saved.modelId) return;
     try {
-      const resp = await sendCommand(sid, { type: "set_model", provider: saved.provider, modelId: saved.modelId });
+      const resp = await sendCommand(sid, { type: "set_model", provider: saved.provider, modelId: saved.modelId }, 15000);
       if (resp.success) this.set({ currentModel: resp.data as ModelInfo });
     } catch {
       // Saved model no longer available — keep the engine default.
@@ -698,8 +778,7 @@ export class ChatStore {
       }
     }
     this.detach();
-    const sid = await createSession(cwd);
-    this.attachSession(sid, cwd);
+    const sid = await this.spawnSession(cwd);
     await this.waitForEngine(sid);
     await this.fetchSessionMeta(sid);
     await this.applySavedModel();

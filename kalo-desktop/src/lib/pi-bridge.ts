@@ -136,7 +136,7 @@ export function readAttachment(path: string): Promise<AttachmentDraft> {
 // ============================================================================
 
 let nextRequestId = 1;
-const pending = new Map<string, (resp: RpcResponse) => void>();
+const pending = new Map<string, { sessionId: string; resolve: (resp: RpcResponse) => void; reject: (err: Error) => void }>();
 
 /**
  * Send an RPC command and wait for its correlated response.
@@ -155,7 +155,7 @@ export async function sendCommand(
   const id = `kalo-${nextRequestId++}`;
   const wire = { ...command, id };
   const promise = new Promise<RpcResponse>((resolve, reject) => {
-    pending.set(id, resolve);
+    pending.set(id, { sessionId, resolve, reject });
     if (timeoutMs !== undefined) {
       setTimeout(() => {
         if (pending.delete(id)) reject(new Error("engine response timeout"));
@@ -169,6 +169,19 @@ export async function sendCommand(
     throw err;
   }
   return promise;
+}
+
+/**
+ * Settle every in-flight command of a session with an error.
+ * Called when the engine process exits — pending requests must get a
+ * definitive outcome instead of hanging forever.
+ */
+export function rejectSessionPending(sessionId: string, err: Error) {
+  for (const [id, p] of pending) {
+    if (p.sessionId !== sessionId) continue;
+    pending.delete(id);
+    p.reject(err);
+  }
 }
 
 /**
@@ -186,10 +199,10 @@ export async function sendRawCommand(sessionId: string, command: RpcExtensionUIR
  */
 export function resolveResponse(resp: RpcResponse): boolean {
   if (!resp.id) return false;
-  const resolver = pending.get(resp.id);
-  if (!resolver) return false;
+  const entry = pending.get(resp.id);
+  if (!entry) return false;
   pending.delete(resp.id);
-  resolver(resp);
+  entry.resolve(resp);
   return true;
 }
 
