@@ -5,8 +5,8 @@
   "description": "AI coding agent desktop client, built on the pi agent engine (https://github.com/earendil-works/pi)",
   "scripts": {
     "setup": "cd kalo-harness && npm ci --ignore-scripts && npm run build && cd ../kalo-desktop && npm install",
-    "dev": "cd kalo-desktop && bun run tauri dev",
-    "build": "cd kalo-desktop && bun run tauri build",
+    "dev": "bun scripts/ensure-engine.mjs && cd kalo-desktop && bun run tauri dev",
+    "build": "bun scripts/ensure-engine.mjs && cd kalo-desktop && bun run tauri build",
     "build:engine": "bash scripts/build-engine.sh"
   }
 }
