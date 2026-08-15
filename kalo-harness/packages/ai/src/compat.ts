@@ -16,6 +16,7 @@ export * from "./api/bedrock-converse-stream.lazy.ts";
 export * from "./api/google-generative-ai.lazy.ts";
 export * from "./api/google-vertex.lazy.ts";
 export * from "./api/mistral-conversations.lazy.ts";
+export * from "./api/ollama-chat.lazy.ts";
 export * from "./api/openai-codex-responses.lazy.ts";
 export * from "./api/openai-completions.lazy.ts";
 export * from "./api/openai-responses.lazy.ts";
@@ -34,6 +35,7 @@ import { bedrockConverseStreamApi } from "./api/bedrock-converse-stream.lazy.ts"
 import { googleGenerativeAIApi } from "./api/google-generative-ai.lazy.ts";
 import { googleVertexApi } from "./api/google-vertex.lazy.ts";
 import { mistralConversationsApi } from "./api/mistral-conversations.lazy.ts";
+import { ollamaChatApi } from "./api/ollama-chat.lazy.ts";
 import { openAICodexResponsesApi } from "./api/openai-codex-responses.lazy.ts";
 import { openAICompletionsApi } from "./api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "./api/openai-responses.lazy.ts";
@@ -186,6 +188,7 @@ const BUILTIN_APIS: [Api, ProviderStreams][] = [
 	["mistral-conversations", mistralConversationsApi()],
 	["bedrock-converse-stream", bedrockConverseStreamApi()],
 	["pi-messages", piMessagesApi()],
+	["ollama-chat", ollamaChatApi()],
 ];
 
 const builtinApiProviderInstances = new Map<Api, ReturnType<typeof getApiProvider>>();

@@ -127,6 +127,24 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 	};
 }
 
+/** Hard cap for Ollama model context windows; also the default when unset. */
+const OLLAMA_CONTEXT_WINDOW_LIMIT = 131072;
+
+/**
+ * Detects a direct Ollama endpoint: provider id mentions ollama, or the base
+ * URL points at Ollama's default port. Gateway-fronted Ollama deployments
+ * with a distinct provider id and port keep their configured api.
+ */
+function isOllamaEndpoint(providerId: string, baseUrl: string | undefined): boolean {
+	if (/ollama/i.test(providerId)) return true;
+	if (!baseUrl) return false;
+	try {
+		return new URL(baseUrl).port === "11434";
+	} catch {
+		return false;
+	}
+}
+
 function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
@@ -146,6 +164,30 @@ function modelFromJson(
 	}
 	if (definition.maxTokens !== undefined && definition.maxTokens <= 0) {
 		throw new Error(`Provider ${providerId}, model ${definition.id}: invalid maxTokens`);
+	}
+	// Ollama's OpenAI-compatible /v1 endpoint cannot set the server context
+	// length (num_ctx), so requests silently truncate to the server default.
+	// Route Ollama endpoints to the native /api/chat adapter, which pins
+	// num_ctx to the model's context window. Cap the window at 128K: larger
+	// configured values would overflow what Ollama can actually serve and
+	// desynchronize compaction accounting from the real server window.
+	if (isOllamaEndpoint(providerId, baseUrl)) {
+		return {
+			id: definition.id,
+			name: definition.name ?? definition.id,
+			api: "ollama-chat",
+			provider: providerId,
+			baseUrl,
+			reasoning: definition.reasoning ?? false,
+			thinkingLevelMap: definition.thinkingLevelMap,
+			input: (definition.input ?? ["text"]) as ("text" | "image")[],
+			cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: Math.min(definition.contextWindow ?? OLLAMA_CONTEXT_WINDOW_LIMIT, OLLAMA_CONTEXT_WINDOW_LIMIT),
+			maxTokens: definition.maxTokens ?? 16384,
+			samplingParams: definition.samplingParams,
+			headers: undefined,
+			compat: mergeCompat(providerConfig.compat, definition.compat),
+		};
 	}
 	return {
 		id: definition.id,

@@ -47,6 +47,7 @@ const PRESETS: Array<{ label: string; apply: () => Partial<Record<string, string
       api: "openai-completions",
       baseUrl: "http://localhost:11434/v1",
       apiKey: LOCAL_KEY_PLACEHOLDER,
+      contextK: "128",
     }),
   },
   {
@@ -81,7 +82,11 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
   // Shared context window for all models of this provider, in K tokens.
   const [contextK, setContextK] = useState(() => {
     const w = editing?.config.models.find((m) => m.contextWindow)?.contextWindow;
-    return w ? String(Math.round(w / 1000)) : "200";
+    if (w) return String(Math.round(w / 1000));
+    // The engine caps Ollama context windows at 128K (num_ctx); larger values
+    // would desynchronize compaction from the real server window.
+    if (editing?.id && /ollama/i.test(editing.id)) return "128";
+    return "200";
   });
   const [noDeveloperRole, setNoDeveloperRole] = useState(
     editing?.config.compat?.supportsDeveloperRole === false,
@@ -166,6 +171,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
                   if (v.api !== undefined) setApi(v.api as ProviderApi);
                   if (v.baseUrl !== undefined) setBaseUrl(v.baseUrl);
                   if (v.apiKey !== undefined) setApiKey(v.apiKey);
+                  if (v.contextK !== undefined) setContextK(v.contextK);
                 }}
                 className="rounded-md border border-edge px-2.5 py-1 text-xs text-dim hover:text-ink"
               >

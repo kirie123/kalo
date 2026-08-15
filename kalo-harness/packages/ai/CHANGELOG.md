@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `ollama-chat` API streaming from Ollama's native `/api/chat` endpoint with `options.num_ctx` control, since the OpenAI-compatible `/v1` endpoint cannot set the server context length and silently truncates to the Ollama default.
+
 ### Changed
 
 - Automatically converted supported strict tool schemas to provider-compatible closed objects with required nullable optional fields while preserving original tool definitions, and treated `null` values for optional non-nullable tool arguments as omitted.

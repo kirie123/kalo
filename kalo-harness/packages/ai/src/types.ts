@@ -5,6 +5,7 @@ import type { BedrockOptions } from "./api/bedrock-converse-stream.ts";
 import type { GoogleOptions } from "./api/google-generative-ai.ts";
 import type { GoogleVertexOptions } from "./api/google-vertex.ts";
 import type { MistralOptions } from "./api/mistral-conversations.ts";
+import type { OllamaOptions } from "./api/ollama-chat.ts";
 import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.ts";
 import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
@@ -24,7 +25,8 @@ export type KnownApi =
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-vertex"
-	| "pi-messages";
+	| "pi-messages"
+	| "ollama-chat";
 
 export type Api = KnownApi | (string & {});
 
@@ -247,6 +249,7 @@ export interface ApiOptionsMap {
 	"mistral-conversations": MistralOptions;
 	"bedrock-converse-stream": BedrockOptions;
 	"pi-messages": PiMessagesOptions;
+	"ollama-chat": OllamaOptions;
 }
 
 /**
