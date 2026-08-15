@@ -90,7 +90,7 @@ const TimelineItem = memo(function TimelineItem({ entry }: { entry: TimelineEntr
     case "user":
       return <UserBubble message={entry.message} />;
     case "assistant":
-      return <AssistantMessage message={entry.message} streaming={entry.streaming} />;
+      return <AssistantMessage message={entry.message} streaming={entry.streaming} usage={entry.usage} />;
     case "toolGroup":
       return <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />;
     case "retry":

@@ -77,7 +77,7 @@ fn read_session_page(
     session_paging::read_session_page(&path, before, limit)
 }
 
-/// List skills from ~/.kalo/agent/skills (user scope) and, when `cwd` is
+/// List skills from ~/.kalo/skills (user scope) and, when `cwd` is
 /// given, <cwd>/.kalo/skills (project scope).
 #[tauri::command]
 fn list_skills(cwd: Option<String>) -> Result<Vec<SkillMeta>, String> {
@@ -181,6 +181,20 @@ fn read_attachment(path: String) -> Result<AttachmentData, String> {
     files::read_attachment(&path)
 }
 
+/// Open a path with the system default app, or reveal it in the OS file
+/// manager (reveal = true).
+#[tauri::command]
+fn open_path(path: String, reveal: bool) -> Result<(), String> {
+    files::open_path(&path, reveal)
+}
+
+/// Search entry names under `root` (substring, case-insensitive) for the
+/// input box's @ file completion.
+#[tauri::command]
+fn search_files(root: String, query: String, limit: Option<usize>) -> Result<Vec<files::FileMatch>, String> {
+    files::search_files(&root, &query, limit)
+}
+
 fn lock_sessions<'a>(
     state: &'a State<SessionManager>,
 ) -> Result<std::sync::MutexGuard<'a, std::collections::HashMap<String, PiProcess>>, String> {
@@ -241,6 +255,8 @@ fn main() {
             list_dir,
             read_file_text,
             read_attachment,
+            open_path,
+            search_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kalo");

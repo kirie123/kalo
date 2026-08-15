@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { listDir, readFileText } from "../lib/pi-bridge";
+import { listDir, openPath, readFileText } from "../lib/pi-bridge";
 import { chatStore, useChatStore } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
 import type { DirEntry } from "../types";
@@ -11,18 +11,42 @@ interface Preview {
   binary: boolean;
 }
 
+interface MenuState {
+  x: number;
+  y: number;
+  entry: DirEntry;
+}
+
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Right-side file browser rooted at the session cwd, with a text preview. */
+/** Parent of a filesystem path, tolerating both separators; null at a root. */
+function parentDir(path: string): string | null {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const i = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (i < 0) return null;
+  if (i === 0) return trimmed.slice(0, 1); // unix root
+  // Windows drive root like C:\
+  if (i === 2 && trimmed[1] === ":") return trimmed.slice(0, 3);
+  return trimmed.slice(0, i);
+}
+
+/** Right-side file browser with a text preview. The tree root follows the
+ * session cwd until the user navigates elsewhere via the path bar. */
 export default function FilePanel() {
   const { cwd } = useChatStore();
+  const [rootOverride, setRootOverride] = useState<string | null>(null);
+  const root = rootOverride ?? cwd;
+  const [pathDraft, setPathDraft] = useState(root ?? "");
   // Lazy tree cache: directory path -> its single-level listing.
   const [tree, setTree] = useState<Map<string, DirEntry[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewFull, setPreviewFull] = useState(false);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  // Back navigation: every root change pushes the previous root.
+  const [backStack, setBackStack] = useState<string[]>([]);
   const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 288));
   const [previewW, setPreviewW] = useState(() => loadWidth("kalo.layout.previewW", 416));
   // Race guard: only the latest file click may populate the preview.
@@ -37,15 +61,45 @@ export default function FilePanel() {
     }
   }, []);
 
-  // Reset and reload the root whenever the working directory changes.
+  // Reset and reload whenever the root changes (cwd switch or path-bar nav).
   useEffect(() => {
     setTree(new Map());
     setExpanded(new Set());
     setPreview(null);
     setPreviewFull(false);
     previewReq.current++;
-    if (cwd) void loadDir(cwd);
-  }, [cwd, loadDir]);
+    if (root) void loadDir(root);
+  }, [root, loadDir]);
+
+  // Keep the path bar in sync when the root changes from outside.
+  useEffect(() => {
+    setPathDraft(root ?? "");
+  }, [root]);
+
+  /** Navigate the tree to an arbitrary directory (validated first). */
+  const navigate = async (path: string, push = true) => {
+    const target = path.trim();
+    if (!target || target === root) return;
+    try {
+      const entries = await listDir(target);
+      if (push && root) setBackStack((s) => [...s, root]);
+      setRootOverride(target);
+      setTree(new Map([[target, entries]]));
+      setExpanded(new Set());
+      setPreview(null);
+    } catch {
+      chatStore.pushToast(`不是有效目录：${target}`, "warning");
+      setPathDraft(root ?? "");
+    }
+  };
+
+  /** Back to the previously browsed directory (no stack push). */
+  const goBack = () => {
+    const prev = backStack[backStack.length - 1];
+    if (!prev) return;
+    setBackStack((s) => s.slice(0, -1));
+    void navigate(prev, false);
+  };
 
   const toggleDir = (path: string) => {
     const isOpen = expanded.has(path);
@@ -80,8 +134,8 @@ export default function FilePanel() {
 
   // Reload the root and every expanded directory, keeping the expansion.
   const refresh = () => {
-    if (!cwd) return;
-    const paths = [cwd, ...expanded];
+    if (!root) return;
+    const paths = [root, ...expanded];
     setTree(new Map());
     for (const p of paths) void loadDir(p);
   };
@@ -93,6 +147,10 @@ export default function FilePanel() {
       <div key={e.path}>
         <button
           onClick={() => (e.isDir ? toggleDir(e.path) : void openFile(e))}
+          onContextMenu={(ev) => {
+            ev.preventDefault();
+            setMenu({ x: ev.clientX, y: ev.clientY, entry: e });
+          }}
           title={e.path}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs hover:bg-card"
@@ -149,9 +207,45 @@ export default function FilePanel() {
           </button>
         </div>
 
+        {/* Path bar: edit to browse any directory */}
+        <div className="flex shrink-0 items-center gap-1 border-b border-edge px-2 py-1.5">
+          <button
+            onClick={goBack}
+            disabled={backStack.length === 0}
+            title="后退到上次目录"
+            className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink disabled:opacity-30"
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            onClick={() => {
+              const parent = root ? parentDir(root) : null;
+              if (parent) void navigate(parent);
+            }}
+            title="上一级"
+            className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink"
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 12V4M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <input
+            value={pathDraft}
+            onChange={(e) => setPathDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void navigate(pathDraft);
+            }}
+            placeholder="输入路径浏览任意目录…"
+            spellCheck={false}
+            className="mono min-w-0 flex-1 bg-transparent text-xs text-dim outline-none placeholder:text-dim/60 focus:text-ink"
+          />
+        </div>
+
         <div className="min-h-0 flex-1 overflow-auto py-1">
-          {cwd ? (
-            renderRows(cwd, 0) ?? <div className="px-3 py-2 text-xs text-dim">加载中…</div>
+          {root ? (
+            renderRows(root, 0) ?? <div className="px-3 py-2 text-xs text-dim">加载中…</div>
           ) : (
             <div className="px-3 py-2 text-xs text-dim">先在输入框下方选择工作目录</div>
           )}
@@ -191,7 +285,81 @@ export default function FilePanel() {
           <PreviewBody preview={preview} />
         </div>
       )}
+
+      {/* Right-click context menu */}
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </aside>
+  );
+}
+
+function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
+  const { entry } = menu;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const run = (fn: () => void) => () => {
+    fn();
+    onClose();
+  };
+
+  const items: Array<{ label: string; action: () => void }> = [
+    ...(entry.isDir
+      ? []
+      : [{ label: "打开文件", action: () => void openPath(entry.path).catch((e) => chatStore.pushToast(`打开失败：${errText(e)}`, "error")) }]),
+    {
+      label: entry.isDir ? "打开所在位置" : "打开所在路径",
+      action: () =>
+        void openPath(entry.path, !entry.isDir).catch((e) => chatStore.pushToast(`打开失败：${errText(e)}`, "error")),
+    },
+    ...(entry.isDir
+      ? []
+      : [
+          {
+            label: "添加到对话区",
+            action: () => {
+              void chatStore.addAttachments([entry.path]);
+            },
+          },
+        ]),
+    {
+      label: "复制路径",
+      action: () => {
+        void navigator.clipboard.writeText(entry.path).then(
+          () => chatStore.pushToast("路径已复制", "info"),
+          () => chatStore.pushToast("复制失败", "warning"),
+        );
+      },
+    },
+  ];
+
+  // Keep the menu inside the window.
+  const x = Math.min(menu.x, window.innerWidth - 180);
+  const y = Math.min(menu.y, window.innerHeight - items.length * 34 - 16);
+
+  return (
+    <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(e) => e.preventDefault()}>
+      <div
+        className="absolute min-w-40 rounded-lg border border-edge bg-card py-1 shadow-2xl"
+        style={{ left: x, top: y }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {items.map((item) => (
+          <button
+            key={item.label}
+            onClick={run(item.action)}
+            className="flex w-full items-center px-3 py-1.5 text-left text-xs text-ink hover:bg-base"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

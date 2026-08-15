@@ -9,3 +9,6 @@ Thumbs.db
 node_modules/
 dist/
 target/
+
+# Local design docs (kept local, not committed)
+doc/

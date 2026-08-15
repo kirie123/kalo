@@ -4,7 +4,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { formatApiError } from "../lib/error-format";
 import type { AssistantMessage as AssistantMessageType } from "../types";
+import { formatK } from "./ContextRing";
 import ThinkingBlock from "./ThinkingBlock";
+import type { TurnUsage } from "../lib/chat-store";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -39,12 +41,17 @@ function CodeRenderer({ className, children }: { className?: string; children?: 
 export default function AssistantMessage({
   message,
   streaming,
+  usage,
 }: {
   message: AssistantMessageType;
   streaming?: boolean;
+  usage?: TurnUsage;
 }) {
   const failed = message.stopReason === "error" && message.errorMessage;
   const lastIdx = message.content.length - 1;
+  // Cache hit rate = cache reads over all input-side tokens (fresh + cached).
+  const inputSide = usage ? usage.input + usage.cacheRead : 0;
+  const hitRate = usage && inputSide > 0 ? Math.round((usage.cacheRead / inputSide) * 100) : null;
   return (
     <div className={`text-sm ${streaming ? "streaming-cursor" : ""}`}>
       {message.content.map((block, i) => {
@@ -75,6 +82,12 @@ export default function AssistantMessage({
         return null;
       })}
       {failed && <ErrorBanner raw={message.errorMessage!} />}
+      {usage && !streaming && (
+        <div className="mt-2 text-xs text-dim">
+          本轮 tokens：输入 {formatK(inputSide)} · 输出 {formatK(usage.output)}
+          {hitRate !== null && ` · 缓存命中 ${hitRate}%`}
+        </div>
+      )}
     </div>
   );
 }

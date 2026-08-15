@@ -1,13 +1,31 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { chatStore, useChatStore } from "../lib/chat-store";
+import { searchFiles } from "../lib/pi-bridge";
 import { cwdBasename } from "../lib/projects";
+import type { FileMatch } from "../types";
 import ContextRing from "./ContextRing";
 import ModelPicker from "./ModelPicker";
 
 const MAX_TEXTAREA_HEIGHT = 192; // ~8 lines
 
 let pastedImageCounter = 1;
+
+/** Active autocomplete token: `/cmd` or `@file`, right before the cursor. */
+interface AcToken {
+  mode: "slash" | "file";
+  query: string;
+  /** Index in the text where the trigger char (/ or @) sits. */
+  start: number;
+}
+
+/** Detect a `/...` or `@...` token ending at the cursor (must follow start-of-text or whitespace). */
+function detectToken(value: string, cursor: number): AcToken | null {
+  const before = value.slice(0, cursor);
+  const m = /(?:^|\s)([/:@])([^\s]*)$/.exec(before);
+  if (!m) return null;
+  return { mode: m[1] === "/" ? "slash" : "file", query: m[2], start: before.length - m[2].length - 1 };
+}
 
 /** File types accepted by the attachment picker (images / office / text). */
 const ATTACHMENT_EXTENSIONS = [
@@ -23,6 +41,10 @@ export default function InputBox() {
   const [text, setText] = useState("");
   const [previewImage, setPreviewImage] = useState<{ name: string; mimeType: string; dataBase64: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Autocomplete state: active token, highlighted row, @ search results.
+  const [ac, setAc] = useState<AcToken | null>(null);
+  const [acIndex, setAcIndex] = useState(0);
+  const [fileMatches, setFileMatches] = useState<FileMatch[]>([]);
 
   // Auto-grow the textarea (1-8 lines).
   useEffect(() => {
@@ -40,6 +62,63 @@ export default function InputBox() {
     }
   }, [chat.inputDraft]);
 
+  // Recompute the autocomplete token whenever text or cursor changes.
+  const syncAc = (value: string, cursor: number) => {
+    const next = detectToken(value, cursor);
+    setAc((prev) => {
+      if (prev?.mode !== next?.mode || prev?.query !== next?.query) setAcIndex(0);
+      return next;
+    });
+  };
+
+  // Debounced file search for @ completion.
+  const acQuery = ac?.mode === "file" ? ac.query : null;
+  useEffect(() => {
+    if (acQuery === null || !chat.cwd) {
+      setFileMatches([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      searchFiles(chat.cwd, acQuery)
+        .then(setFileMatches)
+        .catch(() => setFileMatches([]));
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [acQuery, chat.cwd]);
+
+  const slashItems =
+    ac?.mode === "slash"
+      ? chat.commands.filter((c) => c.name.toLowerCase().includes(ac.query.toLowerCase())).slice(0, 20)
+      : [];
+  const fileItems = ac?.mode === "file" ? fileMatches : [];
+  const acItemCount = ac?.mode === "slash" ? slashItems.length : fileItems.length;
+  const acOpen = ac !== null && acItemCount > 0;
+
+  /** Insert the chosen completion, replacing the token. */
+  const applyCompletion = (insertion: string) => {
+    if (!ac) return;
+    const el = textareaRef.current;
+    const cursor = el?.selectionStart ?? text.length;
+    const next = text.slice(0, ac.start) + insertion + text.slice(cursor);
+    setText(next);
+    setAc(null);
+    const pos = ac.start + insertion.length;
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(pos, pos);
+    });
+  };
+
+  const pickSlash = (name: string) => applyCompletion(`/${name} `);
+  const pickFile = (m: FileMatch) => {
+    // Prefer a path relative to the working directory (case-insensitive on Windows).
+    let p = m.path;
+    const cwd = chat.cwd.replace(/[\\/]+$/, "");
+    if (cwd && p.toLowerCase().startsWith(cwd.toLowerCase() + "\\")) p = p.slice(cwd.length + 1);
+    else if (cwd && p.toLowerCase().startsWith(cwd.toLowerCase() + "/")) p = p.slice(cwd.length + 1);
+    applyCompletion(`${p}${m.isDir ? "/" : ""} `);
+  };
+
   const send = () => {
     const value = text.trim();
     if (!value && chat.attachments.length === 0) return;
@@ -48,6 +127,30 @@ export default function InputBox() {
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    // Autocomplete navigation takes precedence over send.
+    if (acOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setAcIndex((i) => (i + 1) % acItemCount);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setAcIndex((i) => (i - 1 + acItemCount) % acItemCount);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        if (ac?.mode === "slash") pickSlash(slashItems[Math.min(acIndex, slashItems.length - 1)].name);
+        else if (ac?.mode === "file") pickFile(fileItems[Math.min(acIndex, fileItems.length - 1)]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setAc(null);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send();
@@ -100,7 +203,48 @@ export default function InputBox() {
 
   return (
     <div className="mx-auto w-full max-w-3xl">
-      <div className="rounded-2xl border border-edge bg-card shadow-lg">
+      <div className="relative rounded-2xl border border-edge bg-card shadow-lg">
+        {/* Autocomplete popup (/ commands, @ files) */}
+        {acOpen && ac && (
+          <div className="absolute bottom-full left-0 right-0 z-30 mb-1.5 max-h-64 overflow-auto rounded-xl border border-edge bg-card py-1 shadow-2xl">
+            {ac.mode === "slash" &&
+              slashItems.map((c, i) => (
+                <button
+                  key={c.name}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickSlash(c.name);
+                  }}
+                  onMouseEnter={() => setAcIndex(i)}
+                  className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-xs ${
+                    i === acIndex ? "bg-base text-ink" : "text-dim"
+                  }`}
+                >
+                  <span className="mono shrink-0 text-ink">/{c.name}</span>
+                  {c.description && <span className="truncate">{c.description}</span>}
+                </button>
+              ))}
+            {ac.mode === "file" &&
+              fileItems.map((m, i) => (
+                <button
+                  key={m.path}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickFile(m);
+                  }}
+                  onMouseEnter={() => setAcIndex(i)}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                    i === acIndex ? "bg-base text-ink" : "text-dim"
+                  }`}
+                >
+                  {m.isDir ? <AcFolderIcon /> : <AcFileIcon />}
+                  <span className="shrink-0 text-ink">{m.name}</span>
+                  <span className="mono truncate">{m.path}</span>
+                </button>
+              ))}
+          </div>
+        )}
+
         {/* Pending attachment chips */}
         {chat.attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
@@ -135,11 +279,15 @@ export default function InputBox() {
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            syncAc(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          }}
+          onSelect={(e) => syncAc(text, e.currentTarget.selectionStart ?? text.length)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           rows={1}
-          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : "输入消息，Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片"}
+          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : chat.connecting ? "正在连接引擎，可先发消息…" : "输入消息，Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片"}
           className="max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm outline-none placeholder:text-dim"
         />
 
@@ -236,5 +384,22 @@ export default function InputBox() {
         </div>
       )}
     </div>
+  );
+}
+
+function AcFolderIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-dim">
+      <path d="M2 4.5A1.5 1.5 0 013.5 3h2l1.5 2h5.5A1.5 1.5 0 0114 6.5v5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AcFileIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-dim">
+      <path d="M4 1.5h5L12.5 5v9a1 1 0 01-1 1h-7a1 1 0 01-1-1v-11a1 1 0 011-1z" strokeLinejoin="round" />
+      <path d="M9 1.5V5h3.5" strokeLinejoin="round" />
+    </svg>
   );
 }

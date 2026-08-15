@@ -342,3 +342,116 @@ fn truncate_chars(s: &str, max: usize) -> (String, bool) {
         None => (s.to_string(), false),
     }
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMatch {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// Case-insensitive substring search over entry names under `root`, for the
+/// input box's @ completion. Skips dotfiles and heavy build/dependency
+/// directories; traversal is capped so huge trees cannot stall the UI.
+/// Prefix matches sort before plain substring matches.
+pub fn search_files(root: &str, query: &str, limit: Option<usize>) -> Result<Vec<FileMatch>, String> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = limit.unwrap_or(20);
+    const MAX_VISITED: usize = 50_000;
+
+    // Validate the root before walking.
+    fs::read_dir(root).map_err(|e| format!("cannot read directory {root}: {e}"))?;
+
+    let mut out: Vec<FileMatch> = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from(root)];
+    let mut visited = 0usize;
+    'walk: while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            visited += 1;
+            if visited > MAX_VISITED {
+                break 'walk;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.')
+                || matches!(name.as_str(), "node_modules" | "target" | "dist" | "__pycache__")
+            {
+                continue;
+            }
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            if is_dir {
+                stack.push(path.clone());
+            }
+            if name.to_lowercase().contains(&query) {
+                out.push(FileMatch {
+                    name,
+                    path: path.to_string_lossy().into_owned(),
+                    is_dir,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        let pa = !a.name.to_lowercase().starts_with(&query);
+        let pb = !b.name.to_lowercase().starts_with(&query);
+        pa.cmp(&pb)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    out.truncate(limit);
+    Ok(out)
+}
+
+/// Open a path with the system default handler (`reveal = false`), or show
+/// it in the OS file manager (`reveal = true`: file → selected in its
+/// parent folder, directory → the folder itself is opened).
+/// Spawns detached and returns immediately; std::process only, no new deps.
+pub fn open_path(path: &str, reveal: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = if reveal {
+            let mut c = std::process::Command::new("explorer");
+            // /select wants the verb and path in one comma-joined argument.
+            c.arg(format!("/select,{path}"));
+            c
+        } else {
+            let mut c = std::process::Command::new("cmd");
+            c.args(["/c", "start", "", path]);
+            c
+        };
+        cmd.spawn()
+            .map_err(|e| format!("failed to open {path}: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if reveal {
+            cmd.arg("-R");
+        }
+        cmd.arg(path);
+        cmd.spawn().map_err(|e| format!("failed to open {path}: {e}"))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // No universal "reveal" on Linux: open the parent folder instead.
+        let target = if reveal {
+            Path::new(path)
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string())
+        } else {
+            path.to_string()
+        };
+        std::process::Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| format!("failed to open {target}: {e}"))?;
+    }
+    Ok(())
+}

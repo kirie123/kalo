@@ -13,6 +13,7 @@
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   read_attachment { path } -> AttachmentDraft (image base64 or text)
+ *   open_path { path, reveal } -> void
  *
  * events:
  *   pi-event:{sessionId}  — one stdout JSON line (response or event)
@@ -26,6 +27,7 @@ import type {
   AuthConfig,
   AttachmentDraft,
   DirEntry,
+  FileMatch,
   FileTextContent,
   MemoryEntry,
   MemoryMeta,
@@ -155,6 +157,16 @@ export function readFileText(path: string, maxBytes?: number): Promise<FileTextC
 
 export function readAttachment(path: string): Promise<AttachmentDraft> {
   return invoke<AttachmentDraft>("read_attachment", { path });
+}
+
+/** Open with the system default app (reveal=false) or show in the OS file manager (reveal=true). */
+export function openPath(path: string, reveal = false): Promise<void> {
+  return invoke<void>("open_path", { path, reveal });
+}
+
+/** Name search under root for the input box's @ completion. */
+export function searchFiles(root: string, query: string): Promise<FileMatch[]> {
+  return invoke<FileMatch[]>("search_files", { root, query });
 }
 
 // ============================================================================

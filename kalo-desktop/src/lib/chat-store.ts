@@ -20,6 +20,7 @@ import type {
   PiExitInfo,
   RpcExtensionUIRequest,
   RpcResponse,
+  SlashCommand,
   ThinkingLevel,
   ThinkingContent,
   TextContent,
@@ -61,11 +62,21 @@ export interface UserEntry {
   message: UserMessage;
 }
 
+/** Aggregated token usage of one agent turn (summed across its LLM calls). */
+export interface TurnUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface AssistantEntry {
   id: string;
   kind: "assistant";
   message: AssistantMessage;
   streaming: boolean;
+  /** Set at turn_end: aggregated usage of the whole turn, shown as a footer. */
+  usage?: TurnUsage;
 }
 
 export interface ToolGroupEntry {
@@ -145,6 +156,10 @@ export interface ChatState {
   contextUsage?: { tokens: number | null; contextWindow: number | null; percent: number | null };
   /** On-disk session file of the live engine session, used for crash recovery. */
   sessionFile?: string;
+  /** True while a resumed session's engine connects in the background (history already readable). */
+  connecting?: boolean;
+  /** Slash commands from get_commands (extension commands, skill:<name>, prompt templates). */
+  commands: SlashCommand[];
 }
 
 const initialState: ChatState = {
@@ -168,6 +183,7 @@ const initialState: ChatState = {
   toasts: [],
   attachments: [],
   contextUsage: undefined,
+  commands: [],
 };
 
 let entryCounter = 1;
@@ -217,6 +233,12 @@ export class ChatStore {
   private compactionNoticeId: string | null = null;
   /** Auto-recovery attempts for the current session lifecycle (capped). */
   private recoveryCount = 0;
+  /** Usage accumulator for the in-flight turn; flushed onto the last assistant entry at turn_end. */
+  private turnUsage: TurnUsage | null = null;
+  /** Generation guard for resumeSession: a newer resume supersedes older phases. */
+  private resumeSeq = 0;
+  /** In-flight background engine connect of a resume; sendPrompt awaits it. */
+  private resumePromise: Promise<void> | null = null;
   // Stream batching: high-frequency deltas mutate entries in place and are
   // flushed to listeners at ~20fps, cloning only the touched entries so
   // memoized timeline items can skip re-rendering.
@@ -299,6 +321,8 @@ export class ChatStore {
     this.detach();
     this.clearHistory();
     this.recoveryCount = 0;
+    this.turnUsage = null;
+    this.resumeSeq++;
     this.set({
       sessionId: null,
       sessionName: undefined,
@@ -312,6 +336,7 @@ export class ChatStore {
       attachments: [],
       contextUsage: undefined,
       sessionFile: undefined,
+      connecting: false,
     });
   }
 
@@ -320,17 +345,16 @@ export class ChatStore {
     this.historyLiveBase = 0;
   }
 
-  private attachSession(sessionId: string, cwd: string) {
+  private attachSession(sessionId: string, cwd: string, opts?: { keepTimeline?: boolean }) {
     this.detach();
-    this.clearHistory();
+    if (!opts?.keepTimeline) this.clearHistory();
     const token = this.sessionToken;
     this.set({
       sessionId,
       cwd,
       sessionName: undefined,
-      timeline: [],
-      history: undefined,
-      loadingOlder: false,
+      // Two-phase resume renders history before the engine attaches; keep it.
+      ...(opts?.keepTimeline ? {} : { timeline: [], history: undefined, loadingOlder: false }),
       isStreaming: false,
       isCompacting: false,
       extensionQueue: [],
@@ -419,13 +443,13 @@ export class ChatStore {
   }
 
   /** Spawn with retry: transient failures (busy binary, AV scans) happen. */
-  private async spawnSession(cwd: string): Promise<string> {
+  private async spawnSession(cwd: string, opts?: { keepTimeline?: boolean }): Promise<string> {
     let lastErr: unknown;
     for (const delay of [0, 500, 1500]) {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
         const sid = await createSession(cwd);
-        this.attachSession(sid, cwd);
+        this.attachSession(sid, cwd, opts);
         return sid;
       } catch (err) {
         lastErr = err;
@@ -476,33 +500,71 @@ export class ChatStore {
   /**
    * Restore an existing session file and render its latest page of history.
    *
-   * The engine silently drops commands that arrive before its RPC dispatch
-   * loop is up, so we must not fire switch_session at spawn time. Instead:
-   * spawn -> wait for a get_state response (readiness handshake) ->
-   * switch_session (kept for continuing the chat) -> pull state + a paged
-   * window of messages straight from the session file.
+   * Two phases: A renders the latest page straight from the session file
+   * (instant, read-only); B then attaches the engine in the background
+   * (spawn -> readiness probe -> switch_session -> meta) so the session
+   * becomes continuable. The engine drops commands that arrive before its
+   * RPC dispatch loop is up, hence the readiness probe before switch_session.
    */
   async resumeSession(sessionPath: string, cwd: string) {
     this.recoveryCount = 0;
+    this.turnUsage = null;
+    const seq = ++this.resumeSeq;
+
+    // Phase A — render the latest page straight from the session file.
+    // No engine round-trips, so history appears immediately; the session
+    // stays read-only until phase B connects the engine in the background.
+    this.detach();
+    this.clearHistory();
+    this.set({
+      sessionId: null,
+      cwd,
+      sessionName: undefined,
+      timeline: [],
+      history: undefined,
+      loadingOlder: false,
+      isStreaming: false,
+      isCompacting: false,
+      extensionQueue: [],
+      inputDraft: undefined,
+      attachments: [],
+      contextUsage: undefined,
+      sessionFile: undefined,
+      connecting: true,
+    });
     try {
-      const sid = await this.spawnSession(cwd);
-      localStorage.setItem("kalo.lastCwd", cwd);
-      await this.waitForEngine(sid);
-      const sw = await sendCommand(sid, { type: "switch_session", sessionPath }, 15000);
-      if (!sw.success) {
-        // Degrade to read-only history: the file itself is still renderable.
-        this.pushToast(`会话无法续聊（${sw.error}），已切换为只读历史`, "warning");
-      }
-      await this.fetchSessionMeta(sid);
-      // Render only the latest page; older messages load on scroll-up.
-      try {
-        await this.reloadLatestPage(sessionPath);
-      } catch (err) {
-        this.pushToast(`加载历史消息失败：${errText(err)}`, "error");
-      }
+      await this.reloadLatestPage(sessionPath);
     } catch (err) {
-      this.pushToast(`恢复会话失败：${errText(err)}`, "error");
+      this.pushToast(`加载历史消息失败：${errText(err)}`, "error");
     }
+    if (seq !== this.resumeSeq) return;
+
+    // Phase B — attach the engine in the background so the session becomes
+    // continuable; the timeline rendered in phase A stays untouched.
+    this.resumePromise = (async () => {
+      try {
+        localStorage.setItem("kalo.lastCwd", cwd);
+        const sid = await this.spawnSession(cwd, { keepTimeline: true });
+        if (seq !== this.resumeSeq) {
+          // Superseded by a newer resume/newChat: drop this engine process.
+          await closeSession(sid).catch(() => {});
+          return;
+        }
+        await this.waitForEngine(sid);
+        const sw = await sendCommand(sid, { type: "switch_session", sessionPath }, 15000);
+        if (!sw.success) {
+          // Degrade to read-only history: the file itself is still renderable.
+          this.pushToast(`会话无法续聊（${sw.error}），已切换为只读历史`, "warning");
+        }
+        if (seq !== this.resumeSeq) return;
+        await this.fetchSessionMeta(sid);
+      } catch (err) {
+        if (seq === this.resumeSeq) this.pushToast(`恢复会话失败：${errText(err)}`, "error");
+      } finally {
+        if (seq === this.resumeSeq) this.set({ connecting: false });
+        this.resumePromise = null;
+      }
+    })();
   }
 
   /** Prepend the next page of older messages to a resumed session. */
@@ -536,10 +598,11 @@ export class ChatStore {
   /** Pull state + model/thinking catalogs after (re)attaching a session. */
   private async fetchSessionMeta(sid: string) {
     try {
-      const [stateResp, modelsResp, levelsResp] = await Promise.all([
+      const [stateResp, modelsResp, levelsResp, commandsResp] = await Promise.all([
         sendCommand(sid, { type: "get_state" }, 15000),
         sendCommand(sid, { type: "get_available_models" }, 15000),
         sendCommand(sid, { type: "get_available_thinking_levels" }, 15000),
+        sendCommand(sid, { type: "get_commands" }, 15000),
       ]);
       const partial: Partial<ChatState> = {};
       if (stateResp.success) {
@@ -554,6 +617,7 @@ export class ChatStore {
       }
       if (modelsResp.success) partial.models = (modelsResp.data as { models: ModelInfo[] }).models;
       if (levelsResp.success) partial.thinkingLevels = (levelsResp.data as { levels: ThinkingLevel[] }).levels;
+      if (commandsResp.success) partial.commands = (commandsResp.data as { commands: SlashCommand[] }).commands;
       this.set(partial);
       void this.refreshContextUsage();
     } catch (err) {
@@ -610,6 +674,8 @@ export class ChatStore {
       }
     }
     if (!message && images.length === 0) return;
+    // A resumed session may still be connecting its engine in the background.
+    if (this.resumePromise) await this.resumePromise;
     try {
       const sid = await this.ensureSession();
       const resp = await sendCommand(sid, {
@@ -972,8 +1038,12 @@ export class ChatStore {
         this.pushToast(`扩展错误：${ev.error ?? "未知错误"}`, "error");
         break;
 
+      case "turn_end":
+        this.attachTurnUsage();
+        break;
+
       default:
-        // turn_start/turn_end/queue_update/bash_execution_update/... need no UI
+        // turn_start/queue_update/bash_execution_update/... need no UI
         break;
     }
   }
@@ -995,6 +1065,16 @@ export class ChatStore {
 
   private onMessageEnd(message: AgentMessage) {
     if (message.role === "assistant") {
+      // Accumulate token usage for the running turn (flushed at turn_end).
+      const u = message.usage;
+      if (u) {
+        this.turnUsage = {
+          input: (this.turnUsage?.input ?? 0) + (u.input ?? 0),
+          output: (this.turnUsage?.output ?? 0) + (u.output ?? 0),
+          cacheRead: (this.turnUsage?.cacheRead ?? 0) + (u.cacheRead ?? 0),
+          cacheWrite: (this.turnUsage?.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
+        };
+      }
       // Replace the streaming partial with the authoritative message.
       this.mutateTimeline((t) => {
         for (let i = t.length - 1; i >= 0; i--) {
@@ -1016,6 +1096,22 @@ export class ChatStore {
           : rec,
       );
     }
+  }
+
+  /** Attach the accumulated turn usage to the last assistant entry (turn footer). */
+  private attachTurnUsage() {
+    if (!this.turnUsage) return;
+    const usage = this.turnUsage;
+    this.turnUsage = null;
+    this.mutateTimeline((t) => {
+      for (let i = t.length - 1; i >= 0; i--) {
+        const e = t[i];
+        if (e.kind === "assistant") {
+          t[i] = { ...e, usage };
+          return;
+        }
+      }
+    });
   }
 
   /**

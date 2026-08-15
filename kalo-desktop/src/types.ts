@@ -322,6 +322,20 @@ export interface PiExitInfo {
   code: number | null;
 }
 
+/** One engine slash command (extension command, skill:, or prompt template). */
+export interface SlashCommand {
+  name: string;
+  description?: string;
+  source?: string;
+}
+
+/** One name match from search_files (@ completion). */
+export interface FileMatch {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
 /** One entry of a single-level directory listing (`list_dir`). */
 export interface DirEntry {
   name: string;

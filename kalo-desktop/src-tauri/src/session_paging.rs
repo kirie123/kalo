@@ -11,6 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
+use serde_json::value::RawValue;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,10 +22,24 @@ pub struct SessionPage {
     pub has_more: bool,
 }
 
-/// One parsed message entry: its parent link and the raw `message` payload.
-struct MessageEntry {
+/// Line-level view of one entry: only the branch-walk fields are parsed;
+/// the `message` payload stays a borrowed raw slice so lines outside the
+/// requested window never build a JSON DOM (they can be megabytes each).
+#[derive(serde::Deserialize)]
+struct LineEntry<'a> {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    id: Option<String>,
+    #[serde(rename = "parentId")]
     parent_id: Option<String>,
-    message: serde_json::Value,
+    #[serde(borrow)]
+    message: Option<&'a RawValue>,
+}
+
+/// One parsed message entry: its parent link and the raw `message` payload.
+struct MessageEntry<'a> {
+    parent_id: Option<String>,
+    message: &'a RawValue,
 }
 
 /// Read a window of the active branch of the session file at `path`.
@@ -49,23 +64,15 @@ pub fn read_session_page(
         if trimmed.is_empty() {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        let Ok(entry) = serde_json::from_str::<LineEntry>(trimmed) else {
             continue; // tolerate corrupt lines in an append-only file
         };
-        if value.get("type").and_then(|t| t.as_str()) != Some("message") {
+        if entry.kind.as_deref() != Some("message") {
             continue;
         }
-        let Some(id) = value.get("id").and_then(|i| i.as_str()) else {
+        let (Some(id), Some(message)) = (entry.id, entry.message) else {
             continue;
         };
-        let Some(message) = value.get("message").cloned() else {
-            continue;
-        };
-        let parent_id = value
-            .get("parentId")
-            .and_then(|p| p.as_str())
-            .map(|p| p.to_string());
-        let id = id.to_string();
         // A repeated id (should not happen) keeps the latest payload but
         // stays at its first position in the order list.
         if !by_id.contains_key(&id) {
@@ -74,7 +81,7 @@ pub fn read_session_page(
         by_id.insert(
             id,
             MessageEntry {
-                parent_id,
+                parent_id: entry.parent_id,
                 message,
             },
         );
@@ -92,9 +99,10 @@ pub fn read_session_page(
     let start = end.saturating_sub(limit.unwrap_or(30));
 
     Ok(SessionPage {
+        // Only the windowed messages get a full JSON parse.
         messages: branch[start..end]
             .iter()
-            .map(|entry| entry.message.clone())
+            .filter_map(|entry| serde_json::from_str(entry.message.get()).ok())
             .collect(),
         start,
         total,
@@ -107,8 +115,8 @@ pub fn read_session_page(
 /// against parent cycles in a corrupt file.
 fn walk_branch<'a>(
     leaf: &str,
-    by_id: &'a HashMap<String, MessageEntry>,
-) -> Vec<&'a MessageEntry> {
+    by_id: &'a HashMap<String, MessageEntry<'a>>,
+) -> Vec<&'a MessageEntry<'a>> {
     let mut chain: Vec<&MessageEntry> = Vec::new();
     let mut visited: HashSet<&str> = HashSet::new();
     let mut cursor: Option<&str> = Some(leaf);
