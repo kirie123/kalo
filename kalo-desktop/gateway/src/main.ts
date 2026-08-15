@@ -30,6 +30,7 @@ import {
   qrDataUrl,
 } from "./registration";
 import { ProgressRenderer } from "./renderer";
+import { Scheduler, type ScheduleTask } from "./scheduler";
 
 // ---------------------------------------------------------------------------
 // Guard the NDJSON stdout channel: everything libraries print via
@@ -43,6 +44,36 @@ let connection: FeishuConnection | null = null;
 let renderer: ProgressRenderer | null = null;
 let pairing = false;
 let cancelPairing: (() => void) | null = null;
+
+// ---------------------------------------------------------------------------
+// Scheduler (P0-A): cron/watch/agent tasks living in this sidecar.
+// ---------------------------------------------------------------------------
+
+function broadcastSchedules(): void {
+  send({ type: "schedule_status", tasks: scheduler.list() });
+}
+
+const scheduler = new Scheduler({
+  sendAlert: (task, output) => {
+    if (!connection) {
+      log(`alert for task ${task.id} dropped: feishu not connected`);
+      return;
+    }
+    connection
+      .sendText(`[${task.id}] ${task.name}\n${output}`)
+      .catch((err) => log(`alert push failed (${task.id}):`, err instanceof Error ? err.message : err));
+  },
+  requestAgentSession: (task: ScheduleTask) => {
+    send({
+      type: "session_request",
+      taskId: task.id,
+      cwd: task.cwd,
+      prompt: task.prompt ?? "",
+      model: task.model ?? null,
+    });
+  },
+  onChange: broadcastSchedules,
+});
 
 function emitStatus(
   state: "connecting" | "connected" | "disconnected",
@@ -148,6 +179,33 @@ function handleCommand(cmd: InCommand): void {
     }
     case "session_exit": {
       renderer?.handleExit(cmd.sessionId, cmd.code);
+      scheduler.handleSessionExit(cmd.sessionId, cmd.code);
+      return;
+    }
+    case "schedule_upsert": {
+      const err = scheduler.upsert(cmd.task);
+      if (err) send({ type: "schedule_error", message: err });
+      return;
+    }
+    case "schedule_remove": {
+      scheduler.remove(cmd.id);
+      return;
+    }
+    case "schedule_run": {
+      const err = scheduler.runNow(cmd.id);
+      if (err) send({ type: "schedule_error", message: err });
+      return;
+    }
+    case "schedule_list": {
+      broadcastSchedules();
+      return;
+    }
+    case "session_started": {
+      scheduler.handleSessionStarted(cmd.taskId, cmd.sessionId);
+      return;
+    }
+    case "session_start_failed": {
+      scheduler.handleSessionStartFailed(cmd.taskId, cmd.error);
       return;
     }
   }
@@ -183,6 +241,12 @@ function main(): void {
   });
   // Rust kills us on shutdown; stdin EOF only happens if the parent died.
   rl.on("close", () => process.exit(0));
+
+  // Scheduler runs independently of the Feishu connection (alerts are
+  // dropped while unpaired, but task bookkeeping still advances).
+  scheduler.load();
+  scheduler.start();
+  broadcastSchedules();
 
   // Startup: resume from persisted credentials or wait for pairing.
   const creds = loadCredentials();

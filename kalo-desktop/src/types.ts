@@ -434,3 +434,62 @@ export interface GatewayStatus {
   /** QR validity in seconds while pairing. */
   expiresIn?: number;
 }
+
+// ============================================================================
+// Task scheduler (gateway sidecar, mirrors ~/.kalo/agent/schedules.json)
+// ============================================================================
+
+export type ScheduleTaskKind = "watch" | "agent";
+export type ScheduleTaskResult = "ok" | "alerted" | "error";
+
+/** One scheduled task; `schedule_upsert` takes this whole object. */
+export interface ScheduleTask {
+  /** [\w-]{1,64}, stable handle. */
+  id: string;
+  name: string;
+  /** watch = local script, zero-token alert; agent = headless LLM session. */
+  kind: ScheduleTaskKind;
+  /** 5-field cron, local timezone: "M H DoM Mon DoW". */
+  schedule: string;
+  cwd: string;
+  /** watch: bash snippet. */
+  script?: string;
+  /** watch: currently only "nonEmpty" (alert when stdout is non-empty). */
+  matchMode?: "nonEmpty";
+  /** watch: minutes to skip the task after an alert. */
+  cooldownMin?: number;
+  /** agent: prompt for the headless pi session. */
+  prompt?: string;
+  /** agent: "provider/modelId", null/undefined = default model. */
+  model?: string | null;
+  enabled: boolean;
+  /** ISO timestamp of the last run. */
+  lastRun?: string;
+  lastResult?: ScheduleTaskResult;
+}
+
+/**
+ * Payload of the `schedule-status` Tauri event (and `schedule_list` command):
+ * a full task-table snapshot, each row plus its computed next run
+ * (null while disabled).
+ */
+export interface ScheduleTaskInfo extends ScheduleTask {
+  nextRunAt: string | null;
+}
+
+// ============================================================================
+// Knowledge base (~/.kalo/knowledge)
+// ============================================================================
+
+/** One knowledge card's index metadata (frontmatter, no body). */
+export interface KnowledgeCardMeta {
+  title: string;
+  /** cards | training-notes | investing | math */
+  domain: string;
+  tags: string[];
+  date: string;
+  /** Path relative to the knowledge root (forward slashes); the stable handle used by all commands. */
+  relPath: string;
+  /** Absolute path. */
+  path: string;
+}

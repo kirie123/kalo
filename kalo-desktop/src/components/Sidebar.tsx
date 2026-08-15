@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
 import type { ProjectGroup, SessionSummary } from "../types";
@@ -14,6 +14,8 @@ interface SidebarProps {
   activeSessionId: string | null;
   onNewChat: () => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
+  /** Delete one session's history file (confirmed in the menu already). */
+  onDeleteSession: (session: SessionSummary) => void;
   onOpenSettings: () => void;
 }
 
@@ -44,6 +46,7 @@ export default function Sidebar({
   activeSessionId,
   onNewChat,
   onSelectSession,
+  onDeleteSession,
   onOpenSettings,
 }: SidebarProps) {
   const [projects, setProjects] = useState<ProjectEntry[]>(() => listProjects());
@@ -150,6 +153,7 @@ export default function Sidebar({
                   reloadProjects();
                 }}
                 onSelectSession={onSelectSession}
+                onDeleteSession={onDeleteSession}
               />
             ))}
           </>
@@ -168,19 +172,24 @@ export default function Sidebar({
           <>
             {allSessions.length === 0 && <div className="px-2 py-1 text-xs text-dim">暂无历史会话</div>}
             {allSessions.map((s) => (
-              <button
+              <div
                 key={s.path}
-                onClick={() => onSelectSession(s.path, s.cwd)}
-                title={s.title || "未命名会话"}
-                className={`flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-card ${
+                className={`group flex w-full items-center gap-1 rounded-md px-2 py-1.5 hover:bg-card ${
                   activeSessionId && s.id === activeSessionId ? "bg-card" : ""
                 }`}
               >
-                <span className="w-full truncate text-sm">{s.title || "未命名会话"}</span>
-                <span className="w-full truncate text-xs text-dim">
-                  {cwdBasename(s.cwd)} · {formatRelativeTime(s.modifiedMs)}
-                </span>
-              </button>
+                <button
+                  onClick={() => onSelectSession(s.path, s.cwd)}
+                  title={s.title || "未命名会话"}
+                  className="flex min-w-0 flex-1 flex-col text-left"
+                >
+                  <span className="w-full truncate text-sm">{s.title || "未命名会话"}</span>
+                  <span className="w-full truncate text-xs text-dim">
+                    {cwdBasename(s.cwd)} · {formatRelativeTime(s.modifiedMs)}
+                  </span>
+                </button>
+                <SessionMenu session={s} onDeleteSession={onDeleteSession} />
+              </div>
             ))}
           </>
         )}
@@ -210,6 +219,7 @@ function ProjectRow({
   onOpen,
   onRemove,
   onSelectSession,
+  onDeleteSession,
 }: {
   project: ProjectEntry;
   sessions: SessionSummary[];
@@ -217,6 +227,7 @@ function ProjectRow({
   onOpen: () => void;
   onRemove: () => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
+  onDeleteSession: (session: SessionSummary) => void;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -260,18 +271,87 @@ function ProjectRow({
       {open && sessions.length === 0 && <div className="py-1 pl-9 text-xs text-dim">暂无会话</div>}
       {open &&
         sessions.map((s) => (
-          <button
+          <div
             key={s.path}
-            onClick={() => onSelectSession(s.path, project.cwd)}
-            title={s.title || "未命名会话"}
-            className={`flex w-full items-baseline justify-between gap-2 rounded-md py-1.5 pl-9 pr-2 text-left text-sm hover:bg-card ${
+            className={`group flex w-full items-center gap-1 rounded-md py-1.5 pl-9 pr-2 hover:bg-card ${
               activeSessionId && s.id === activeSessionId ? "bg-card" : ""
             }`}
           >
-            <span className="truncate">{s.title || "未命名会话"}</span>
-            <span className="shrink-0 text-xs text-dim">{formatRelativeTime(s.modifiedMs)}</span>
-          </button>
+            <button
+              onClick={() => onSelectSession(s.path, project.cwd)}
+              title={s.title || "未命名会话"}
+              className="flex min-w-0 flex-1 items-baseline justify-between gap-2 text-left text-sm"
+            >
+              <span className="truncate">{s.title || "未命名会话"}</span>
+              <span className="shrink-0 text-xs text-dim">{formatRelativeTime(s.modifiedMs)}</span>
+            </button>
+            <SessionMenu session={s} onDeleteSession={onDeleteSession} />
+          </div>
         ))}
+    </div>
+  );
+}
+
+/** Per-session "..." menu: currently 删除, more session actions go here. */
+function SessionMenu({
+  session,
+  onDeleteSession,
+}: {
+  session: SessionSummary;
+  onDeleteSession: (session: SessionSummary) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title="更多操作"
+        className={`rounded p-1 text-dim hover:text-ink ${open ? "block" : "hidden group-hover:block"}`}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="3" cy="8" r="1.4" />
+          <circle cx="8" cy="8" r="1.4" />
+          <circle cx="13" cy="8" r="1.4" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-6 z-20 w-32 overflow-hidden rounded-md border border-edge bg-card py-1 shadow-lg">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              if (window.confirm(`确定删除会话「${session.title || "未命名会话"}」的历史记录？该操作不可恢复。`)) {
+                onDeleteSession(session);
+              }
+            }}
+            className="flex w-full px-3 py-1.5 text-left text-sm text-[var(--danger)] hover:bg-base"
+          >
+            删除会话
+          </button>
+        </div>
+      )}
     </div>
   );
 }

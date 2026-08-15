@@ -6,11 +6,14 @@
  *   send_command   { sessionId, command } -> void
  *   close_session  { sessionId } -> void
  *   list_sessions  {} -> ProjectGroup[]
+ *   delete_session { path } -> void
  *   read_session_page { path, before?, limit? } -> SessionPage
  *   list_skills / read_skill / write_skill / create_skill / delete_skill
  *   list_memories / read_memory / write_memory / delete_memory
  *   read_models_config / write_models_config / read_auth_config / write_auth_config
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
+ *   schedule_list / schedule_upsert / schedule_remove / schedule_run
+ *   list_knowledge_cards / read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   read_attachment { path } -> AttachmentDraft (image base64 or text)
@@ -21,6 +24,8 @@
  *   pi-stderr:{sessionId} — string
  *   pi-exit:{sessionId}   — { code: number | null }
  *   gateway-status        — GatewayStatus (sidecar lifecycle, pairing QR)
+ *   schedule-status       — ScheduleTaskInfo[] (full task-table snapshot)
+ *   schedule-error        — string (async schedule_upsert validation failure)
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -32,6 +37,7 @@ import type {
   FileMatch,
   FileTextContent,
   GatewayStatus,
+  KnowledgeCardMeta,
   MemoryEntry,
   MemoryMeta,
   ModelsConfig,
@@ -41,6 +47,8 @@ import type {
   RpcCommand,
   RpcExtensionUIResponse,
   RpcResponse,
+  ScheduleTask,
+  ScheduleTaskInfo,
   SessionPage,
   SkillMeta,
 } from "../types";
@@ -59,6 +67,11 @@ export function closeSession(sessionId: string): Promise<void> {
 
 export function listSessions(): Promise<ProjectGroup[]> {
   return invoke<ProjectGroup[]>("list_sessions", {});
+}
+
+/** Delete one historical session file (its .jsonl under the sessions root). */
+export function deleteSession(path: string): Promise<void> {
+  return invoke<void>("delete_session", { path });
 }
 
 /**
@@ -199,6 +212,74 @@ export function gatewayUnbind(): Promise<void> {
 /** Subscribe to `gateway-status` push updates (pairing QR, state changes). */
 export function onGatewayStatus(cb: (status: GatewayStatus) => void) {
   return listen<GatewayStatus>("gateway-status", (e) => cb(e.payload));
+}
+
+// ============================================================================
+// Task scheduler (gateway sidecar)
+// ============================================================================
+
+/** Cached task-table snapshot; a fresh copy is pushed via `schedule-status`. */
+export function scheduleList(): Promise<ScheduleTaskInfo[]> {
+  return invoke<ScheduleTaskInfo[]>("schedule_list", {});
+}
+
+/**
+ * Create or replace one task (whole object). Invalid input does not reject
+ * here — the gateway reports it asynchronously as a `schedule-error` event.
+ */
+export function scheduleUpsert(task: ScheduleTask): Promise<void> {
+  return invoke<void>("schedule_upsert", { task });
+}
+
+export function scheduleRemove(id: string): Promise<void> {
+  return invoke<void>("schedule_remove", { id });
+}
+
+/** Fire a task right now, ignoring its enabled flag and cooldown. */
+export function scheduleRun(id: string): Promise<void> {
+  return invoke<void>("schedule_run", { id });
+}
+
+/** Subscribe to `schedule-status` full task-table snapshots. */
+export function onScheduleStatus(cb: (tasks: ScheduleTaskInfo[]) => void) {
+  return listen<ScheduleTaskInfo[]>("schedule-status", (e) => cb(e.payload));
+}
+
+/** Subscribe to `schedule-error` (async validation failures of schedule_upsert). */
+export function onScheduleError(cb: (message: string) => void) {
+  return listen<string>("schedule-error", (e) => cb(e.payload));
+}
+
+// ============================================================================
+// Knowledge base (~/.kalo/knowledge)
+// ============================================================================
+
+export function listKnowledgeCards(): Promise<KnowledgeCardMeta[]> {
+  return invoke<KnowledgeCardMeta[]>("list_knowledge_cards", {});
+}
+
+/** Full markdown text of one card. */
+export function readKnowledgeCard(relPath: string): Promise<string> {
+  return invoke<string>("read_knowledge_card", { relPath });
+}
+
+/**
+ * Create (omit `relPath` → `<domain>/<slug>.md`, fails when it already
+ * exists) or overwrite a card; resolves to the actual rel path.
+ */
+export function writeKnowledgeCard(
+  relPath: string | undefined,
+  domain: string,
+  title: string,
+  content: string,
+): Promise<string> {
+  const args: Record<string, unknown> = { domain, title, content };
+  if (relPath !== undefined) args.relPath = relPath;
+  return invoke<string>("write_knowledge_card", args);
+}
+
+export function deleteKnowledgeCard(relPath: string): Promise<void> {
+  return invoke<void>("delete_knowledge_card", { relPath });
 }
 
 // ============================================================================

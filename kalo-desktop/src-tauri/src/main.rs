@@ -7,6 +7,7 @@
 
 mod files;
 mod gateway;
+mod knowledge;
 mod memory;
 mod session;
 mod session_paging;
@@ -65,6 +66,12 @@ fn close_session(session_id: String, state: State<SessionManager>) -> Result<(),
 #[tauri::command]
 fn list_sessions() -> Result<Vec<ProjectGroup>, String> {
     sessions_store::list_sessions()
+}
+
+/// Delete one historical session file (guarded to the sessions root).
+#[tauri::command]
+fn delete_session(path: String) -> Result<(), String> {
+    sessions_store::delete_session(&path)
 }
 
 /// Read one page of a session file's active branch for the history viewer.
@@ -225,6 +232,73 @@ fn gateway_unbind(state: State<GatewayManager>) -> Result<(), String> {
     state.unbind()
 }
 
+// ============================================================================
+// Scheduler (task table lives in the gateway sidecar)
+// ============================================================================
+
+/// Create or replace a scheduled task (validated gateway-side; a
+/// `schedule-error` event is emitted on invalid input).
+#[tauri::command]
+fn schedule_upsert(
+    task: serde_json::Value,
+    state: State<GatewayManager>,
+    app: AppHandle,
+) -> Result<(), String> {
+    state.schedule_upsert(&app, task)
+}
+
+/// Remove a scheduled task by id.
+#[tauri::command]
+fn schedule_remove(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
+    state.schedule_remove(&app, &id)
+}
+
+/// Manually trigger a task now (ignores enabled/cooldown).
+#[tauri::command]
+fn schedule_run(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
+    state.schedule_run(&app, &id)
+}
+
+/// Cached task-table snapshot (fresh data arrives via `schedule-status`).
+#[tauri::command]
+fn schedule_list(state: State<GatewayManager>) -> Vec<serde_json::Value> {
+    state.schedule_list()
+}
+
+// ============================================================================
+// Knowledge base (~/.kalo/knowledge, P0-B)
+// ============================================================================
+
+/// List all knowledge cards (frontmatter metadata), newest first.
+#[tauri::command]
+fn list_knowledge_cards() -> Result<Vec<knowledge::KnowledgeCardMeta>, String> {
+    knowledge::list_cards()
+}
+
+/// Read one card by its root-relative path.
+#[tauri::command]
+fn read_knowledge_card(rel_path: String) -> Result<String, String> {
+    knowledge::read_card(&rel_path)
+}
+
+/// Create (rel_path None → `<domain>/<slug>.md`) or overwrite a card;
+/// returns the rel path.
+#[tauri::command]
+fn write_knowledge_card(
+    rel_path: Option<String>,
+    domain: String,
+    title: String,
+    content: String,
+) -> Result<String, String> {
+    knowledge::write_card(rel_path.as_deref(), &domain, &title, &content)
+}
+
+/// Delete a card by rel path.
+#[tauri::command]
+fn delete_knowledge_card(rel_path: String) -> Result<(), String> {
+    knowledge::delete_card(&rel_path)
+}
+
 fn lock_sessions<'a>(
     state: &'a State<SessionManager>,
 ) -> Result<std::sync::MutexGuard<'a, std::collections::HashMap<String, PiProcess>>, String> {
@@ -236,7 +310,7 @@ fn lock_sessions<'a>(
 
 /// Generate a uuid-style id without an external crate: 16 bytes of
 /// material mixed from the current time and a process-wide counter.
-fn gen_session_id() -> String {
+pub(crate) fn gen_session_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -267,6 +341,8 @@ fn main() {
         .setup(|app| {
             // Auto-start the IM gateway when Feishu credentials already exist.
             gateway::autostart(app.handle());
+            // First-run: knowledge base dirs + starter skill (non-destructive).
+            knowledge::ensure_knowledge_base();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -274,6 +350,7 @@ fn main() {
             send_command,
             close_session,
             list_sessions,
+            delete_session,
             read_session_page,
             read_models_config,
             write_models_config,
@@ -297,6 +374,14 @@ fn main() {
             gateway_pair_cancel,
             gateway_status,
             gateway_unbind,
+            schedule_upsert,
+            schedule_remove,
+            schedule_run,
+            schedule_list,
+            list_knowledge_cards,
+            read_knowledge_card,
+            write_knowledge_card,
+            delete_knowledge_card,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Kalo");

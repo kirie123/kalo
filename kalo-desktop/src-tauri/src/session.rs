@@ -19,6 +19,62 @@ use tauri::{AppHandle, Emitter};
 #[derive(Default)]
 pub struct SessionManager {
     pub sessions: Mutex<HashMap<String, PiProcess>>,
+    /// Pending engine-readiness probes: RPC request id → notifier. The
+    /// engine silently drops commands received before its dispatch loop is
+    /// up, so headless sessions (scheduler) probe with `get_state` first.
+    probe_waiters: Mutex<HashMap<String, mpsc::Sender<()>>>,
+}
+
+impl SessionManager {
+    /// Register a probe waiter for an RPC request id; the receiver fires
+    /// once a `type:"response"` line with that id arrives on stdout.
+    pub fn register_probe(&self, id: String) -> Option<mpsc::Receiver<()>> {
+        let (tx, rx) = mpsc::channel();
+        match self.probe_waiters.lock() {
+            Ok(mut map) => {
+                map.insert(id, tx);
+                Some(rx)
+            }
+            Err(_) => None,
+        }
+    }
+
+    pub fn unregister_probe(&self, id: &str) {
+        if let Ok(mut map) = self.probe_waiters.lock() {
+            map.remove(id);
+        }
+    }
+}
+
+/// Notify a probe waiter if this stdout line is its correlated response.
+/// Cheap fast path: no waiters registered → no parsing at all.
+fn notify_probe(app: &AppHandle, line: &str) {
+    use tauri::Manager;
+    let Some(sessions) = app.try_state::<SessionManager>() else {
+        return;
+    };
+    {
+        let Ok(map) = sessions.probe_waiters.lock() else {
+            return;
+        };
+        if map.is_empty() {
+            return;
+        }
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    if value.get("type").and_then(|v| v.as_str()) != Some("response") {
+        return;
+    }
+    let Some(id) = value.get("id").and_then(|v| v.as_str()) else {
+        return;
+    };
+    if let Ok(mut map) = sessions.probe_waiters.lock() {
+        if let Some(tx) = map.remove(id) {
+            let _ = tx.send(());
+        }
+    };
 }
 
 /// Incremental NDJSON framer.
@@ -174,6 +230,7 @@ impl PiProcess {
                         Ok(0) => break, // EOF: child closed stdout
                         Ok(n) => {
                             for line in framer.push(&chunk[..n]) {
+                                notify_probe(&app, &line);
                                 emit_json_line(&app, &event_name, &line);
                                 forward_to_gateway(&app, &session_id, &cwd, &line);
                             }
@@ -185,6 +242,7 @@ impl PiProcess {
                     }
                 }
                 if let Some(line) = framer.finish() {
+                    notify_probe(&app, &line);
                     emit_json_line(&app, &event_name, &line);
                     forward_to_gateway(&app, &session_id, &cwd, &line);
                 }

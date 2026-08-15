@@ -11,9 +11,11 @@ import {
 } from "../lib/pi-bridge";
 import type { AuthConfig, ModelsConfig, ProviderConfig, SkillMeta } from "../types";
 import GatewaySettings from "./GatewaySettings";
+import KnowledgeSettings from "./KnowledgeSettings";
 import MemorySettings from "./MemorySettings";
 import ProviderEditModal from "./ProviderEditModal";
 import SkillEditModal from "./SkillEditModal";
+import TasksSettings from "./TasksSettings";
 
 export type ThemePref = "system" | "light" | "dark";
 
@@ -43,7 +45,7 @@ const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
 ];
 
 /** Left navigation tabs; the key is persisted across visits. */
-type SettingsTab = "models" | "skills" | "memory" | "appearance" | "gateway" | "about";
+type SettingsTab = "models" | "skills" | "memory" | "appearance" | "gateway" | "tasks" | "knowledge" | "about";
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "models", label: "模型" },
@@ -51,6 +53,8 @@ const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "memory", label: "记忆" },
   { id: "appearance", label: "外观" },
   { id: "gateway", label: "IM 网关" },
+  { id: "tasks", label: "任务" },
+  { id: "knowledge", label: "知识库" },
   { id: "about", label: "关于" },
 ];
 
@@ -109,6 +113,8 @@ export default function SettingsPage({ theme, onThemeChange, onBack }: SettingsP
           {tab === "memory" && <MemorySettings />}
           {tab === "appearance" && <AppearanceSettings theme={theme} onThemeChange={onThemeChange} />}
           {tab === "gateway" && <GatewaySettings />}
+          {tab === "tasks" && <TasksSettings />}
+          {tab === "knowledge" && <KnowledgeSettings />}
           {tab === "about" && <AboutSettings />}
         </div>
       </div>

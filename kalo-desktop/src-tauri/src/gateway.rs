@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::session::NdjsonFramer;
+use crate::session::{NdjsonFramer, PiProcess, SessionManager};
 
 const SIDECAR: &str = "kalo-gateway-x86_64-pc-windows-msvc.exe";
 /// Auto-restart budget for a crashed gateway that should be connected.
@@ -65,6 +65,8 @@ struct GatewayInner {
     want_running: bool,
     /// True during deliberate stop (unbind/shutdown) — no auto-restart.
     stopping: bool,
+    /// Latest scheduler task-table snapshot (P0-A), pushed by the gateway.
+    schedules: Vec<serde_json::Value>,
 }
 
 impl Default for GatewayInner {
@@ -75,6 +77,7 @@ impl Default for GatewayInner {
             restart_attempts: 0,
             want_running: false,
             stopping: false,
+            schedules: Vec::new(),
         }
     }
 }
@@ -283,6 +286,40 @@ impl GatewayManager {
         let _ = self.send(line.to_string());
     }
 
+    // ------------------------------------------------------------------
+    // Scheduler (P0-A): the task table lives in the gateway sidecar; the
+    // frontend's commands are simple pass-throughs over the stdin channel.
+    // ------------------------------------------------------------------
+
+    /// Forward a scheduler command, spawning the sidecar on demand (the
+    /// scheduler must run even before Feishu is paired).
+    fn send_schedule_cmd(&self, app: &AppHandle, value: serde_json::Value) -> Result<(), String> {
+        self.ensure_spawned(app)?;
+        self.send(value.to_string())
+    }
+
+    pub fn schedule_upsert(&self, app: &AppHandle, task: serde_json::Value) -> Result<(), String> {
+        self.send_schedule_cmd(app, serde_json::json!({ "cmd": "schedule_upsert", "task": task }))
+    }
+
+    pub fn schedule_remove(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+        self.send_schedule_cmd(app, serde_json::json!({ "cmd": "schedule_remove", "id": id }))
+    }
+
+    pub fn schedule_run(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+        self.send_schedule_cmd(app, serde_json::json!({ "cmd": "schedule_run", "id": id }))
+    }
+
+    /// Cached task-table snapshot; also asks the gateway for a fresh copy
+    /// (delivered asynchronously as the `schedule-status` event).
+    pub fn schedule_list(&self) -> Vec<serde_json::Value> {
+        let running = self.lock().process.is_some();
+        if running {
+            let _ = self.send(r#"{"cmd":"schedule_list"}"#.to_string());
+        }
+        self.lock().schedules.clone()
+    }
+
     pub fn status(&self) -> GatewayStatusData {
         self.lock().status.clone()
     }
@@ -370,8 +407,155 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
                 s.qr_data_url = None;
             });
         }
+        "schedule_status" => {
+            let tasks = value
+                .get("tasks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            {
+                let mut inner = gateway.lock();
+                inner.schedules = tasks.clone();
+            }
+            if let Err(e) = app.emit("schedule-status", tasks) {
+                eprintln!("[kalo] emit schedule-status failed: {e}");
+            }
+        }
+        "schedule_error" => {
+            let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("任务操作失败");
+            if let Err(e) = app.emit("schedule-error", message.to_string()) {
+                eprintln!("[kalo] emit schedule-error failed: {e}");
+            }
+        }
+        "session_request" => handle_session_request(app, &value),
         _ => {}
     }
+}
+
+// ============================================================================
+// Scheduler agent tasks: headless pi sessions (P0-A, roadmap §4.2)
+// ============================================================================
+
+/// The gateway asked us to run an agent task: spawn a headless pi session
+/// in `cwd`, wait for the engine's RPC loop (it silently drops commands
+/// sent before that), then blind-send the prompt. Progress flows back to
+/// the gateway through the normal event forwarding chain.
+fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
+    let task_id = value.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let cwd = value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let prompt = value.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let model = value.get("model").and_then(|v| v.as_str()).map(String::from);
+
+    let gateway = app.state::<GatewayManager>();
+    let report_failure = |error: String| {
+        let line = serde_json::json!({
+            "cmd": "session_start_failed",
+            "taskId": task_id,
+            "error": error,
+        });
+        let _ = gateway.send(line.to_string());
+    };
+
+    if task_id.is_empty() || cwd.is_empty() || prompt.is_empty() {
+        report_failure("session_request 缺少 taskId/cwd/prompt".into());
+        return;
+    }
+
+    let session_id = crate::gen_session_id();
+    let process = match PiProcess::spawn(&session_id, &cwd, app.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            report_failure(e);
+            return;
+        }
+    };
+    {
+        let sessions = app.state::<SessionManager>();
+        let Ok(mut map) = sessions.sessions.lock() else {
+            report_failure("session manager lock poisoned".into());
+            return;
+        };
+        map.insert(session_id.clone(), process);
+    }
+    let line = serde_json::json!({
+        "cmd": "session_started",
+        "taskId": task_id,
+        "sessionId": session_id,
+    });
+    let _ = gateway.send(line.to_string());
+
+    // Probe readiness, then deliver the prompt. Runs on its own thread so
+    // the gateway stdout reader is never blocked.
+    let app = app.clone();
+    thread::spawn(move || {
+        if !wait_for_engine(&app, &session_id, Duration::from_secs(20)) {
+            eprintln!("[kalo] scheduled session {session_id}: engine never became ready");
+            return;
+        }
+        let sessions = app.state::<SessionManager>();
+        let Ok(map) = sessions.sessions.lock() else {
+            return;
+        };
+        let Some(process) = map.get(&session_id) else {
+            return;
+        };
+        if let Some(model) = model.as_deref() {
+            if let Some((provider, model_id)) = model.split_once('/') {
+                let cmd = serde_json::json!({
+                    "id": format!("sched-model-{session_id}"),
+                    "type": "set_model",
+                    "provider": provider,
+                    "modelId": model_id,
+                });
+                let _ = process.send(cmd.to_string());
+            }
+        }
+        let cmd = serde_json::json!({
+            "id": format!("sched-prompt-{session_id}"),
+            "type": "prompt",
+            "message": prompt,
+        });
+        let _ = process.send(cmd.to_string());
+    });
+}
+
+/// Retry `get_state` until the engine answers (exponential backoff +
+/// jitter, mirroring the frontend's waitForEngine in chat-store.ts).
+fn wait_for_engine(app: &AppHandle, session_id: &str, budget: Duration) -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let start = std::time::Instant::now();
+    let mut delay = Duration::from_millis(250);
+    while start.elapsed() < budget {
+        let probe_id = format!("sched-probe-{}", PROBE_SEQ.fetch_add(1, Ordering::Relaxed));
+        let sessions = app.state::<SessionManager>();
+        let Some(rx) = sessions.register_probe(probe_id.clone()) else {
+            return false;
+        };
+        {
+            let Ok(map) = sessions.sessions.lock() else {
+                sessions.unregister_probe(&probe_id);
+                return false;
+            };
+            let Some(process) = map.get(session_id) else {
+                sessions.unregister_probe(&probe_id);
+                return false;
+            };
+            let cmd = serde_json::json!({ "id": probe_id, "type": "get_state" });
+            if process.send(cmd.to_string()).is_err() {
+                sessions.unregister_probe(&probe_id);
+                return false;
+            }
+        }
+        if rx.recv_timeout(Duration::from_secs(2)).is_ok() {
+            return true;
+        }
+        sessions.unregister_probe(&probe_id);
+        thread::sleep(delay);
+        delay = (delay * 2).min(Duration::from_secs(2));
+    }
+    false
 }
 
 /// Exit-watcher callback: cleanup, status update and crash restart policy.

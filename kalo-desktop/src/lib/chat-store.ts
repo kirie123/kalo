@@ -62,7 +62,7 @@ export interface UserEntry {
   message: UserMessage;
 }
 
-/** Aggregated token usage of one agent turn (summed across its LLM calls). */
+/** Aggregated token usage of one agent run (summed across all its LLM calls/turns). */
 export interface TurnUsage {
   input: number;
   output: number;
@@ -75,7 +75,7 @@ export interface AssistantEntry {
   kind: "assistant";
   message: AssistantMessage;
   streaming: boolean;
-  /** Set at turn_end: aggregated usage of the whole turn, shown as a footer. */
+  /** Set at agent_settled: aggregated usage of the whole run, shown once as a footer. */
   usage?: TurnUsage;
 }
 
@@ -233,8 +233,8 @@ export class ChatStore {
   private compactionNoticeId: string | null = null;
   /** Auto-recovery attempts for the current session lifecycle (capped). */
   private recoveryCount = 0;
-  /** Usage accumulator for the in-flight turn; flushed onto the last assistant entry at turn_end. */
-  private turnUsage: TurnUsage | null = null;
+  /** Usage accumulator for the in-flight run (agent_start → agent_settled); flushed onto the last assistant entry once the run settles. */
+  private runUsage: TurnUsage | null = null;
   /** Generation guard for resumeSession: a newer resume supersedes older phases. */
   private resumeSeq = 0;
   /** In-flight background engine connect of a resume; sendPrompt awaits it. */
@@ -321,7 +321,7 @@ export class ChatStore {
     this.detach();
     this.clearHistory();
     this.recoveryCount = 0;
-    this.turnUsage = null;
+    this.runUsage = null;
     this.resumeSeq++;
     this.set({
       sessionId: null,
@@ -508,7 +508,7 @@ export class ChatStore {
    */
   async resumeSession(sessionPath: string, cwd: string) {
     this.recoveryCount = 0;
-    this.turnUsage = null;
+    this.runUsage = null;
     const seq = ++this.resumeSeq;
 
     // Phase A — render the latest page straight from the session file.
@@ -958,6 +958,8 @@ export class ChatStore {
   private handleAgentEvent(ev: PiEvent) {
     switch (ev.type) {
       case "agent_start":
+        // New run: discard any stale accumulator from a run that never settled.
+        this.runUsage = null;
         this.set({ isStreaming: true });
         break;
       case "agent_end":
@@ -966,6 +968,7 @@ export class ChatStore {
         break;
       case "agent_settled":
         this.set({ isStreaming: false, isCompacting: false });
+        this.attachRunUsage();
         break;
 
       case "message_start":
@@ -1047,12 +1050,9 @@ export class ChatStore {
         this.pushToast(`扩展错误：${ev.error ?? "未知错误"}`, "error");
         break;
 
-      case "turn_end":
-        this.attachTurnUsage();
-        break;
-
       default:
-        // turn_start/queue_update/bash_execution_update/... need no UI
+        // turn_start/turn_end/queue_update/bash_execution_update/... need no UI
+        // (usage is accumulated on message_end and flushed at agent_settled).
         break;
     }
   }
@@ -1074,14 +1074,15 @@ export class ChatStore {
 
   private onMessageEnd(message: AgentMessage) {
     if (message.role === "assistant") {
-      // Accumulate token usage for the running turn (flushed at turn_end).
+      // Accumulate token usage for the running agent run (flushed once at
+      // agent_settled — a run spans several LLM calls/turns).
       const u = message.usage;
       if (u) {
-        this.turnUsage = {
-          input: (this.turnUsage?.input ?? 0) + (u.input ?? 0),
-          output: (this.turnUsage?.output ?? 0) + (u.output ?? 0),
-          cacheRead: (this.turnUsage?.cacheRead ?? 0) + (u.cacheRead ?? 0),
-          cacheWrite: (this.turnUsage?.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
+        this.runUsage = {
+          input: (this.runUsage?.input ?? 0) + (u.input ?? 0),
+          output: (this.runUsage?.output ?? 0) + (u.output ?? 0),
+          cacheRead: (this.runUsage?.cacheRead ?? 0) + (u.cacheRead ?? 0),
+          cacheWrite: (this.runUsage?.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
         };
       }
       // Replace the streaming partial with the authoritative message.
@@ -1107,11 +1108,11 @@ export class ChatStore {
     }
   }
 
-  /** Attach the accumulated turn usage to the last assistant entry (turn footer). */
-  private attachTurnUsage() {
-    if (!this.turnUsage) return;
-    const usage = this.turnUsage;
-    this.turnUsage = null;
+  /** Attach the accumulated run usage to the last assistant entry (run footer). */
+  private attachRunUsage() {
+    if (!this.runUsage) return;
+    const usage = this.runUsage;
+    this.runUsage = null;
     this.mutateTimeline((t) => {
       for (let i = t.length - 1; i >= 0; i--) {
         const e = t[i];

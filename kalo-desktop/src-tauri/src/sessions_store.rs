@@ -101,6 +101,26 @@ fn sessions_root() -> Option<PathBuf> {
     )
 }
 
+/// Delete one session file. The canonicalized path must be a `.jsonl` file
+/// inside the sessions root; anything else is refused.
+pub fn delete_session(path: &str) -> Result<(), String> {
+    let root = sessions_root().ok_or("cannot resolve sessions root")?;
+    let canonical_root = fs::canonicalize(&root).unwrap_or(root);
+    let canonical = fs::canonicalize(path)
+        .map_err(|e| format!("failed to resolve session path {path}: {e}"))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!(
+            "refusing to delete {}: not inside the sessions directory",
+            canonical.display()
+        ));
+    }
+    if canonical.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return Err(format!("not a session file: {}", canonical.display()));
+    }
+    fs::remove_file(&canonical)
+        .map_err(|e| format!("failed to delete {}: {e}", canonical.display()))
+}
+
 /// Parse one session file into `(cwd, SessionMeta)`, or `None` if it does
 /// not look like a pi session file.
 fn parse_session_file(path: &Path) -> Option<(String, SessionMeta)> {

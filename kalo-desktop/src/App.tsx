@@ -4,7 +4,7 @@ import EmptyState from "./components/EmptyState";
 import FilePanel from "./components/FilePanel";
 import SettingsPage, { applyTheme, loadTheme, type ThemePref } from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
-import { listSessions } from "./lib/pi-bridge";
+import { listSessions, deleteSession, closeSession } from "./lib/pi-bridge";
 import { chatStore, useChatStore } from "./lib/chat-store";
 import { loadWidth, startColumnDrag } from "./lib/drag";
 import type { ProjectGroup } from "./types";
@@ -63,6 +63,23 @@ export default function App() {
         onSelectSession={(sessionPath, cwd) => {
           void chatStore.resumeSession(sessionPath, cwd);
           setPage("chat");
+        }}
+        onDeleteSession={(s) => {
+          void (async () => {
+            // Deleting the live session: reset the chat first so the engine
+            // can't rewrite the file afterwards.
+            const norm = (p?: string) => p?.replace(/\\/g, "/");
+            if (chat.engineSessionId === s.id || norm(chat.sessionFile) === norm(s.path)) {
+              if (chat.sessionId) await closeSession(chat.sessionId).catch(() => {});
+              chatStore.newChat();
+            }
+            try {
+              await deleteSession(s.path);
+              refreshProjects();
+            } catch (err) {
+              chatStore.pushToast(`删除会话失败：${err instanceof Error ? err.message : String(err)}`, "error");
+            }
+          })();
         }}
         onOpenSettings={() => setPage("settings")}
       />
