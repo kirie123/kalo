@@ -1,5 +1,5 @@
 //! Read/write helpers for the pi engine's own configuration files:
-//! `~/.pi/agent/models.json` (custom providers) and `~/.pi/agent/auth.json`
+//! `~/.kalo/agent/models.json` (custom providers) and `~/.kalo/agent/auth.json`
 //! (API keys). The engine reads both at process start, so changes take
 //! effect for newly spawned sessions.
 
@@ -32,22 +32,22 @@ fn write_json_file(path: &PathBuf, value: &serde_json::Value) -> Result<(), Stri
     fs::write(path, text).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
-/// Read ~/.pi/agent/models.json; returns `{"providers":{}}` when absent.
+/// Read ~/.kalo/agent/models.json; returns `{"providers":{}}` when absent.
 pub fn read_models_config() -> Result<serde_json::Value, String> {
     read_json_file(&agent_dir()?.join("models.json"), r#"{"providers":{}}"#)
 }
 
-/// Write ~/.pi/agent/models.json.
+/// Write ~/.kalo/agent/models.json.
 pub fn write_models_config(config: &serde_json::Value) -> Result<(), String> {
     write_json_file(&agent_dir()?.join("models.json"), config)
 }
 
-/// Read ~/.pi/agent/auth.json; returns `{}` when absent.
+/// Read ~/.kalo/agent/auth.json; returns `{}` when absent.
 pub fn read_auth_config() -> Result<serde_json::Value, String> {
     read_json_file(&agent_dir()?.join("auth.json"), "{}")
 }
 
-/// Write ~/.pi/agent/auth.json.
+/// Write ~/.kalo/agent/auth.json.
 pub fn write_auth_config(config: &serde_json::Value) -> Result<(), String> {
     write_json_file(&agent_dir()?.join("auth.json"), config)
 }

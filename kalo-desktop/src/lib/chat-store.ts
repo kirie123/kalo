@@ -692,7 +692,7 @@ export class ChatStore {
   }
 
   /**
-   * Load custom providers from ~/.pi/agent/models.json into the picker.
+   * Load custom providers from ~/.kalo/agent/models.json into the picker.
    * These are shown even before a session exists; the engine itself picks
    * them up when a (new) session process spawns.
    */

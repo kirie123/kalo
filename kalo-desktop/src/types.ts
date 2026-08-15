@@ -298,6 +298,26 @@ export interface SkillMeta {
   isDir: boolean;
 }
 
+/** One memory's index metadata (frontmatter + summary, no body). */
+export interface MemoryMeta {
+  slug: string;
+  title: string;
+  tags: string[];
+  summary: string;
+  updated: string;
+  path: string;
+}
+
+/** A full memory entry including its body (`content`). */
+export interface MemoryEntry {
+  slug: string;
+  title: string;
+  tags: string[];
+  created: string;
+  updated: string;
+  content: string;
+}
+
 export interface PiExitInfo {
   code: number | null;
 }
@@ -327,7 +347,7 @@ export type AttachmentDraft =
   | { kind: "text"; name: string; text: string; truncated: boolean };
 
 // ============================================================================
-// pi engine configuration (~/.pi/agent/models.json + auth.json)
+// pi engine configuration (~/.kalo/agent/models.json + auth.json)
 // ============================================================================
 
 /** Wire API dialect spoken by a custom provider. */
@@ -359,17 +379,17 @@ export interface ProviderConfig {
   models: ProviderModelDef[];
 }
 
-/** Contents of ~/.pi/agent/models.json. */
+/** Contents of ~/.kalo/agent/models.json. */
 export interface ModelsConfig {
   providers: Record<string, ProviderConfig>;
 }
 
-/** One credential entry of ~/.pi/agent/auth.json. */
+/** One credential entry of ~/.kalo/agent/auth.json. */
 export interface AuthCredential {
   type: string;
   key?: string;
   [key: string]: unknown;
 }
 
-/** Contents of ~/.pi/agent/auth.json. */
+/** Contents of ~/.kalo/agent/auth.json. */
 export type AuthConfig = Record<string, AuthCredential>;

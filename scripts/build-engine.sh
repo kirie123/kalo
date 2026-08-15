@@ -19,10 +19,12 @@ echo "==> Compiling pi.exe (windows-x64)..."
 # Note: build-binaries.sh also creates a .zip archive, which fails when the
 # `zip` tool is absent (e.g. Git Bash) — the staged directory is already
 # complete by then, so tolerate that trailing failure and verify freshness
-# instead. npm_config_registry keeps the clipboard download off broken mirrors.
+# instead. --skip-deps keeps the cross-platform clipboard bindings already
+# present in node_modules instead of re-downloading them (broken/expensive
+# mirrors must not abort the build before the bun compile step).
 export npm_config_registry="${npm_config_registry:-https://registry.npmmirror.com}"
-(cd "$HARNESS" && bash scripts/build-binaries.sh --platform windows-x64 --skip-install --skip-build --offline-model-data) || true
-if [[ ! -f "$SRC/pi.exe" ]] || ! grep -q '"configDir": ".kalo"' "$SRC/package.json"; then
+(cd "$HARNESS" && bash scripts/build-binaries.sh --platform windows-x64 --skip-install --skip-deps --skip-build --offline-model-data) || true
+if [[ ! -f "$SRC/pi.exe" ]] || [[ "$HARNESS/packages/coding-agent/dist/cli.js" -nt "$SRC/pi.exe" ]] || ! grep -q '"configDir": ".kalo"' "$SRC/package.json"; then
     echo "error: engine compile did not produce a fresh pi.exe in $SRC" >&2
     exit 1
 fi

@@ -1,6 +1,6 @@
 //! Historical session scanning.
 //!
-//! pi stores past sessions under `%USERPROFILE%/.pi/agent/sessions/<encoded-cwd>/`
+//! pi stores past sessions under `%USERPROFILE%/.kalo/agent/sessions/<encoded-cwd>/`
 //! as `*.jsonl` files. The first line of each file is a header:
 //! `{"type":"session","id":"...","timestamp":"...","cwd":"..."}`.
 //! Later lines may carry a display name (`type: "session_info"` with a

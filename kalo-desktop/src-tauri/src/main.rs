@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod files;
+mod memory;
 mod session;
 mod session_paging;
 mod sessions_store;
@@ -58,7 +59,7 @@ fn close_session(session_id: String, state: State<SessionManager>) -> Result<(),
     Ok(())
 }
 
-/// List historical sessions from ~/.pi/agent/sessions, grouped by cwd.
+/// List historical sessions from ~/.kalo/agent/sessions, grouped by cwd.
 #[tauri::command]
 fn list_sessions() -> Result<Vec<ProjectGroup>, String> {
     sessions_store::list_sessions()
@@ -76,8 +77,8 @@ fn read_session_page(
     session_paging::read_session_page(&path, before, limit)
 }
 
-/// List skills from ~/.pi/agent/skills (user scope) and, when `cwd` is
-/// given, <cwd>/.pi/skills (project scope).
+/// List skills from ~/.kalo/agent/skills (user scope) and, when `cwd` is
+/// given, <cwd>/.kalo/skills (project scope).
 #[tauri::command]
 fn list_skills(cwd: Option<String>) -> Result<Vec<SkillMeta>, String> {
     skills::list_skills(cwd.as_deref())
@@ -108,25 +109,55 @@ fn delete_skill(path: String) -> Result<(), String> {
     skills::delete_skill(&path)
 }
 
-/// Read ~/.pi/agent/models.json (custom provider definitions).
+/// List personal memories from ~/.kalo/memory (frontmatter + summary).
+#[tauri::command]
+fn list_memories() -> Result<Vec<memory::MemoryMeta>, String> {
+    memory::list_memories()
+}
+
+/// Read one memory by slug.
+#[tauri::command]
+fn read_memory(slug: String) -> Result<memory::MemoryEntry, String> {
+    memory::read_memory(&slug)
+}
+
+/// Create or overwrite a memory; returns the slug. `slug` None derives one
+/// from the title.
+#[tauri::command]
+fn write_memory(
+    slug: Option<String>,
+    title: String,
+    tags: Vec<String>,
+    content: String,
+) -> Result<String, String> {
+    memory::write_memory(slug.as_deref(), &title, &tags, &content)
+}
+
+/// Delete a memory by slug, restricted to the memory root.
+#[tauri::command]
+fn delete_memory(slug: String) -> Result<(), String> {
+    memory::delete_memory(&slug)
+}
+
+/// Read ~/.kalo/agent/models.json (custom provider definitions).
 #[tauri::command]
 fn read_models_config() -> Result<serde_json::Value, String> {
     pi_config::read_models_config()
 }
 
-/// Write ~/.pi/agent/models.json. Takes effect for newly spawned sessions.
+/// Write ~/.kalo/agent/models.json. Takes effect for newly spawned sessions.
 #[tauri::command]
 fn write_models_config(config: serde_json::Value) -> Result<(), String> {
     pi_config::write_models_config(&config)
 }
 
-/// Read ~/.pi/agent/auth.json (provider API keys / OAuth tokens).
+/// Read ~/.kalo/agent/auth.json (provider API keys / OAuth tokens).
 #[tauri::command]
 fn read_auth_config() -> Result<serde_json::Value, String> {
     pi_config::read_auth_config()
 }
 
-/// Write ~/.pi/agent/auth.json. Takes effect for newly spawned sessions.
+/// Write ~/.kalo/agent/auth.json. Takes effect for newly spawned sessions.
 #[tauri::command]
 fn write_auth_config(config: serde_json::Value) -> Result<(), String> {
     pi_config::write_auth_config(&config)
@@ -203,6 +234,10 @@ fn main() {
             write_skill,
             create_skill,
             delete_skill,
+            list_memories,
+            read_memory,
+            write_memory,
+            delete_memory,
             list_dir,
             read_file_text,
             read_attachment,

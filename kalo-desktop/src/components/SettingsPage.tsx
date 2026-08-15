@@ -10,6 +10,7 @@ import {
   writeModelsConfig,
 } from "../lib/pi-bridge";
 import type { AuthConfig, ModelsConfig, ProviderConfig, SkillMeta } from "../types";
+import MemorySettings from "./MemorySettings";
 import ProviderEditModal from "./ProviderEditModal";
 import SkillEditModal from "./SkillEditModal";
 
@@ -69,6 +70,8 @@ export default function SettingsPage({ theme, onThemeChange, onBack }: SettingsP
         <ModelSettings />
 
         <SkillsSettings />
+
+        <MemorySettings />
 
         <Section title="外观">
           <div className="flex gap-2">
@@ -282,7 +285,7 @@ function BuiltinKeyRow({
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mb-6 rounded-xl border border-edge bg-card p-4">
       <h2 className="mb-3 text-sm font-medium">{title}</h2>

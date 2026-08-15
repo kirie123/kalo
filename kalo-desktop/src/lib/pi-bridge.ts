@@ -8,6 +8,7 @@
  *   list_sessions  {} -> ProjectGroup[]
  *   read_session_page { path, before?, limit? } -> SessionPage
  *   list_skills / read_skill / write_skill / create_skill / delete_skill
+ *   list_memories / read_memory / write_memory / delete_memory
  *   read_models_config / write_models_config / read_auth_config / write_auth_config
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
@@ -26,6 +27,8 @@ import type {
   AttachmentDraft,
   DirEntry,
   FileTextContent,
+  MemoryEntry,
+  MemoryMeta,
   ModelsConfig,
   PiEventPayload,
   PiExitInfo,
@@ -93,7 +96,30 @@ export function deleteSkill(path: string): Promise<void> {
 }
 
 // ============================================================================
-// Engine configuration (~/.pi/agent/models.json + auth.json)
+// Personal memory (~/.kalo/memory)
+// ============================================================================
+
+export function listMemories(): Promise<MemoryMeta[]> {
+  return invoke<MemoryMeta[]>("list_memories", {});
+}
+
+export function readMemory(slug: string): Promise<MemoryEntry> {
+  return invoke<MemoryEntry>("read_memory", { slug });
+}
+
+/** Create (omit `slug`) or overwrite a memory; resolves to the slug. */
+export function writeMemory(slug: string | undefined, title: string, tags: string[], content: string): Promise<string> {
+  const args: Record<string, unknown> = { title, tags, content };
+  if (slug !== undefined) args.slug = slug;
+  return invoke<string>("write_memory", args);
+}
+
+export function deleteMemory(slug: string): Promise<void> {
+  return invoke<void>("delete_memory", { slug });
+}
+
+// ============================================================================
+// Engine configuration (~/.kalo/agent/models.json + auth.json)
 // ============================================================================
 
 export function readModelsConfig(): Promise<ModelsConfig> {

@@ -1,8 +1,8 @@
 //! Skill management for pi Agent Skills.
 //!
 //! Skills live in two scopes:
-//! - user (global): `~/.pi/agent/skills/`
-//! - project: `<cwd>/.pi/skills/`
+//! - user (global): `~/.kalo/agent/skills/`
+//! - project: `<cwd>/.kalo/skills/`
 //!
 //! Each skills root holds single-file skills (`<root>/<name>.md`) and
 //! directory skills (`<root>/<name>/SKILL.md`). Both forms start with a YAML
@@ -32,7 +32,7 @@ fn user_skills_root() -> Result<PathBuf, String> {
 }
 
 fn project_skills_root(cwd: &str) -> PathBuf {
-    PathBuf::from(cwd).join(".pi").join("skills")
+    PathBuf::from(cwd).join(".kalo").join("skills")
 }
 
 /// List skills in the global scope, plus the project scope when `cwd` is
@@ -165,7 +165,7 @@ pub fn create_skill(name: &str, scope: &str, cwd: Option<&str>) -> Result<String
 }
 
 /// Delete a skill. The canonicalized path must live under a known skills
-/// root (the global root or any `<...>/.pi/skills` directory); anything
+/// root (the global root or any `<...>/.kalo/skills` directory); anything
 /// else is refused. A `<root>/<name>/SKILL.md` path removes the whole
 /// `<name>` directory; a single-file skill removes just that file.
 pub fn delete_skill(path: &str) -> Result<(), String> {
@@ -197,7 +197,7 @@ pub fn delete_skill(path: &str) -> Result<(), String> {
 }
 
 /// True when `path` sits under the global skills root or under any
-/// directory named `skills` whose parent is `.pi` (project roots).
+/// directory named `skills` whose parent is `.kalo` (project roots).
 fn is_under_skills_root(path: &Path) -> bool {
     if let Ok(root) = user_skills_root() {
         if let Ok(root) = fs::canonicalize(&root) {
@@ -209,12 +209,12 @@ fn is_under_skills_root(path: &Path) -> bool {
     path.ancestors().any(|ancestor| is_skills_root_dir(ancestor))
 }
 
-/// True when `dir` is a `<something>/.pi/skills` directory.
+/// True when `dir` is a `<something>/.kalo/skills` directory.
 fn is_skills_root_dir(dir: &Path) -> bool {
     dir.file_name().and_then(|n| n.to_str()) == Some("skills")
         && dir
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            == Some(".pi")
+            == Some(".kalo")
 }

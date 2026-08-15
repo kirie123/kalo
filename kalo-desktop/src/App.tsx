@@ -40,7 +40,7 @@ export default function App() {
   }, []);
   useEffect(refreshProjects, [refreshProjects, chat.sessionId, chat.isStreaming]);
 
-  // Custom providers from ~/.pi/agent/models.json show up in the picker
+  // Custom providers from ~/.kalo/agent/models.json show up in the picker
   // immediately, without waiting for an engine session.
   useEffect(() => {
     void chatStore.loadCustomModels();

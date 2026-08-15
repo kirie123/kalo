@@ -23,7 +23,7 @@ interface Props {
 }
 
 /**
- * Config panel for one custom provider (written to ~/.pi/agent/models.json).
+ * Config panel for one custom provider (written to ~/.kalo/agent/models.json).
  * Opened from the model picker's "添加模型" entry and from the settings page.
  */
 export default function ProviderEditModal({ editing, onClose }: Props) {
