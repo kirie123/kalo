@@ -407,3 +407,30 @@ export interface AuthCredential {
 
 /** Contents of ~/.kalo/agent/auth.json. */
 export type AuthConfig = Record<string, AuthCredential>;
+
+// ============================================================================
+// IM gateway (Feishu sidecar)
+// ============================================================================
+
+/** Lifecycle of the gateway sidecar as reported via `gateway-status` events. */
+export type GatewayState =
+  | "starting"
+  | "disconnected"
+  | "pairing"
+  | "connecting"
+  | "connected"
+  | "error"
+  | "unavailable";
+
+/** Payload of the `gateway-status` Tauri event (and `gateway_status` command). */
+export interface GatewayStatus {
+  state: GatewayState;
+  /** Bound Feishu open_id once connected. */
+  user?: string;
+  /** Human-readable detail (error text, connection notes). */
+  message?: string;
+  /** Data-URL QR image while pairing. */
+  qrDataUrl?: string;
+  /** QR validity in seconds while pairing. */
+  expiresIn?: number;
+}

@@ -784,6 +784,15 @@ export class ChatStore {
   }
 
   async setModel(provider: string, modelId: string) {
+    const friendlyError = (raw: string): string => {
+      if (/^Model not found/i.test(raw)) {
+        return "引擎未识别该模型。若刚添加 Provider，请编辑保存一次（本地服务需任意占位 API Key）后重试";
+      }
+      if (/^No API key/i.test(raw)) {
+        return "该 Provider 未配置 API Key。本地服务（Ollama 等）请在设置中编辑并填入任意占位 Key";
+      }
+      return raw;
+    };
     try {
       const sid = await this.ensureSession();
       const resp = await sendCommand(sid, { type: "set_model", provider, modelId }, 15000);
@@ -808,10 +817,10 @@ export class ChatStore {
           saveLastModel({ provider, modelId, name: (retry.data as ModelInfo)?.name });
           return;
         }
-        this.pushToast(`切换模型失败：${retry.error}`, "error");
+        this.pushToast(`切换模型失败：${friendlyError(retry.error)}`, "error");
         return;
       }
-      this.pushToast(`切换模型失败：${resp.error}（新添加的模型需开新对话生效）`, "error");
+      this.pushToast(`切换模型失败：${friendlyError(resp.error)}`, "error");
     } catch (err) {
       this.pushToast(`切换模型失败：${errText(err)}`, "error");
     }

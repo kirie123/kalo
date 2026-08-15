@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod files;
+mod gateway;
 mod memory;
 mod session;
 mod session_paging;
@@ -14,11 +15,12 @@ mod pi_config;
 mod skills;
 
 use files::{AttachmentData, DirEntry, FileText};
+use gateway::GatewayManager;
 use session::{PiProcess, SessionManager};
 use session_paging::SessionPage;
 use sessions_store::ProjectGroup;
 use skills::SkillMeta;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 /// Create a new chat session: spawn `pi --mode rpc` in `cwd` and return
 /// the generated session id used in `pi-*:{session_id}` event names.
@@ -195,6 +197,34 @@ fn search_files(root: String, query: String, limit: Option<usize>) -> Result<Vec
     files::search_files(&root, &query, limit)
 }
 
+// ============================================================================
+// IM gateway (Feishu sidecar)
+// ============================================================================
+
+/// Begin Feishu QR pairing: spawn the gateway sidecar if needed.
+#[tauri::command]
+fn gateway_pair_start(state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
+    state.pair_start(&app)
+}
+
+/// Cancel an in-flight pairing attempt.
+#[tauri::command]
+fn gateway_pair_cancel(state: State<GatewayManager>) -> Result<(), String> {
+    state.pair_cancel()
+}
+
+/// Current gateway status snapshot.
+#[tauri::command]
+fn gateway_status(state: State<GatewayManager>) -> gateway::GatewayStatusData {
+    state.status()
+}
+
+/// Delete stored Feishu credentials and stop the gateway.
+#[tauri::command]
+fn gateway_unbind(state: State<GatewayManager>) -> Result<(), String> {
+    state.unbind()
+}
+
 fn lock_sessions<'a>(
     state: &'a State<SessionManager>,
 ) -> Result<std::sync::MutexGuard<'a, std::collections::HashMap<String, PiProcess>>, String> {
@@ -230,9 +260,15 @@ fn gen_session_id() -> String {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionManager::default())
+        .manage(GatewayManager::default())
+        .setup(|app| {
+            // Auto-start the IM gateway when Feishu credentials already exist.
+            gateway::autostart(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             create_session,
             send_command,
@@ -257,7 +293,27 @@ fn main() {
             read_attachment,
             open_path,
             search_files,
+            gateway_pair_start,
+            gateway_pair_cancel,
+            gateway_status,
+            gateway_unbind,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Kalo");
+        .build(tauri::generate_context!())
+        .expect("error while building Kalo");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            // Reap child processes so nothing outlives the app window.
+            if let Some(gateway) = app_handle.try_state::<GatewayManager>() {
+                gateway.shutdown();
+            }
+            if let Some(sessions) = app_handle.try_state::<SessionManager>() {
+                if let Ok(mut map) = sessions.sessions.lock() {
+                    for (_, mut process) in map.drain() {
+                        process.kill();
+                    }
+                }
+            }
+        }
+    });
 }

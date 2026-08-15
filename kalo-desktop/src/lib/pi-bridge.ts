@@ -10,6 +10,7 @@
  *   list_skills / read_skill / write_skill / create_skill / delete_skill
  *   list_memories / read_memory / write_memory / delete_memory
  *   read_models_config / write_models_config / read_auth_config / write_auth_config
+ *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   read_attachment { path } -> AttachmentDraft (image base64 or text)
@@ -19,6 +20,7 @@
  *   pi-event:{sessionId}  — one stdout JSON line (response or event)
  *   pi-stderr:{sessionId} — string
  *   pi-exit:{sessionId}   — { code: number | null }
+ *   gateway-status        — GatewayStatus (sidecar lifecycle, pairing QR)
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -29,6 +31,7 @@ import type {
   DirEntry,
   FileMatch,
   FileTextContent,
+  GatewayStatus,
   MemoryEntry,
   MemoryMeta,
   ModelsConfig,
@@ -167,6 +170,35 @@ export function openPath(path: string, reveal = false): Promise<void> {
 /** Name search under root for the input box's @ completion. */
 export function searchFiles(root: string, query: string): Promise<FileMatch[]> {
   return invoke<FileMatch[]>("search_files", { root, query });
+}
+
+// ============================================================================
+// IM gateway sidecar (Feishu)
+// ============================================================================
+
+/** Start QR pairing: spawns the gateway if needed and begins device-flow registration. */
+export function gatewayPairStart(): Promise<void> {
+  return invoke<void>("gateway_pair_start", {});
+}
+
+/** Cancel an in-flight pairing attempt. */
+export function gatewayPairCancel(): Promise<void> {
+  return invoke<void>("gateway_pair_cancel", {});
+}
+
+/** Current gateway snapshot (state, bound user, pairing detail). */
+export function gatewayStatus(): Promise<GatewayStatus> {
+  return invoke<GatewayStatus>("gateway_status", {});
+}
+
+/** Delete stored credentials and stop the gateway. */
+export function gatewayUnbind(): Promise<void> {
+  return invoke<void>("gateway_unbind", {});
+}
+
+/** Subscribe to `gateway-status` push updates (pairing QR, state changes). */
+export function onGatewayStatus(cb: (status: GatewayStatus) => void) {
+  return listen<GatewayStatus>("gateway-status", (e) => cb(e.payload));
 }
 
 // ============================================================================
