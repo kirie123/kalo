@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { chatStore, useChatStore } from "../lib/chat-store";
-import { searchFiles } from "../lib/pi-bridge";
+import { listDir, searchFiles } from "../lib/pi-bridge";
 import { cwdBasename } from "../lib/projects";
 import type { FileMatch } from "../types";
 import ContextRing from "./ContextRing";
@@ -79,9 +79,15 @@ export default function InputBox() {
       return;
     }
     const timer = setTimeout(() => {
-      searchFiles(chat.cwd, acQuery)
-        .then(setFileMatches)
-        .catch(() => setFileMatches([]));
+      // Empty query (bare "@"): show the working directory's top-level
+      // entries so the menu opens immediately, mirroring "/" behavior.
+      const req =
+        acQuery === ""
+          ? listDir(chat.cwd).then((entries) =>
+              entries.slice(0, 50).map((e) => ({ name: e.name, path: e.path, isDir: e.isDir })),
+            )
+          : searchFiles(chat.cwd, acQuery);
+      req.then(setFileMatches).catch(() => setFileMatches([]));
     }, 150);
     return () => clearTimeout(timer);
   }, [acQuery, chat.cwd]);
