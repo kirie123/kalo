@@ -5,7 +5,7 @@ import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
 import SettingsPage, { applyTheme, loadTheme, type ThemePref } from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
-import { listSessions, deleteSession, closeSession } from "./lib/pi-bridge";
+import { listSessions, deleteSession } from "./lib/pi-bridge";
 import { chatStore, useChatStore } from "./lib/chat-store";
 import { loadWidth, startColumnDrag } from "./lib/drag";
 import type { ProjectGroup } from "./types";
@@ -31,7 +31,8 @@ export default function App() {
   }, [theme]);
 
   // Project/session list for the sidebar; refreshed on mount, when the
-  // active session changes and when a run settles (new files appear).
+  // active session changes, when a run settles (new files appear) and when
+  // any pooled run (including background ones) starts or ends.
   const refreshProjects = useCallback(() => {
     listSessions()
       .then(setProjects)
@@ -39,7 +40,8 @@ export default function App() {
         // Backend not ready yet (e.g. dev without Rust side) — keep empty.
       });
   }, []);
-  useEffect(refreshProjects, [refreshProjects, chat.sessionId, chat.isStreaming]);
+  const runningCount = Object.keys(chat.runningByFile).length;
+  useEffect(refreshProjects, [refreshProjects, chat.sessionId, chat.isStreaming, runningCount]);
 
   // Custom providers from ~/.kalo/agent/models.json show up in the picker
   // immediately, without waiting for an engine session.
@@ -57,6 +59,7 @@ export default function App() {
         onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         sessionGroups={projects}
         activeSessionId={chat.engineSessionId ?? null}
+        runningByFile={chat.runningByFile}
         onNewChat={() => {
           chatStore.newChat();
           setPage("chat");
@@ -67,13 +70,10 @@ export default function App() {
         }}
         onDeleteSession={(s) => {
           void (async () => {
-            // Deleting the live session: reset the chat first so the engine
-            // can't rewrite the file afterwards.
-            const norm = (p?: string) => p?.replace(/\\/g, "/");
-            if (chat.engineSessionId === s.id || norm(chat.sessionFile) === norm(s.path)) {
-              if (chat.sessionId) await closeSession(chat.sessionId).catch(() => {});
-              chatStore.newChat();
-            }
+            // Tear down the pooled runtime bound to this file first (kills
+            // its engine, switches away if it is the active view), so the
+            // engine can't rewrite the file after deletion.
+            await chatStore.closeSessionFile(s.path);
             try {
               await deleteSession(s.path);
               refreshProjects();

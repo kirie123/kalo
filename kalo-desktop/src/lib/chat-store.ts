@@ -1,10 +1,18 @@
 /**
- * Central chat state: current engine session, render timeline, streaming
- * flags, models/thinking level, extension UI queue, attachments and toasts.
+ * Central chat state — engine-pool edition.
+ *
+ * The store manages a pool of SessionRuntime instances, one per engine
+ * session (keyed by normalized session file, or `fresh-N` before the first
+ * message is persisted). Switching sessions merely changes which runtime's
+ * view feeds the UI; parked runtimes keep their engine process alive, so
+ * background runs continue and their events keep updating the parked view.
+ * Idle parked engines beyond MAX_PARKED are evicted (LRU); streaming or
+ * connecting ones never are.
  *
  * The store is a plain class consumed by React via useSyncExternalStore.
- * All pi-event payloads for the active session are dispatched here:
- * responses complete pending bridge promises, events mutate the timeline.
+ * The exposed ChatState is a composition: global slice (model catalogs,
+ * toasts) + the active runtime's session view + pool-visible flags
+ * (runningByFile drives the sidebar spinners).
  */
 
 import { useSyncExternalStore } from "react";
@@ -20,6 +28,7 @@ import type {
   PiExitInfo,
   RpcExtensionUIRequest,
   RpcResponse,
+  RpcSessionState,
   SlashCommand,
   ThinkingLevel,
   ThinkingContent,
@@ -160,29 +169,141 @@ export interface ChatState {
   connecting?: boolean;
   /** Slash commands from get_commands (extension commands, skill:<name>, prompt templates). */
   commands: SlashCommand[];
+  /** Engine-pool: which session files (normalized paths) have a run in flight. */
+  runningByFile: Record<string, boolean>;
 }
 
-const initialState: ChatState = {
-  sessionId: null,
-  cwd: "",
-  timeline: [],
-  loadingOlder: false,
-  isStreaming: false,
-  isCompacting: false,
+/**
+ * Session-scoped slice of ChatState. Every pooled session owns one of these;
+ * the store exposes the active session's view merged over the global slice so
+ * components keep reading a flat ChatState. currentModel/thinkingLevel/
+ * steeringMode live here because each engine process keeps its own values.
+ */
+type SessionView = Pick<
+  ChatState,
+  | "sessionId"
+  | "engineSessionId"
+  | "cwd"
+  | "sessionName"
+  | "timeline"
+  | "history"
+  | "loadingOlder"
+  | "isStreaming"
+  | "isCompacting"
+  | "currentModel"
+  | "thinkingLevel"
+  | "steeringMode"
+  | "extensionQueue"
+  | "inputDraft"
+  | "attachments"
+  | "contextUsage"
+  | "sessionFile"
+  | "connecting"
+>;
+
+/** Engine-process-global catalogs + app-level bits shared by all runtimes. */
+type GlobalView = Pick<ChatState, "models" | "customModels" | "thinkingLevels" | "toasts" | "commands">;
+
+const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
+  "sessionId",
+  "engineSessionId",
+  "cwd",
+  "sessionName",
+  "timeline",
+  "history",
+  "loadingOlder",
+  "isStreaming",
+  "isCompacting",
+  "currentModel",
+  "thinkingLevel",
+  "steeringMode",
+  "extensionQueue",
+  "inputDraft",
+  "attachments",
+  "contextUsage",
+  "sessionFile",
+  "connecting",
+]);
+
+/** Normalize a path for pool keys / file matching (Windows-safe). */
+function normPath(p: string): string {
+  return p.replace(/\\/g, "/").toLowerCase();
+}
+
+/** Session-view changes that alter pool-visible flags (runningByFile) must commit. */
+function affectsPoolFlags(p: Partial<SessionView>): boolean {
+  return "isStreaming" in p || "connecting" in p || "sessionFile" in p;
+}
+
+/** Session-scoped fields reset for every fresh runtime. */
+function freshView(cwd = ""): SessionView {
+  const saved = loadLastModel();
+  return {
+    sessionId: null,
+    cwd,
+    timeline: [],
+    loadingOlder: false,
+    isStreaming: false,
+    isCompacting: false,
+    currentModel: saved ? ({ id: saved.modelId, name: saved.name || saved.modelId, provider: saved.provider } as ModelInfo) : undefined,
+    thinkingLevel: "medium",
+    steeringMode: "one-at-a-time",
+    extensionQueue: [],
+    attachments: [],
+    contextUsage: undefined,
+  };
+}
+
+/**
+ * One pooled engine session: the view state above plus everything needed to
+ * keep it alive in the background (event routing, history window, recovery).
+ * Switching sessions never tears a runtime down — only pool eviction,
+ * deliberate restart, or app exit kills its engine process.
+ */
+class SessionRuntime {
+  /**
+   * Pool key: normalized session file path once known, else `fresh-N`.
+   * Re-keyed by the store when the engine reports its session file.
+   */
+  key: string;
+  view: SessionView;
+  /** Tauri event unlisteners for this runtime's engine process. */
+  unlisteners: Array<() => void> = [];
+  /** Generation guard: bumps on restart/teardown so stale callbacks no-op. */
+  token = 0;
+  /** Engine exited before any message was persisted — nothing to recover from. */
+  dead = false;
+  historyMessages: AgentMessage[] = [];
+  /** Timeline entries after this index are live (post-resume), not history. */
+  historyLiveBase = 0;
+  /** Usage accumulator for the in-flight run (agent_start → agent_settled). */
+  runUsage: TurnUsage | null = null;
+  /** Auto-recovery attempts for this runtime's lifecycle (capped). */
+  recoveryCount = 0;
+  /** In-flight lazy engine connect (new chat) of this runtime. */
+  sessionInit: Promise<string> | null = null;
+  /** Background engine connect of a resume; sendPrompt awaits it. */
+  resumePromise: Promise<void> | null = null;
+  compactionNoticeId: string | null = null;
+  lastActive = Date.now();
+  // Per-runtime stream batching (20fps clone flush).
+  flushTimer: ReturnType<typeof setTimeout> | null = null;
+  pendingClones = new Set<string>();
+
+  constructor(key: string, cwd = "") {
+    this.key = key;
+    this.view = freshView(cwd);
+  }
+}
+
+/** Cap on parked (non-active) idle engines; streaming ones are never evicted. */
+const MAX_PARKED = 4;
+
+const initialGlobal: GlobalView = {
   models: [],
   customModels: [],
-  // Preload the last used model so the picker shows it before any session.
-  currentModel: (() => {
-    const s = loadLastModel();
-    return s ? ({ id: s.modelId, name: s.name || s.modelId, provider: s.provider } as ModelInfo) : undefined;
-  })(),
-  thinkingLevel: "medium",
   thinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-  steeringMode: "one-at-a-time",
-  extensionQueue: [],
   toasts: [],
-  attachments: [],
-  contextUsage: undefined,
   commands: [],
 };
 
@@ -224,55 +345,55 @@ function saveLastModel(m: SavedModel) {
 // ============================================================================
 
 export class ChatStore {
-  state: ChatState = initialState;
+  /** Composed snapshot: global slice + active session view + pool flags. */
+  private _state!: ChatState;
+  private global: GlobalView = { ...initialGlobal };
+
+  /** Engine pool. Keyed by normalized session file, or `fresh-N` per new chat. */
+  private runtimes = new Map<string, SessionRuntime>();
+  /** Counter for `fresh-N` keys (a fresh chat may never touch a file). */
+  private freshSeq = 0;
+  /** The runtime whose view feeds the UI. */
+  private active: SessionRuntime;
 
   private listeners = new Set<() => void>();
-  private unlisteners: Array<() => void> = [];
-  private sessionToken = 0;
-  private sessionInit: Promise<string> | null = null;
-  private compactionNoticeId: string | null = null;
-  /** Auto-recovery attempts for the current session lifecycle (capped). */
-  private recoveryCount = 0;
-  /** Usage accumulator for the in-flight run (agent_start → agent_settled); flushed onto the last assistant entry once the run settles. */
-  private runUsage: TurnUsage | null = null;
-  /** Generation guard for resumeSession: a newer resume supersedes older phases. */
-  private resumeSeq = 0;
-  /** In-flight background engine connect of a resume; sendPrompt awaits it. */
-  private resumePromise: Promise<void> | null = null;
-  // Stream batching: high-frequency deltas mutate entries in place and are
-  // flushed to listeners at ~20fps, cloning only the touched entries so
-  // memoized timeline items can skip re-rendering.
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingClones = new Set<string>();
+  private contextInflight = false;
+
+  constructor() {
+    this.active = new SessionRuntime(`fresh-${this.freshSeq++}`);
+    this.runtimes.set(this.active.key, this.active);
+    this.commit();
+  }
+
+  get state(): ChatState {
+    return this._state;
+  }
+
+  /** The active runtime (shorthand for event/mutation call sites). */
+  private get rt(): SessionRuntime {
+    return this.active;
+  }
 
   /**
    * Coalesce rapid timeline mutations into a throttled notify. The entry
    * with `entryId` gets fresh object identities down to the mutated level.
    */
-  private queueTimelineFlush(entryId: string) {
-    this.pendingClones.add(entryId);
-    if (this.flushTimer) return;
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null;
-      const ids = this.pendingClones;
-      this.pendingClones = new Set();
-      const t = this.state.timeline.map((e) => {
+  private queueTimelineFlush(entryId: string, rt: SessionRuntime = this.active) {
+    rt.pendingClones.add(entryId);
+    if (rt.flushTimer) return;
+    rt.flushTimer = setTimeout(() => {
+      rt.flushTimer = null;
+      const ids = rt.pendingClones;
+      rt.pendingClones = new Set<string>();
+      const t = rt.view.timeline.map((e) => {
         if (!ids.has(e.id)) return e;
         if (e.kind === "assistant") return { ...e, message: { ...e.message, content: [...e.message.content] } };
         if (e.kind === "toolGroup") return { ...e, calls: [...e.calls] };
         return { ...e };
       });
-      this.set({ timeline: t });
+      this.setRt(rt, { timeline: t });
     }, 50);
   }
-  /**
-   * Loaded history window of a resumed session (old -> new). Kept out of
-   * state so prepending pages doesn't fan out large arrays to subscribers;
-   * the timeline is rebuilt from it instead.
-   */
-  private historyMessages: AgentMessage[] = [];
-  /** Timeline entries after this index are live (post-resume), not history. */
-  private historyLiveBase = 0;
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -281,17 +402,49 @@ export class ChatStore {
     };
   };
 
-  getSnapshot = () => this.state;
+  getSnapshot = () => this._state;
 
-  private set(partial: Partial<ChatState>) {
-    this.state = { ...this.state, ...partial };
+  /**
+   * Rebuild the composed snapshot and notify listeners. runningByFile is
+   * recomputed here so background streaming flips sidebar spinners even
+   * though the parked runtime's view is not rendered.
+   */
+  private commit() {
+    const runningByFile: Record<string, boolean> = {};
+    for (const rt of this.runtimes.values()) {
+      const f = rt.view.sessionFile;
+      if (f && (rt.view.isStreaming || rt.view.connecting)) runningByFile[normPath(f)] = rt.view.isStreaming;
+    }
+    this._state = { ...this.global, ...this.active.view, runningByFile };
     this.listeners.forEach((l) => l());
   }
 
-  private mutateTimeline(fn: (t: TimelineEntry[]) => void) {
-    const t = [...this.state.timeline];
+  /**
+   * Write a partial update. Session-scoped keys land on the active runtime's
+   * view; global keys on the shared slice; then commit.
+   */
+  private set(partial: Partial<ChatState>) {
+    for (const [k, v] of Object.entries(partial)) {
+      if (SESSION_VIEW_KEYS.has(k as keyof SessionView)) {
+        (this.active.view as Record<string, unknown>)[k] = v;
+      } else {
+        (this.global as Record<string, unknown>)[k] = v;
+      }
+    }
+    this.commit();
+  }
+
+  /** Write session-scoped keys onto any (possibly parked) runtime. */
+  private setRt(rt: SessionRuntime, partial: Partial<SessionView>) {
+    Object.assign(rt.view, partial);
+    // Parked updates only re-render when pool-visible flags change.
+    if (rt === this.active || affectsPoolFlags(partial)) this.commit();
+  }
+
+  private mutateTimeline(fn: (t: TimelineEntry[]) => void, rt: SessionRuntime = this.active) {
+    const t = [...rt.view.timeline];
     fn(t);
-    this.set({ timeline: t });
+    this.setRt(rt, { timeline: t });
   }
 
   // --------------------------------------------------------------------------
@@ -299,60 +452,83 @@ export class ChatStore {
   // --------------------------------------------------------------------------
 
   pushToast(message: string, kind: Toast["kind"] = "info") {
-    this.set({ toasts: [...this.state.toasts, { id: toastCounter++, message, kind }] });
+    this.set({ toasts: [...this.global.toasts, { id: toastCounter++, message, kind }] });
   }
 
   dismissToast(id: number) {
-    this.set({ toasts: this.state.toasts.filter((t) => t.id !== id) });
+    this.set({ toasts: this.global.toasts.filter((t) => t.id !== id) });
   }
 
   // --------------------------------------------------------------------------
-  // Session lifecycle
+  // Session lifecycle (engine pool)
   // --------------------------------------------------------------------------
 
-  private detach() {
-    this.sessionToken++;
-    this.unlisteners.forEach((u) => u());
-    this.unlisteners = [];
+  private detachRt(rt: SessionRuntime) {
+    rt.token++;
+    rt.unlisteners.forEach((u) => u());
+    rt.unlisteners = [];
   }
 
-  /** Reset to the empty state; a fresh engine session is created lazily on first prompt. */
+  /** Kill a pooled runtime's engine and drop it from the pool. */
+  private async killRt(rt: SessionRuntime) {
+    rt.dead = true;
+    this.detachRt(rt);
+    const sid = rt.view.sessionId;
+    this.runtimes.delete(rt.key);
+    if (sid) await closeSession(sid).catch(() => {});
+    this.commit();
+  }
+
+  /** Evict idle parked engines beyond MAX_PARKED; streaming ones are never evicted. */
+  private evictIdle() {
+    const parked = [...this.runtimes.values()].filter(
+      (rt) => rt !== this.active && !rt.view.isStreaming && !rt.view.connecting,
+    );
+    if (parked.length <= MAX_PARKED) return;
+    parked.sort((a, b) => a.lastActive - b.lastActive);
+    for (const rt of parked.slice(0, parked.length - MAX_PARKED)) {
+      void this.killRt(rt);
+    }
+  }
+
+  /**
+   * Park the current runtime and switch to a fresh view. The parked engine
+   * keeps running (mid-run tasks continue; events keep updating its view).
+   */
   newChat() {
-    this.detach();
-    this.clearHistory();
-    this.recoveryCount = 0;
-    this.runUsage = null;
-    this.resumeSeq++;
-    this.set({
-      sessionId: null,
-      sessionName: undefined,
-      timeline: [],
-      history: undefined,
-      loadingOlder: false,
-      isStreaming: false,
-      isCompacting: false,
-      extensionQueue: [],
-      inputDraft: undefined,
-      attachments: [],
-      contextUsage: undefined,
-      sessionFile: undefined,
-      connecting: false,
-    });
+    this.active.lastActive = Date.now();
+    const cwd = this.active.view.cwd || localStorage.getItem("kalo.lastCwd") || "";
+    const rt = new SessionRuntime(`fresh-${this.freshSeq++}`, cwd);
+    this.runtimes.set(rt.key, rt);
+    this.active = rt;
+    this.commit();
+    this.evictIdle();
   }
 
-  private clearHistory() {
-    this.historyMessages = [];
-    this.historyLiveBase = 0;
+  /**
+   * Kill the engine bound to a session file (called when its history is
+   * deleted). If it is the active view, switch to a fresh chat first.
+   */
+  async closeSessionFile(path: string) {
+    const rt = this.runtimes.get(normPath(path));
+    if (!rt) return;
+    if (rt === this.active) this.newChat();
+    await this.killRt(rt);
   }
 
-  private attachSession(sessionId: string, cwd: string, opts?: { keepTimeline?: boolean }) {
-    this.detach();
-    if (!opts?.keepTimeline) this.clearHistory();
-    const token = this.sessionToken;
-    this.set({
+  private attachSession(rt: SessionRuntime, sessionId: string, cwd: string, opts?: { keepTimeline?: boolean }) {
+    this.detachRt(rt);
+    if (!opts?.keepTimeline) {
+      rt.historyMessages = [];
+      rt.historyLiveBase = 0;
+    }
+    rt.token++;
+    const token = rt.token;
+    this.setRt(rt, {
       sessionId,
       cwd,
       sessionName: undefined,
+      engineSessionId: undefined,
       // Two-phase resume renders history before the engine attaches; keep it.
       ...(opts?.keepTimeline ? {} : { timeline: [], history: undefined, loadingOlder: false }),
       isStreaming: false,
@@ -366,22 +542,21 @@ export class ChatStore {
 
     const track = (p: Promise<() => void>) =>
       p.then((u) => {
-        if (token === this.sessionToken) this.unlisteners.push(u);
+        if (token === rt.token) rt.unlisteners.push(u);
         else u();
       });
 
-    track(onPiEvent(sessionId, (payload) => this.handlePiPayload(payload)));
+    track(onPiEvent(sessionId, (payload) => this.handlePiPayload(payload, rt)));
     track(
       onPiStderr(sessionId, (line) => {
-        console.error("[pi stderr]", line);
+        if (rt === this.active) console.error("[pi stderr]", line);
       }),
     );
     track(
       onPiExit(sessionId, (info) => {
-        // Stale generation: the user already moved on (new chat / switch /
-        // deliberate restart), so this exit is intentional — ignore it.
-        if (token !== this.sessionToken) return;
-        void this.handleEngineExit(sessionId, info);
+        // Deliberate teardown or a newer engine for this runtime: intentional.
+        if (rt.dead || token !== rt.token) return;
+        void this.handleEngineExit(rt, sessionId, info);
       }),
     );
   }
@@ -389,67 +564,70 @@ export class ChatStore {
   /**
    * Unexpected engine exit: settle the dead generation first (pending
    * commands get an outcome, streaming entries stop spinning), then try to
-   * rebuild the session from its on-disk file.
+   * rebuild the session from its on-disk file. Works for parked runtimes
+   * too — the recovered engine keeps feeding the parked view.
    */
-  private async handleEngineExit(deadSid: string, info: PiExitInfo) {
+  private async handleEngineExit(rt: SessionRuntime, deadSid: string, info: PiExitInfo) {
     rejectSessionPending(deadSid, new Error("engine process exited"));
-    this.finalizeStreamingEntries();
-    this.set({ isStreaming: false, isCompacting: false });
+    this.finalizeStreamingEntries(rt);
+    this.setRt(rt, { isStreaming: false, isCompacting: false, sessionId: null });
 
-    const file = this.state.sessionFile;
-    if (!file || this.recoveryCount >= 2) {
-      this.pushToast(
-        file
-          ? "引擎进程退出，自动恢复次数已用尽，请重新发起对话"
-          : `引擎进程已退出（退出码 ${info.code ?? "未知"}），会话未落盘，请重新发起对话`,
-        "error",
-      );
+    const isActive = rt === this.active;
+    const file = rt.view.sessionFile;
+    if (!file || rt.recoveryCount >= 2) {
+      if (isActive) {
+        this.pushToast(
+          file
+            ? "引擎进程退出，自动恢复次数已用尽，请重新发起对话"
+            : `引擎进程已退出（退出码 ${info.code ?? "未知"}），会话未落盘，请重新发起对话`,
+          "error",
+        );
+      }
       return;
     }
 
-    this.recoveryCount++;
-    this.pushToast(`引擎进程已退出（退出码 ${info.code ?? "未知"}），正在自动恢复会话…`, "warning");
+    rt.recoveryCount++;
+    if (isActive) this.pushToast(`引擎进程已退出（退出码 ${info.code ?? "未知"}），正在自动恢复会话…`, "warning");
     try {
-      const cwd = this.state.cwd || localStorage.getItem("kalo.lastCwd") || ".";
-      const sid = await this.spawnSession(cwd);
+      const cwd = rt.view.cwd || localStorage.getItem("kalo.lastCwd") || ".";
+      const sid = await this.spawnSession(rt, cwd, { keepTimeline: true });
       await this.waitForEngine(sid);
       const sw = await sendCommand(sid, { type: "switch_session", sessionPath: file }, 15000);
       if (!sw.success) throw new Error(sw.error);
-      await this.fetchSessionMeta(sid);
-      await this.applySavedModel();
-      await this.reloadLatestPage(file);
-      this.pushToast("引擎已重启，会话已恢复", "info");
+      await this.fetchSessionMeta(rt, sid);
+      await this.reloadLatestPage(rt, file);
+      if (isActive) this.pushToast("引擎已重启，会话已恢复", "info");
     } catch (err) {
-      this.pushToast(`自动恢复失败：${errText(err)}，请重新发起对话`, "error");
+      if (isActive) this.pushToast(`自动恢复失败：${errText(err)}，请重新发起对话`, "error");
     }
   }
 
   /** Stop streaming indicators on any still-streaming assistant entries. */
-  private finalizeStreamingEntries() {
-    const t = this.state.timeline;
+  private finalizeStreamingEntries(rt: SessionRuntime) {
+    const t = rt.view.timeline;
     if (!t.some((e) => e.kind === "assistant" && e.streaming)) return;
-    this.set({
+    this.setRt(rt, {
       timeline: t.map((e) => (e.kind === "assistant" && e.streaming ? { ...e, streaming: false } : e)),
     });
   }
 
-  /** Reload the latest page of a session file into the timeline. */
-  private async reloadLatestPage(path: string) {
+  /** Reload the latest page of a session file into the runtime's timeline. */
+  private async reloadLatestPage(rt: SessionRuntime, path: string) {
     const page = await readSessionPage(path, undefined, 30);
-    this.historyMessages = page.messages;
+    rt.historyMessages = page.messages;
     const timeline = buildTimeline(page.messages);
-    this.historyLiveBase = timeline.length;
-    this.set({ timeline, history: { path, start: page.start, hasMore: page.hasMore } });
+    rt.historyLiveBase = timeline.length;
+    this.setRt(rt, { timeline, history: { path, start: page.start, hasMore: page.hasMore } });
   }
 
   /** Spawn with retry: transient failures (busy binary, AV scans) happen. */
-  private async spawnSession(cwd: string, opts?: { keepTimeline?: boolean }): Promise<string> {
+  private async spawnSession(rt: SessionRuntime, cwd: string, opts?: { keepTimeline?: boolean }): Promise<string> {
     let lastErr: unknown;
     for (const delay of [0, 500, 1500]) {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
         const sid = await createSession(cwd);
-        this.attachSession(sid, cwd, opts);
+        this.attachSession(rt, sid, cwd, opts);
         return sid;
       } catch (err) {
         lastErr = err;
@@ -480,123 +658,121 @@ export class ChatStore {
     throw new Error("引擎无响应");
   }
 
-  private async ensureSession(): Promise<string> {
-    if (this.state.sessionId) return this.state.sessionId;
-    if (this.sessionInit) return this.sessionInit;
-    this.sessionInit = (async () => {
-      const cwd = this.state.cwd || localStorage.getItem("kalo.lastCwd") || ".";
-      const sid = await this.spawnSession(cwd);
+  private ensureSession(rt: SessionRuntime = this.active): Promise<string> {
+    if (rt.view.sessionId) return Promise.resolve(rt.view.sessionId);
+    if (rt.sessionInit) return rt.sessionInit;
+    rt.sessionInit = (async () => {
+      const cwd = rt.view.cwd || localStorage.getItem("kalo.lastCwd") || ".";
+      const sid = await this.spawnSession(rt, cwd);
       localStorage.setItem("kalo.lastCwd", cwd);
       await this.waitForEngine(sid);
-      await this.fetchSessionMeta(sid);
-      await this.applySavedModel();
+      await this.fetchSessionMeta(rt, sid);
+      await this.applySavedModel(rt);
       return sid;
     })().finally(() => {
-      this.sessionInit = null;
+      rt.sessionInit = null;
     });
-    return this.sessionInit;
+    return rt.sessionInit;
   }
 
   /**
    * Restore an existing session file and render its latest page of history.
    *
-   * Two phases: A renders the latest page straight from the session file
-   * (instant, read-only); B then attaches the engine in the background
-   * (spawn -> readiness probe -> switch_session -> meta) so the session
-   * becomes continuable. The engine drops commands that arrive before its
-   * RPC dispatch loop is up, hence the readiness probe before switch_session.
+   * Pool hit: the session's runtime (and its engine) already exists — just
+   * switch the active view; a run in flight keeps going untouched.
+   *
+   * Pool miss: create a runtime keyed by the file. Phase A renders the
+   * latest page straight from the session file (instant, read-only); phase
+   * B attaches the engine in the background (spawn -> readiness probe ->
+   * switch_session -> meta) so the session becomes continuable.
    */
   async resumeSession(sessionPath: string, cwd: string) {
-    this.recoveryCount = 0;
-    this.runUsage = null;
-    const seq = ++this.resumeSeq;
+    const key = normPath(sessionPath);
+
+    const existing = this.runtimes.get(key);
+    if (existing) {
+      existing.lastActive = Date.now();
+      if (existing === this.active) return;
+      this.active = existing;
+      this.commit();
+      this.evictIdle();
+      return;
+    }
+
+    const rt = new SessionRuntime(key, cwd);
+    this.runtimes.set(key, rt);
+    this.active = rt;
+    this.commit();
+    this.evictIdle();
 
     // Phase A — render the latest page straight from the session file.
     // No engine round-trips, so history appears immediately; the session
     // stays read-only until phase B connects the engine in the background.
-    this.detach();
-    this.clearHistory();
-    this.set({
-      sessionId: null,
-      cwd,
-      sessionName: undefined,
-      timeline: [],
-      history: undefined,
-      loadingOlder: false,
-      isStreaming: false,
-      isCompacting: false,
-      extensionQueue: [],
-      inputDraft: undefined,
-      attachments: [],
-      contextUsage: undefined,
-      sessionFile: undefined,
-      connecting: true,
-    });
+    this.setRt(rt, { connecting: true });
     try {
-      await this.reloadLatestPage(sessionPath);
+      await this.reloadLatestPage(rt, sessionPath);
     } catch (err) {
       this.pushToast(`加载历史消息失败：${errText(err)}`, "error");
     }
-    if (seq !== this.resumeSeq) return;
 
     // Phase B — attach the engine in the background so the session becomes
     // continuable; the timeline rendered in phase A stays untouched.
-    this.resumePromise = (async () => {
+    rt.resumePromise = (async () => {
       try {
         localStorage.setItem("kalo.lastCwd", cwd);
-        const sid = await this.spawnSession(cwd, { keepTimeline: true });
-        if (seq !== this.resumeSeq) {
-          // Superseded by a newer resume/newChat: drop this engine process.
-          await closeSession(sid).catch(() => {});
-          return;
-        }
+        const sid = await this.spawnSession(rt, cwd, { keepTimeline: true });
         await this.waitForEngine(sid);
         const sw = await sendCommand(sid, { type: "switch_session", sessionPath }, 15000);
         if (!sw.success) {
           // Degrade to read-only history: the file itself is still renderable.
-          this.pushToast(`会话无法续聊（${sw.error}），已切换为只读历史`, "warning");
+          if (rt === this.active) this.pushToast(`会话无法续聊（${sw.error}），已切换为只读历史`, "warning");
         }
-        if (seq !== this.resumeSeq) return;
-        await this.fetchSessionMeta(sid);
+        await this.fetchSessionMeta(rt, sid);
       } catch (err) {
-        if (seq === this.resumeSeq) this.pushToast(`恢复会话失败：${errText(err)}`, "error");
+        if (rt === this.active) this.pushToast(`恢复会话失败：${errText(err)}`, "error");
       } finally {
-        if (seq === this.resumeSeq) this.set({ connecting: false });
-        this.resumePromise = null;
+        rt.resumePromise = null;
+        this.setRt(rt, { connecting: false });
       }
     })();
   }
 
-  /** Prepend the next page of older messages to a resumed session. */
+  /** Prepend the next page of older messages to the active session. */
   async loadOlderHistory() {
-    const h = this.state.history;
-    if (!h || !h.hasMore || this.state.loadingOlder) return;
-    this.set({ loadingOlder: true });
+    const rt = this.rt;
+    const h = rt.view.history;
+    if (!h || !h.hasMore || rt.view.loadingOlder) return;
+    this.setRt(rt, { loadingOlder: true });
     try {
       const page = await readSessionPage(h.path, h.start, 30);
       // Session may have changed while the page was in flight.
-      if (this.state.history?.path !== h.path) {
-        this.set({ loadingOlder: false });
+      if (rt.view.history?.path !== h.path) {
+        this.setRt(rt, { loadingOlder: false });
         return;
       }
-      this.historyMessages = [...page.messages, ...this.historyMessages];
+      rt.historyMessages = [...page.messages, ...rt.historyMessages];
       // Rebuild history entries, keep live (post-resume) entries untouched.
-      const live = this.state.timeline.slice(this.historyLiveBase);
-      const rebuilt = buildTimeline(this.historyMessages);
-      this.historyLiveBase = rebuilt.length;
-      this.set({
+      const live = rt.view.timeline.slice(rt.historyLiveBase);
+      const rebuilt = buildTimeline(rt.historyMessages);
+      rt.historyLiveBase = rebuilt.length;
+      this.setRt(rt, {
         timeline: [...rebuilt, ...live],
         history: { ...h, start: page.start, hasMore: page.hasMore },
         loadingOlder: false,
       });
     } catch (err) {
-      this.set({ loadingOlder: false });
+      this.setRt(rt, { loadingOlder: false });
       this.pushToast(`加载更早的消息失败：${errText(err)}`, "error");
     }
   }
 
-  /** Pull state + model/thinking catalogs after (re)attaching a session. */
-  private async fetchSessionMeta(sid: string) {
+  /**
+   * Pull state + model/thinking catalogs after (re)attaching a session.
+   * Session fields land on the runtime's own view (works while parked);
+   * catalogs are shared and only refreshed by the active runtime's engine.
+   * A `fresh-N` runtime is re-keyed to its session file once known.
+   */
+  private async fetchSessionMeta(rt: SessionRuntime, sid: string) {
     try {
       const [stateResp, modelsResp, levelsResp, commandsResp] = await Promise.all([
         sendCommand(sid, { type: "get_state" }, 15000),
@@ -604,24 +780,56 @@ export class ChatStore {
         sendCommand(sid, { type: "get_available_thinking_levels" }, 15000),
         sendCommand(sid, { type: "get_commands" }, 15000),
       ]);
-      const partial: Partial<ChatState> = {};
+      const sessionPartial: Partial<SessionView> = {};
       if (stateResp.success) {
-        const s = stateResp.data as import("../types").RpcSessionState;
-        partial.thinkingLevel = s.thinkingLevel;
-        partial.currentModel = s.model;
-        partial.steeringMode = s.steeringMode;
-        partial.isStreaming = s.isStreaming;
-        partial.sessionName = s.sessionName;
-        partial.engineSessionId = s.sessionId;
-        partial.sessionFile = s.sessionFile;
+        const s = stateResp.data as RpcSessionState;
+        sessionPartial.thinkingLevel = s.thinkingLevel;
+        sessionPartial.currentModel = s.model;
+        sessionPartial.steeringMode = s.steeringMode;
+        sessionPartial.isStreaming = s.isStreaming;
+        sessionPartial.sessionName = s.sessionName;
+        sessionPartial.engineSessionId = s.sessionId;
+        sessionPartial.sessionFile = s.sessionFile;
       }
-      if (modelsResp.success) partial.models = (modelsResp.data as { models: ModelInfo[] }).models;
-      if (levelsResp.success) partial.thinkingLevels = (levelsResp.data as { levels: ThinkingLevel[] }).levels;
-      if (commandsResp.success) partial.commands = (commandsResp.data as { commands: SlashCommand[] }).commands;
-      this.set(partial);
-      void this.refreshContextUsage();
+      if (rt === this.active) {
+        if (modelsResp.success) this.global.models = (modelsResp.data as { models: ModelInfo[] }).models;
+        if (levelsResp.success) this.global.thinkingLevels = (levelsResp.data as { levels: ThinkingLevel[] }).levels;
+        if (commandsResp.success) this.global.commands = (commandsResp.data as { commands: SlashCommand[] }).commands;
+      }
+      this.setRt(rt, sessionPartial);
+      this.rekeyRuntime(rt);
+      this.commit();
+      void this.refreshContextUsage(rt);
     } catch (err) {
-      this.pushToast(`获取会话状态失败：${errText(err)}`, "error");
+      if (rt === this.active) this.pushToast(`获取会话状态失败：${errText(err)}`, "error");
+    }
+  }
+
+  /** Move a `fresh-N` runtime onto its session-file key once the file exists. */
+  private rekeyRuntime(rt: SessionRuntime) {
+    const f = rt.view.sessionFile;
+    if (!f || !rt.key.startsWith("fresh-")) return;
+    const nk = normPath(f);
+    if (nk === rt.key || this.runtimes.has(nk)) return;
+    this.runtimes.delete(rt.key);
+    rt.key = nk;
+    this.runtimes.set(nk, rt);
+  }
+
+  /** Best-effort get_state probe to pick up the session file after a prompt. */
+  private async syncSessionFile(rt: SessionRuntime) {
+    const sid = rt.view.sessionId;
+    if (!sid) return;
+    try {
+      const resp = await sendCommand(sid, { type: "get_state" }, 15000);
+      if (!resp.success) return;
+      const s = resp.data as RpcSessionState;
+      if (!s.sessionFile) return;
+      this.setRt(rt, { sessionFile: s.sessionFile, engineSessionId: s.sessionId });
+      this.rekeyRuntime(rt);
+      this.commit();
+    } catch {
+      // Best-effort only.
     }
   }
 
@@ -634,7 +842,7 @@ export class ChatStore {
     for (const path of paths) {
       try {
         const draft = await readAttachment(path);
-        this.set({ attachments: [...this.state.attachments, draft] });
+        this.set({ attachments: [...this.rt.view.attachments, draft] });
       } catch (err) {
         this.pushToast(`无法添加附件 ${path}：${errText(err)}`, "warning");
       }
@@ -642,28 +850,29 @@ export class ChatStore {
   }
 
   removeAttachment(name: string) {
-    this.set({ attachments: this.state.attachments.filter((a) => a.name !== name) });
+    this.set({ attachments: this.rt.view.attachments.filter((a) => a.name !== name) });
   }
 
   /** Add an image attachment directly (e.g. a clipboard paste). */
   addImageAttachment(name: string, mimeType: string, dataBase64: string) {
     this.set({
-      attachments: [...this.state.attachments, { kind: "image", name, mimeType, dataBase64 }],
+      attachments: [...this.rt.view.attachments, { kind: "image", name, mimeType, dataBase64 }],
     });
   }
 
   clearAttachments() {
-    if (this.state.attachments.length > 0) this.set({ attachments: [] });
+    if (this.rt.view.attachments.length > 0) this.set({ attachments: [] });
   }
 
   // --------------------------------------------------------------------------
-  // User actions
+  // User actions (always target the active runtime)
   // --------------------------------------------------------------------------
 
   async sendPrompt(text: string) {
+    const rt = this.rt;
     // Consume pending attachments: images ride the prompt's images field,
     // text payloads are appended as labeled blocks.
-    const attachments = this.state.attachments;
+    const attachments = rt.view.attachments;
     const images: ImageContent[] = [];
     let message = text.trim();
     for (const a of attachments) {
@@ -675,34 +884,33 @@ export class ChatStore {
     }
     if (!message && images.length === 0) return;
     // A resumed session may still be connecting its engine in the background.
-    if (this.resumePromise) await this.resumePromise;
+    if (rt.resumePromise) await rt.resumePromise;
     try {
-      const sid = await this.ensureSession();
+      const sid = await this.ensureSession(rt);
       const resp = await sendCommand(sid, {
         type: "prompt",
         message,
         images: images.length > 0 ? images : undefined,
-        streamingBehavior: this.state.isStreaming ? "steer" : undefined,
+        streamingBehavior: rt.view.isStreaming ? "steer" : undefined,
       });
       this.clearAttachments();
       if (!resp.success) this.pushToast(`发送失败：${resp.error}`, "error");
+      else void this.syncSessionFile(rt);
     } catch (err) {
       this.pushToast(`发送失败：${errText(err)}`, "error");
     }
   }
 
-  private contextInflight = false;
-
   /** Refresh context-window usage from the engine (get_session_stats). */
-  async refreshContextUsage() {
-    const sid = this.state.sessionId;
+  async refreshContextUsage(rt: SessionRuntime = this.active) {
+    const sid = rt.view.sessionId;
     if (!sid || this.contextInflight) return;
     this.contextInflight = true;
     try {
       const resp = await sendCommand(sid, { type: "get_session_stats" }, 15000);
       if (resp.success) {
         const usage = (resp.data as { contextUsage?: ChatState["contextUsage"] } | undefined)?.contextUsage;
-        if (usage !== undefined) this.set({ contextUsage: usage });
+        if (usage !== undefined) this.setRt(rt, { contextUsage: usage });
       }
     } catch {
       // Stats are best-effort UI decoration.
@@ -713,12 +921,12 @@ export class ChatStore {
 
   /** Manually compact the conversation context (engine `compact` command). */
   async compact() {
-    const sid = this.state.sessionId;
+    const sid = this.rt.view.sessionId;
     if (!sid) {
       this.pushToast("请先开始一段对话", "info");
       return;
     }
-    if (this.state.isCompacting) return;
+    if (this.rt.view.isCompacting) return;
     try {
       const resp = await sendCommand(sid, { type: "compact" });
       if (!resp.success) this.pushToast(`上下文压缩失败：${resp.error}`, "error");
@@ -728,7 +936,7 @@ export class ChatStore {
   }
 
   async abort() {
-    const sid = this.state.sessionId;
+    const sid = this.rt.view.sessionId;
     if (!sid) return;
     try {
       await sendCommand(sid, { type: "abort" });
@@ -745,10 +953,10 @@ export class ChatStore {
   async setCwd(cwd: string) {
     this.set({ cwd });
     localStorage.setItem("kalo.lastCwd", cwd);
-    if (!this.state.sessionId) return;
-    if (this.state.timeline.length === 0) {
+    if (!this.rt.view.sessionId) return;
+    if (this.rt.view.timeline.length === 0) {
       try {
-        await this.restartSession();
+        await this.restartSession(this.rt);
       } catch (err) {
         this.pushToast(`切换工作目录失败：${errText(err)}`, "error");
       }
@@ -804,12 +1012,12 @@ export class ChatStore {
       // The running engine reads models.json at spawn, so a provider added
       // after this session started is unknown to it. If nothing has been
       // said yet, silently restart the session and retry once.
-      const isCustom = this.state.customModels.some(
+      const isCustom = this.global.customModels.some(
         (m) => m.provider === provider && m.id === modelId,
       );
-      if (isCustom && this.state.timeline.length === 0) {
-        await this.restartSession();
-        const sid2 = this.state.sessionId;
+      if (isCustom && this.rt.view.timeline.length === 0) {
+        await this.restartSession(this.rt);
+        const sid2 = this.rt.view.sessionId;
         if (!sid2) throw new Error("session restart failed");
         const retry = await sendCommand(sid2, { type: "set_model", provider, modelId }, 15000);
         if (retry.success) {
@@ -827,40 +1035,41 @@ export class ChatStore {
   }
 
   /** Re-apply the last used model to a freshly spawned engine (best-effort). */
-  private async applySavedModel() {
+  private async applySavedModel(rt: SessionRuntime) {
     const saved = loadLastModel();
-    const sid = this.state.sessionId;
+    const sid = rt.view.sessionId;
     if (!saved || !sid) return;
-    const cur = this.state.currentModel;
+    const cur = rt.view.currentModel;
     if (cur?.provider === saved.provider && cur?.id === saved.modelId) return;
     try {
       const resp = await sendCommand(sid, { type: "set_model", provider: saved.provider, modelId: saved.modelId }, 15000);
-      if (resp.success) this.set({ currentModel: resp.data as ModelInfo });
+      if (resp.success) this.setRt(rt, { currentModel: resp.data as ModelInfo });
     } catch {
       // Saved model no longer available — keep the engine default.
     }
   }
 
-  /** Close the current engine process and spawn a fresh one in the same cwd. */
-  private async restartSession() {
-    const oldSid = this.state.sessionId;
-    const cwd = this.state.cwd || localStorage.getItem("kalo.lastCwd") || ".";
+  /** Close the runtime's engine process and spawn a fresh one in the same cwd. */
+  private async restartSession(rt: SessionRuntime = this.active) {
+    const oldSid = rt.view.sessionId;
+    const cwd = rt.view.cwd || localStorage.getItem("kalo.lastCwd") || ".";
     if (oldSid) {
+      // Detach BEFORE closeSession so the exit event doesn't trigger recovery.
+      this.detachRt(rt);
       try {
         await closeSession(oldSid);
       } catch {
         // Already gone — fine.
       }
     }
-    this.detach();
-    const sid = await this.spawnSession(cwd);
+    const sid = await this.spawnSession(rt, cwd);
     await this.waitForEngine(sid);
-    await this.fetchSessionMeta(sid);
-    await this.applySavedModel();
+    await this.fetchSessionMeta(rt, sid);
+    await this.applySavedModel(rt);
   }
 
   async cycleThinkingLevel() {
-    const sid = this.state.sessionId;
+    const sid = this.rt.view.sessionId;
     if (!sid) {
       this.pushToast("请先开始一段对话", "info");
       return;
@@ -875,7 +1084,7 @@ export class ChatStore {
   }
 
   async setSteeringMode(mode: "all" | "one-at-a-time") {
-    const sid = this.state.sessionId;
+    const sid = this.rt.view.sessionId;
     if (!sid) {
       // No engine yet: remember locally, applied implicitly on next session.
       this.set({ steeringMode: mode });
@@ -892,8 +1101,10 @@ export class ChatStore {
 
   /** Answer the current extension UI prompt and pop it from the queue. */
   async respondExtension(id: string, answer: { value: string } | { confirmed: boolean } | { cancelled: true }) {
-    const sid = this.state.sessionId;
-    this.set({ extensionQueue: this.state.extensionQueue.filter((q) => q.id !== id) });
+    const rt = this.rt;
+    const sid = rt.view.sessionId;
+    this.setRt(rt, { extensionQueue: rt.view.extensionQueue.filter((q) => q.id !== id) });
+    if (rt === this.active) this.commit();
     if (!sid) return;
     try {
       await sendRawCommand(sid, { type: "extension_ui_response", id, ...answer });
@@ -903,10 +1114,10 @@ export class ChatStore {
   }
 
   // --------------------------------------------------------------------------
-  // Event dispatch
+  // Event dispatch (routed to the owning runtime, parked or active)
   // --------------------------------------------------------------------------
 
-  private handlePiPayload(payload: PiEventPayload) {
+  private handlePiPayload(payload: PiEventPayload, rt: SessionRuntime) {
     if (!payload || typeof payload !== "object") return;
     const type = (payload as { type?: string }).type;
 
@@ -915,13 +1126,13 @@ export class ChatStore {
       return;
     }
     if (type === "extension_ui_request") {
-      this.handleExtensionUiRequest(payload as RpcExtensionUIRequest);
+      this.handleExtensionUiRequest(payload as RpcExtensionUIRequest, rt);
       return;
     }
-    this.handleAgentEvent(payload as PiEvent);
+    this.handleAgentEvent(payload as PiEvent, rt);
   }
 
-  private handleExtensionUiRequest(req: RpcExtensionUIRequest) {
+  private handleExtensionUiRequest(req: RpcExtensionUIRequest, rt: SessionRuntime) {
     switch (req.method) {
       case "select":
       case "confirm":
@@ -936,7 +1147,10 @@ export class ChatStore {
           placeholder: req.method === "input" ? req.placeholder : undefined,
           prefill: req.method === "editor" ? req.prefill : undefined,
         };
-        this.set({ extensionQueue: [...this.state.extensionQueue, prompt] });
+        this.setRt(rt, { extensionQueue: [...rt.view.extensionQueue, prompt] });
+        if (rt !== this.active) {
+          this.pushToast(`后台会话正在等待交互输入（${prompt.title}），请切换到该会话处理`, "info");
+        }
         break;
       }
       case "notify":
@@ -946,7 +1160,7 @@ export class ChatStore {
         document.title = req.title || "Kalo";
         break;
       case "set_editor_text":
-        this.set({ inputDraft: req.text });
+        this.setRt(rt, { inputDraft: req.text });
         break;
       case "setStatus":
       case "setWidget":
@@ -955,50 +1169,57 @@ export class ChatStore {
     }
   }
 
-  private handleAgentEvent(ev: PiEvent) {
+  private handleAgentEvent(ev: PiEvent, rt: SessionRuntime) {
     switch (ev.type) {
       case "agent_start":
         // New run: discard any stale accumulator from a run that never settled.
-        this.runUsage = null;
-        this.set({ isStreaming: true });
+        rt.runUsage = null;
+        this.setRt(rt, { isStreaming: true });
         break;
       case "agent_end":
-        if (!ev.willRetry) this.set({ isStreaming: false });
-        void this.refreshContextUsage();
+        if (!ev.willRetry) this.setRt(rt, { isStreaming: false });
+        void this.refreshContextUsage(rt);
         break;
       case "agent_settled":
-        this.set({ isStreaming: false, isCompacting: false });
-        this.attachRunUsage();
+        this.setRt(rt, { isStreaming: false, isCompacting: false });
+        this.attachRunUsage(rt);
         break;
 
       case "message_start":
-        this.onMessageStart(ev.message);
+        this.onMessageStart(ev.message, rt);
         break;
       case "message_update":
-        this.applyAssistantEvent(ev.assistantMessageEvent);
+        this.applyAssistantEvent(ev.assistantMessageEvent, rt);
         break;
       case "message_end":
-        this.onMessageEnd(ev.message);
+        this.onMessageEnd(ev.message, rt);
         break;
 
       case "tool_execution_start":
-        this.onToolStart(ev.toolCallId, ev.toolName, ev.args);
+        this.onToolStart(ev.toolCallId, ev.toolName, ev.args, rt);
         break;
       case "tool_execution_update":
-        this.applyToolPartial(ev.toolCallId, ev.partialResult);
+        this.applyToolPartial(ev.toolCallId, ev.partialResult, rt);
         break;
       case "tool_execution_end":
-        this.updateToolRecord(ev.toolCallId, (rec) => ({
-          ...rec,
-          status: ev.isError ? "error" : "success",
-          result: ev.result,
-        }));
+        this.updateToolRecord(
+          ev.toolCallId,
+          (rec) => ({
+            ...rec,
+            status: ev.isError ? "error" : "success",
+            result: ev.result,
+          }),
+          rt,
+        );
         break;
 
       case "compaction_start":
-        this.compactionNoticeId = nextEntryId();
-        this.set({ isCompacting: true });
-        this.mutateTimeline((t) => t.push({ id: this.compactionNoticeId!, kind: "notice", text: "正在压缩上下文…" }));
+        rt.compactionNoticeId = nextEntryId();
+        this.setRt(rt, { isCompacting: true });
+        this.mutateTimeline(
+          (t) => t.push({ id: rt.compactionNoticeId!, kind: "notice", text: "正在压缩上下文…" }),
+          rt,
+        );
         break;
       case "compaction_end": {
         const text = ev.aborted
@@ -1006,26 +1227,29 @@ export class ChatStore {
           : ev.errorMessage
             ? `上下文压缩失败：${ev.errorMessage}`
             : "上下文已压缩";
-        this.set({ isCompacting: false });
-        void this.refreshContextUsage();
+        this.setRt(rt, { isCompacting: false });
+        void this.refreshContextUsage(rt);
+        const noticeId = rt.compactionNoticeId;
         this.mutateTimeline((t) => {
-          const idx = t.findIndex((e) => e.id === this.compactionNoticeId);
+          const idx = t.findIndex((e) => e.id === noticeId);
           if (idx >= 0) t[idx] = { ...t[idx], text } as NoticeEntry;
           else t.push({ id: nextEntryId(), kind: "notice", text });
-        });
+        }, rt);
         break;
       }
 
       case "auto_retry_start":
-        this.mutateTimeline((t) =>
-          t.push({
-            id: nextEntryId(),
-            kind: "retry",
-            attempt: ev.attempt,
-            maxAttempts: ev.maxAttempts,
-            delayMs: ev.delayMs,
-            errorMessage: ev.errorMessage,
-          }),
+        this.mutateTimeline(
+          (t) =>
+            t.push({
+              id: nextEntryId(),
+              kind: "retry",
+              attempt: ev.attempt,
+              maxAttempts: ev.maxAttempts,
+              delayMs: ev.delayMs,
+              errorMessage: ev.errorMessage,
+            }),
+          rt,
         );
         break;
       case "auto_retry_end":
@@ -1037,14 +1261,14 @@ export class ChatStore {
               return;
             }
           }
-        });
+        }, rt);
         break;
 
       case "thinking_level_changed":
-        this.set({ thinkingLevel: ev.level });
+        this.setRt(rt, { thinkingLevel: ev.level });
         break;
       case "session_info_changed":
-        this.set({ sessionName: ev.name });
+        this.setRt(rt, { sessionName: ev.name });
         break;
       case "extension_error":
         this.pushToast(`扩展错误：${ev.error ?? "未知错误"}`, "error");
@@ -1061,28 +1285,29 @@ export class ChatStore {
   // Message lifecycle
   // --------------------------------------------------------------------------
 
-  private onMessageStart(message: AgentMessage) {
+  private onMessageStart(message: AgentMessage, rt: SessionRuntime) {
     if (message.role === "user") {
-      this.mutateTimeline((t) => t.push({ id: nextEntryId(), kind: "user", message }));
+      this.mutateTimeline((t) => t.push({ id: nextEntryId(), kind: "user", message }), rt);
     } else if (message.role === "assistant") {
-      this.mutateTimeline((t) =>
-        t.push({ id: nextEntryId(), kind: "assistant", message: { ...message, content: [] }, streaming: true }),
+      this.mutateTimeline(
+        (t) => t.push({ id: nextEntryId(), kind: "assistant", message: { ...message, content: [] }, streaming: true }),
+        rt,
       );
     }
     // toolResult starts are ignored; results arrive via tool_execution_end / message_end
   }
 
-  private onMessageEnd(message: AgentMessage) {
+  private onMessageEnd(message: AgentMessage, rt: SessionRuntime) {
     if (message.role === "assistant") {
       // Accumulate token usage for the running agent run (flushed once at
       // agent_settled — a run spans several LLM calls/turns).
       const u = message.usage;
       if (u) {
-        this.runUsage = {
-          input: (this.runUsage?.input ?? 0) + (u.input ?? 0),
-          output: (this.runUsage?.output ?? 0) + (u.output ?? 0),
-          cacheRead: (this.runUsage?.cacheRead ?? 0) + (u.cacheRead ?? 0),
-          cacheWrite: (this.runUsage?.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
+        rt.runUsage = {
+          input: (rt.runUsage?.input ?? 0) + (u.input ?? 0),
+          output: (rt.runUsage?.output ?? 0) + (u.output ?? 0),
+          cacheRead: (rt.runUsage?.cacheRead ?? 0) + (u.cacheRead ?? 0),
+          cacheWrite: (rt.runUsage?.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
         };
       }
       // Replace the streaming partial with the authoritative message.
@@ -1095,24 +1320,27 @@ export class ChatStore {
           }
         }
         t.push({ id: nextEntryId(), kind: "assistant", message, streaming: false });
-      });
+      }, rt);
     } else if (message.role === "toolResult") {
       // Fallback: fill a tool record that never saw tool_execution_end
       // (e.g. result replayed from a session reload mid-stream).
       const tr = message as ToolResultMessage;
-      this.updateToolRecord(tr.toolCallId, (rec) =>
-        rec.status === "running"
-          ? { ...rec, status: tr.isError ? "error" : "success", result: { content: tr.content, details: tr.details, isError: tr.isError } }
-          : rec,
+      this.updateToolRecord(
+        tr.toolCallId,
+        (rec) =>
+          rec.status === "running"
+            ? { ...rec, status: tr.isError ? "error" : "success", result: { content: tr.content, details: tr.details, isError: tr.isError } }
+            : rec,
+        rt,
       );
     }
   }
 
   /** Attach the accumulated run usage to the last assistant entry (run footer). */
-  private attachRunUsage() {
-    if (!this.runUsage) return;
-    const usage = this.runUsage;
-    this.runUsage = null;
+  private attachRunUsage(rt: SessionRuntime) {
+    if (!rt.runUsage) return;
+    const usage = rt.runUsage;
+    rt.runUsage = null;
     this.mutateTimeline((t) => {
       for (let i = t.length - 1; i >= 0; i--) {
         const e = t[i];
@@ -1121,7 +1349,7 @@ export class ChatStore {
           return;
         }
       }
-    });
+    }, rt);
   }
 
   /**
@@ -1131,7 +1359,7 @@ export class ChatStore {
    * Deltas mutate the entry in place and notify via the throttled flush;
    * discrete lifecycle frames (seed/done/error/start) render immediately.
    */
-  private applyAssistantEvent(ev: AssistantMessageEvent) {
+  private applyAssistantEvent(ev: AssistantMessageEvent, rt: SessionRuntime) {
     // Discrete frames keep the immediate path.
     if (ev.type === "done" || ev.type === "error" || ev.type === "start") {
       this.mutateTimeline((t) => {
@@ -1141,18 +1369,25 @@ export class ChatStore {
         if (ev.type === "done") t[idx] = { ...entry, message: ev.message };
         else if (ev.type === "error") t[idx] = { ...entry, message: ev.error };
         else t[idx] = { ...entry, message: { ...entry.message, content: [] } };
-      });
+      }, rt);
       return;
     }
 
-    const t = this.state.timeline;
+    const t = rt.view.timeline;
     const idx = this.findStreamingAssistant(t);
     if (idx === -1) {
       // No message_start seen; seed from the partial carried by the event.
       const partial = "partial" in ev ? (ev.partial as AssistantMessage) : "message" in ev ? (ev as { message: AssistantMessage }).message : undefined;
       if (partial) {
-        this.mutateTimeline((tl) =>
-          tl.push({ id: nextEntryId(), kind: "assistant", message: { ...partial, content: [...partial.content] }, streaming: true }),
+        this.mutateTimeline(
+          (tl) =>
+            tl.push({
+              id: nextEntryId(),
+              kind: "assistant",
+              message: { ...partial, content: [...partial.content] },
+              streaming: true,
+            }),
+          rt,
         );
       }
       return;
@@ -1198,7 +1433,7 @@ export class ChatStore {
         content[i] = ev.toolCall as ToolCallContent;
         break;
     }
-    this.queueTimelineFlush(entry.id);
+    this.queueTimelineFlush(entry.id, rt);
   }
 
   private findStreamingAssistant(t: TimelineEntry[]): number {
@@ -1213,7 +1448,7 @@ export class ChatStore {
   // Tool execution aggregation
   // --------------------------------------------------------------------------
 
-  private onToolStart(toolCallId: string, toolName: string, args: any) {
+  private onToolStart(toolCallId: string, toolName: string, args: any, rt: SessionRuntime) {
     const rec: ToolCallRecord = { toolCallId, toolName, args, status: "running" };
     this.mutateTimeline((t) => {
       const last = t[t.length - 1];
@@ -1223,24 +1458,24 @@ export class ChatStore {
       } else {
         t.push({ id: nextEntryId(), kind: "toolGroup", toolName, calls: [rec] });
       }
-    });
+    }, rt);
   }
 
   /** High-frequency tool progress: mutate in place, flush throttled. */
-  private applyToolPartial(toolCallId: string, partialResult: any) {
-    const t = this.state.timeline;
+  private applyToolPartial(toolCallId: string, partialResult: any, rt: SessionRuntime) {
+    const t = rt.view.timeline;
     for (let gi = t.length - 1; gi >= 0; gi--) {
       const e = t[gi];
       if (e.kind !== "toolGroup") continue;
       const rec = e.calls.find((c) => c.toolCallId === toolCallId);
       if (!rec) continue;
       rec.partialResult = partialResult;
-      this.queueTimelineFlush(e.id);
+      this.queueTimelineFlush(e.id, rt);
       return;
     }
   }
 
-  private updateToolRecord(toolCallId: string, fn: (rec: ToolCallRecord) => ToolCallRecord) {
+  private updateToolRecord(toolCallId: string, fn: (rec: ToolCallRecord) => ToolCallRecord, rt: SessionRuntime) {
     this.mutateTimeline((t) => {
       for (let gi = t.length - 1; gi >= 0; gi--) {
         const e = t[gi];
@@ -1252,7 +1487,7 @@ export class ChatStore {
         t[gi] = { ...e, calls };
         return;
       }
-    });
+    }, rt);
   }
 }
 

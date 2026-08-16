@@ -12,11 +12,34 @@ interface SidebarProps {
   /** Session history grouped by cwd, straight from list_sessions. */
   sessionGroups: ProjectGroup[];
   activeSessionId: string | null;
+  /** Engine-pool flags: session files (normalized) with a run in flight. */
+  runningByFile: Record<string, boolean>;
   onNewChat: () => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
   /** Delete one session's history file (confirmed in the menu already). */
   onDeleteSession: (session: SessionSummary) => void;
   onOpenSettings: () => void;
+}
+
+/** Same normalization as chat-store's normPath (pool keys). */
+const normPath = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+
+/** Spinning arc shown next to sessions whose engine has a run in flight. */
+function RunningSpinner() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      strokeWidth="2"
+      className="shrink-0 animate-spin text-[var(--accent,#4b9eff)]"
+      aria-label="运行中"
+    >
+      <circle cx="8" cy="8" r="6" stroke="currentColor" opacity="0.2" />
+      <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 /** "2 天" / "3 小时" / "刚刚" style relative time. */
@@ -44,6 +67,7 @@ export default function Sidebar({
   onToggleCollapsed,
   sessionGroups,
   activeSessionId,
+  runningByFile,
   onNewChat,
   onSelectSession,
   onDeleteSession,
@@ -55,6 +79,8 @@ export default function Sidebar({
   const [chatsOpen, setChatsOpen] = useState(true);
 
   const reloadProjects = () => setProjects(listProjects());
+
+  const isRunning = (path: string) => runningByFile[normPath(path)] === true;
 
   const sessionsOf = (cwd: string): SessionSummary[] =>
     sessionGroups.find((g) => normalizeCwd(g.cwd) === normalizeCwd(cwd))?.sessions ?? [];
@@ -147,6 +173,7 @@ export default function Sidebar({
                 project={p}
                 sessions={sessionsOf(p.cwd)}
                 activeSessionId={activeSessionId}
+                isRunning={isRunning}
                 onOpen={() => openProject(p.cwd)}
                 onRemove={() => {
                   removeProject(p.cwd);
@@ -178,6 +205,7 @@ export default function Sidebar({
                   activeSessionId && s.id === activeSessionId ? "bg-card" : ""
                 }`}
               >
+                {isRunning(s.path) && <RunningSpinner />}
                 <button
                   onClick={() => onSelectSession(s.path, s.cwd)}
                   title={s.title || "未命名会话"}
@@ -216,6 +244,7 @@ function ProjectRow({
   project,
   sessions,
   activeSessionId,
+  isRunning,
   onOpen,
   onRemove,
   onSelectSession,
@@ -224,6 +253,7 @@ function ProjectRow({
   project: ProjectEntry;
   sessions: SessionSummary[];
   activeSessionId: string | null;
+  isRunning: (path: string) => boolean;
   onOpen: () => void;
   onRemove: () => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
@@ -277,6 +307,7 @@ function ProjectRow({
               activeSessionId && s.id === activeSessionId ? "bg-card" : ""
             }`}
           >
+            {isRunning(s.path) && <RunningSpinner />}
             <button
               onClick={() => onSelectSession(s.path, project.cwd)}
               title={s.title || "未命名会话"}
