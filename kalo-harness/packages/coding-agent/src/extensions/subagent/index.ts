@@ -18,6 +18,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "../../core/extensions/types.ts";
+import { ModelRuntime } from "../../core/model-runtime.ts";
 import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { createAgentSession } from "../../core/sdk.ts";
 import { SessionManager } from "../../core/session-manager.ts";
@@ -31,12 +32,30 @@ const MAX_RESULT_CHARS = 16_000;
 const HARD_TIMEOUT_MS = 10 * 60_000;
 /** Max concurrent child agents per engine process (local models queue anyway). */
 const MAX_CONCURRENCY = 3;
+/** Per-entry and total caps for the live activity feed pushed to the UI. */
+const MAX_ACTIVITY_TEXT_CHARS = 2_000;
+const MAX_ACTIVITY_ITEMS = 200;
+
+/** One entry in the child's live activity feed (assistant texts and tool calls). */
+type ChildActivity =
+	| { kind: "text"; text: string }
+	| {
+			kind: "tool";
+			toolCallId: string;
+			name: string;
+			label: string;
+			status: "running" | "success" | "error";
+	  };
 
 interface SubagentDetails {
 	description?: string;
 	turns: number;
 	tokens: number;
 	truncated: boolean;
+	/** Live step counter pushed via onUpdate while the child is running. */
+	steps?: number;
+	/** Live activity feed: child assistant texts and tool calls, newest last. */
+	activity?: ChildActivity[];
 	timedOut?: boolean;
 	aborted?: boolean;
 }
@@ -63,6 +82,47 @@ async function acquireSlot(): Promise<() => void> {
 }
 
 // ---------------------------------------------------------------------------
+// Shared child resources
+// ---------------------------------------------------------------------------
+
+/**
+ * Heavyweight read-only resources shared by every child session in this
+ * process, cached per cwd. Rebuilding SettingsManager + ResourceLoader +
+ * ModelRuntime on each `agent` call means re-reading settings files and
+ * re-scanning extensions/skills/prompts — all unnecessary for children that
+ * run with `noExtensions: true` anyway.
+ */
+interface ChildResources {
+	settingsManager: SettingsManager;
+	loader: DefaultResourceLoader;
+	modelRuntime: ModelRuntime;
+}
+
+const childResourceCache = new Map<string, Promise<ChildResources>>();
+
+function getChildResources(cwd: string, agentDir: string): Promise<ChildResources> {
+	let entry = childResourceCache.get(cwd);
+	if (!entry) {
+		entry = (async () => {
+			const settingsManager = SettingsManager.create(cwd, agentDir);
+			// noExtensions keeps the child clean: no subagent (no recursion), no MCP,
+			// no memory — just the trimmed builtin toolset.
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager,
+				noExtensions: true,
+			});
+			await loader.reload();
+			const modelRuntime = await ModelRuntime.create({});
+			return { settingsManager, loader, modelRuntime };
+		})();
+		childResourceCache.set(cwd, entry);
+	}
+	return entry;
+}
+
+// ---------------------------------------------------------------------------
 // Child run
 // ---------------------------------------------------------------------------
 
@@ -73,6 +133,26 @@ interface ChildOutcome {
 	truncated: boolean;
 	timedOut: boolean;
 	aborted: boolean;
+	activity: ChildActivity[];
+}
+
+/** Short human label for a child tool call row, e.g. the path or pattern. */
+function childToolLabel(name: string, args: any): string {
+	switch (name) {
+		case "read":
+		case "write":
+		case "edit":
+		case "ls":
+			return String(args?.path ?? "");
+		case "grep":
+			return String(args?.pattern ?? args?.query ?? "");
+		case "glob":
+			return String(args?.pattern ?? "");
+		case "bash":
+			return String(args?.command ?? "");
+		default:
+			return name;
+	}
 }
 
 async function runChild(opts: {
@@ -82,18 +162,13 @@ async function runChild(opts: {
 	prompt: string;
 	tools: string[];
 	signal: AbortSignal | undefined;
+	/** Task summary echoed back in every progress update. */
+	description?: string;
+	/** Progress sink: called on each child step, tool call and assistant text. */
+	onUpdate?: AgentToolUpdateCallback<SubagentDetails>;
 }): Promise<ChildOutcome> {
 	const agentDir = getAgentDir();
-	const settingsManager = SettingsManager.create(opts.cwd, agentDir);
-	// noExtensions keeps the child clean: no subagent (no recursion), no MCP,
-	// no memory — just the trimmed builtin toolset below.
-	const loader = new DefaultResourceLoader({
-		cwd: opts.cwd,
-		agentDir,
-		settingsManager,
-		noExtensions: true,
-	});
-	await loader.reload();
+	const { settingsManager, loader, modelRuntime } = await getChildResources(opts.cwd, agentDir);
 
 	const { session } = await createAgentSession({
 		cwd: opts.cwd,
@@ -103,6 +178,64 @@ async function runChild(opts: {
 		sessionManager: SessionManager.inMemory(opts.cwd),
 		settingsManager,
 		resourceLoader: loader,
+		modelRuntime,
+	});
+
+	// Track the child's activity (steps, tokens, texts, tool calls) and push
+	// it to the parent's UI as partial tool results.
+	const activity: ChildActivity[] = [];
+	let steps = 0;
+	let liveTokens = 0;
+	const emit = () => {
+		opts.onUpdate?.({
+			content: [],
+			details: {
+				description: opts.description,
+				turns: steps,
+				tokens: liveTokens,
+				truncated: false,
+				steps,
+				activity: activity.map((a) => ({ ...a })),
+			},
+		});
+	};
+	const unsubscribe = session.subscribe((event) => {
+		if (event.type === "message_start" && event.message.role === "assistant") {
+			steps++;
+			emit();
+		} else if (event.type === "message_end" && event.message.role === "assistant") {
+			const usage = (event.message as { usage?: { input?: number; output?: number } }).usage;
+			liveTokens += (usage?.input ?? 0) + (usage?.output ?? 0);
+			const text = assistantText(event.message).trim();
+			if (text) {
+				activity.push({
+					kind: "text",
+					text: text.length > MAX_ACTIVITY_TEXT_CHARS ? `${text.slice(0, MAX_ACTIVITY_TEXT_CHARS)}…` : text,
+				});
+			}
+			emit();
+		} else if (event.type === "tool_execution_start") {
+			activity.push({
+				kind: "tool",
+				toolCallId: event.toolCallId,
+				name: event.toolName,
+				label: childToolLabel(event.toolName, event.args),
+				status: "running",
+			});
+			if (activity.length > MAX_ACTIVITY_ITEMS) {
+				activity.splice(0, activity.length - MAX_ACTIVITY_ITEMS);
+			}
+			emit();
+		} else if (event.type === "tool_execution_end") {
+			for (let i = activity.length - 1; i >= 0; i--) {
+				const entry = activity[i];
+				if (entry.kind === "tool" && entry.toolCallId === event.toolCallId) {
+					entry.status = event.isError ? "error" : "success";
+					break;
+				}
+			}
+			emit();
+		}
 	});
 
 	let timedOut = false;
@@ -118,6 +251,7 @@ async function runChild(opts: {
 	} finally {
 		clearTimeout(timer);
 		opts.signal?.removeEventListener("abort", onAbort);
+		unsubscribe();
 	}
 
 	const messages = session.agent.state.messages;
@@ -144,6 +278,7 @@ async function runChild(opts: {
 		truncated,
 		timedOut,
 		aborted: opts.signal?.aborted ?? false,
+		activity,
 	};
 }
 
@@ -186,7 +321,7 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 			_toolCallId: string,
 			params: { prompt: string; description?: string; tools?: string[] },
 			signal: AbortSignal | undefined,
-			_onUpdate: AgentToolUpdateCallback<SubagentDetails> | undefined,
+			onUpdate: AgentToolUpdateCallback<SubagentDetails> | undefined,
 			ctx: ExtensionContext,
 		): Promise<AgentToolResult<SubagentDetails>> {
 			const tools = params.tools?.length ? params.tools : DEFAULT_TOOLS;
@@ -199,6 +334,8 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 					prompt: params.prompt,
 					tools,
 					signal,
+					description: params.description,
+					onUpdate,
 				});
 				const details: SubagentDetails = {
 					description: params.description,
@@ -206,6 +343,7 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 					tokens: outcome.tokens,
 					truncated: outcome.truncated,
 					timedOut: outcome.timedOut,
+					activity: outcome.activity,
 				};
 				if (outcome.aborted) {
 					return {

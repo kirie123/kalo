@@ -1,5 +1,10 @@
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import type { ToolCallRecord } from "../lib/chat-store";
+import { CodeRenderer } from "./AssistantMessage";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 
 /** Verb used in the collapsed group header per tool name. */
@@ -11,6 +16,7 @@ const TOOL_VERBS: Record<string, { verb: string; noun: string }> = {
   grep: { verb: "搜索", noun: "次" },
   glob: { verb: "查找", noun: "次" },
   ls: { verb: "查看", noun: "个目录" },
+  agent: { verb: "派生", noun: "个子 agent" },
 };
 
 /** Right-side chip label naming the concrete tool, e.g. "Read File". */
@@ -22,6 +28,7 @@ const TOOL_CHIPS: Record<string, string> = {
   grep: "Grep",
   glob: "Glob",
   ls: "LS",
+  agent: "Sub Agent",
 };
 
 function groupTitle(toolName: string, count: number): string {
@@ -47,10 +54,33 @@ function rowLabel(rec: ToolCallRecord): string {
       return `${verb} ${String(args.pattern ?? "")}`;
     case "ls":
       return `${verb} ${String(args.path ?? ".")}`;
+    case "agent": {
+      const desc = String(args.description ?? "").trim();
+      if (desc) return desc;
+      const prompt = String(args.prompt ?? "").trim().split("\n")[0];
+      return prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt || "子 agent 任务";
+    }
     default:
       return rec.toolName;
   }
 }
+
+/**
+ * Live step count for a subagent call: partial updates while running,
+ * final turn count once settled.
+ */
+function agentSteps(rec: ToolCallRecord): number | null {
+  const fromPartial = rec.partialResult?.details?.steps;
+  if (typeof fromPartial === "number") return fromPartial;
+  const fromResult = rec.result?.details?.turns;
+  if (typeof fromResult === "number") return fromResult;
+  return null;
+}
+
+/** One entry of a subagent's live activity feed (mirrors the harness type). */
+type AgentActivityItem =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; toolCallId: string; name: string; label: string; status: "running" | "success" | "error" };
 
 function StatusMark({ rec }: { rec: ToolCallRecord }) {
   if (rec.status === "running") return <span className="spinner" />;
@@ -104,11 +134,13 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
 }
 
 function ToolCallRow({ rec }: { rec: ToolCallRecord }) {
-  // Call details start closed, except edits which show their diff inline.
-  const [open, setOpen] = useState(rec.toolName === "edit");
+  // Call details start closed, except edits (inline diff) and running subagents
+  // (live activity feed).
+  const [open, setOpen] = useState(rec.toolName === "edit" || (rec.toolName === "agent" && rec.status === "running"));
   const diff = extractDiff(rec.result) ?? extractDiff(rec.partialResult);
   const stats = diff ? diffStats(diff) : null;
   const chip = TOOL_CHIPS[rec.toolName] ?? rec.toolName;
+  const steps = rec.toolName === "agent" ? agentSteps(rec) : null;
 
   return (
     <div className="rounded-md">
@@ -128,6 +160,15 @@ function ToolCallRow({ rec }: { rec: ToolCallRecord }) {
             <span className="text-[var(--diff-del-text)]">-{stats.del}</span>
           </span>
         )}
+        {steps !== null && (
+          <span
+            className={`mono shrink-0 rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${
+              rec.status === "running" ? "border-edge text-ink" : "border-edge text-dim"
+            }`}
+          >
+            {rec.status === "running" ? `第 ${steps} 步` : `共 ${steps} 步`}
+          </span>
+        )}
         <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
           {chip}
         </span>
@@ -138,6 +179,50 @@ function ToolCallRow({ rec }: { rec: ToolCallRecord }) {
 }
 
 function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
+  if (rec.toolName === "agent") {
+    const activity: AgentActivityItem[] | undefined =
+      rec.result?.details?.activity ?? rec.partialResult?.details?.activity;
+    if (activity?.length) {
+      return (
+        <div className="mb-1 ml-6 mt-1 flex flex-col gap-1">
+          {activity.map((item, i) =>
+            item.kind === "tool" ? (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                <span className="w-3 shrink-0 text-center text-[11px]">
+                  {item.status === "running" ? (
+                    <span className="spinner" />
+                  ) : item.status === "error" ? (
+                    <span className="text-[var(--danger)]">✗</span>
+                  ) : (
+                    <span className="text-[var(--ok)]">✓</span>
+                  )}
+                </span>
+                <span className="shrink-0 text-dim">{item.name}</span>
+                <span className="mono min-w-0 flex-1 truncate text-dim">{item.label}</span>
+              </div>
+            ) : (
+              <div
+                key={i}
+                className="markdown rounded-md border border-edge bg-card px-2.5 py-1.5 text-xs"
+              >
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    code: CodeRenderer as any,
+                    pre: ({ children }) => <>{children}</>,
+                  }}
+                >
+                  {item.text}
+                </ReactMarkdown>
+              </div>
+            ),
+          )}
+        </div>
+      );
+    }
+  }
+
   if (rec.toolName === "edit" && diff) {
     return (
       <div className="mb-1 ml-6 mt-1">
