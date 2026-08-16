@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { formatApiError } from "../lib/error-format";
 import type { AssistantMessage as AssistantMessageType } from "../types";
 import { formatK } from "./ContextRing";
+import CopyButton from "./CopyButton";
 import ThinkingBlock from "./ThinkingBlock";
 import type { TurnUsage } from "../lib/chat-store";
 
@@ -82,14 +83,29 @@ export default function AssistantMessage({
         return null;
       })}
       {failed && <ErrorBanner raw={message.errorMessage!} />}
-      {usage && !streaming && (
-        <div className="mt-2 text-xs text-dim">
-          本轮 tokens：输入 {formatK(inputSide)} · 输出 {formatK(usage.output)}
-          {hitRate !== null && ` · 缓存命中 ${hitRate}%`}
+      {!streaming && (
+        <div className="group/msg mt-2 flex items-end justify-between gap-2 text-xs text-dim">
+          <span>
+            {usage &&
+              `本轮 tokens：输入 ${formatK(inputSide)} · 输出 ${formatK(usage.output)}${
+                hitRate !== null ? ` · 缓存命中 ${hitRate}%` : ""
+              }`}
+          </span>
+          <span className="opacity-0 transition-opacity group-hover/msg:opacity-100">
+            <CopyButton text={assistantText(message)} title="复制本轮回复" />
+          </span>
         </div>
       )}
     </div>
   );
+}
+
+/** Markdown source of all text blocks, joined with a blank line. */
+function assistantText(message: AssistantMessageType): string {
+  return message.content
+    .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
+    .join("\n\n");
 }
 
 /** Clean one-line error summary with the raw payload expandable. */
