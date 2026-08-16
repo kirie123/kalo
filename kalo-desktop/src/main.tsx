@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "highlight.js/styles/github-dark.css";
+import "katex/dist/katex.min.css";
 import "./index.css";
 import App from "./App";
 

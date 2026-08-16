@@ -154,6 +154,16 @@ body {
   border-top: 1px solid var(--border);
   margin: 1em 0;
 }
+/* KaTeX: wide display formulas scroll instead of overflowing the bubble. */
+.markdown .katex-display {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15em 0;
+}
+.markdown .katex {
+  font-size: 1.05em;
+}
 .markdown table {
   border-collapse: collapse;
   margin: 0.6em 0;

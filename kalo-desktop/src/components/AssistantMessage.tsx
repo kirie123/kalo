@@ -1,7 +1,9 @@
 import hljs from "highlight.js";
 import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { formatApiError } from "../lib/error-format";
 import type { AssistantMessage as AssistantMessageType } from "../types";
 import { formatK } from "./ContextRing";
@@ -14,7 +16,7 @@ function escapeHtml(s: string): string {
 }
 
 /** Code renderer: inline code vs fenced block (highlight.js for blocks). */
-function CodeRenderer({ className, children }: { className?: string; children?: ReactNode }) {
+export function CodeRenderer({ className, children }: { className?: string; children?: ReactNode }) {
   const code = String(children ?? "").replace(/\n$/, "");
   const lang = /language-([\w-]+)/.exec(className ?? "")?.[1];
   const isInline = !lang && !code.includes("\n");
@@ -61,7 +63,8 @@ export default function AssistantMessage({
           return (
             <div key={i} className="markdown">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, remarkMath]}
+                rehypePlugins={[rehypeKatex]}
                 components={{
                   code: CodeRenderer as any,
                   // CodeRenderer renders its own <pre>; avoid a double wrapper.
