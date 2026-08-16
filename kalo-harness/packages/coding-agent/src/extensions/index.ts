@@ -4,6 +4,7 @@ import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import memoryExtension from "./memory/index.ts";
 import skillExtension from "./skill/index.ts";
+import subagentExtension from "./subagent/index.ts";
 import webFetchExtension from "./webfetch/index.ts";
 
 export const builtInExtensions: InlineExtension[] = [
@@ -13,4 +14,5 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "kalo-skills", factory: kaloSkillsExtension, hidden: true },
 	{ name: "webfetch", factory: webFetchExtension, hidden: true },
 	{ name: "mcp", factory: mcpExtension, hidden: true },
+	{ name: "subagent", factory: subagentExtension, hidden: true },
 ];
