@@ -56,6 +56,42 @@ function findBash() {
 
 const newerThan = (file, reference) => statSync(file).mtimeMs > statSync(reference).mtimeMs;
 
+/** True when any file under `dir` (recursively) is newer than `cutoffMs`. */
+function newerThanIn(dir, cutoffMs) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (newerThanIn(p, cutoffMs)) return true;
+    } else if (statSync(p).mtimeMs > cutoffMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Pi engine rebuild triggers on a missing exe or changed harness sources:
+ * any file under kalo-harness/packages/<pkg>/src newer than the staged exe.
+ * Without this, engine-side fixes never reach `tauri dev` until a manual
+ * build-engine.sh.
+ */
+function engineStale() {
+  if (!existsSync(PI_EXE)) return true;
+  const packagesDir = join(HARNESS, "packages");
+  let pkgs;
+  try {
+    pkgs = readdirSync(packagesDir);
+  } catch {
+    return true;
+  }
+  const cutoff = statSync(PI_EXE).mtimeMs;
+  for (const pkg of pkgs) {
+    const src = join(packagesDir, pkg, "src");
+    if (existsSync(src) && newerThanIn(src, cutoff)) return true;
+  }
+  return false;
+}
+
 /** Gateway rebuild is cheap: trigger on missing exe or changed sources. */
 function gatewayStale() {
   if (!existsSync(GATEWAY_EXE)) return true;
@@ -69,8 +105,12 @@ function gatewayStale() {
 }
 
 // --- pi engine ---
-if (FORCE || !existsSync(PI_EXE)) {
-  console.log("[ensure-engine] pi engine missing (or forced) — building, first run can take a while...");
+if (FORCE || engineStale()) {
+  console.log(
+    FORCE
+      ? "[ensure-engine] FORCE_ENGINE_BUILD set — rebuilding pi engine..."
+      : "[ensure-engine] pi engine missing or harness sources changed — rebuilding (can take a while)...",
+  );
   if (!existsSync(join(HARNESS, "node_modules"))) {
     console.log("[ensure-engine] installing kalo-harness dependencies...");
     run("npm", ["install", "--no-audit", "--no-fund"], HARNESS, true);
