@@ -24,7 +24,7 @@ import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 
 /** Read-only exploration tools a child may use unless the call opts out. */
-const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
+const DEFAULT_TOOLS = ["read", "grep", "glob", "ls"];
 /** Hard ceiling on the child's final text handed back to the parent model. */
 const MAX_RESULT_CHARS = 16_000;
 /** Watchdog so a wedged child cannot pin a parent tool call forever. */

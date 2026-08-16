@@ -9,12 +9,19 @@
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added the `defaultTools` setting for configuring the initial built-in tool selection globally or per project.
 - Added `--use-theme <name[/name]>` to choose an initial per-run interactive theme without changing saved settings ([#7722](https://github.com/earendil-works/pi/pull/7722) by [@rwachtler](https://github.com/rwachtler)).
+- Added a `glob` tool that finds files by glob pattern (basenames at any depth, newest first) using the shared pure-TypeScript search core, with no external binary dependency.
 
 ### Changed
 
 - Routed custom models on Ollama endpoints (provider id containing "ollama" or base URL on port 11434) to the native `ollama-chat` API and capped their context windows at 128K (default when unset), so `num_ctx` is pinned to the configured window and compaction accounting matches the real server window instead of silently truncating.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Documented the generic `AI_AGENT=pi` process marker and how it differs from `PI_CODING_AGENT=true` ([#7747](https://github.com/earendil-works/pi/issues/7747)).
+- Rewrote the `grep` tool on the shared pure-TypeScript search core, removing the `rg` dependency and runtime download fallback; output is now grouped by file (`Found N matches` + `Line N: text` sections) and works offline.
+- Moved `find` out of the subagent default toolset in favor of `glob` (`DEFAULT_TOOLS` is now `read/grep/glob/ls`).
+
+### Breaking Changes
+
+- `GrepOperations` now requires a `listDir` method (`{ isDirectory, readFile, listDir }`) for the grep tool's pluggable operations.
 
 ### Fixed
 

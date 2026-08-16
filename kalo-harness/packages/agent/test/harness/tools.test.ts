@@ -1,9 +1,11 @@
-import { symlink } from "node:fs/promises";
+import { symlink, utimes } from "node:fs/promises";
 import { applyPatch } from "diff";
 import { describe, expect, it } from "vitest";
 import { NodeExecutionEnv } from "../../src/harness/env/nodejs.ts";
 import { type BashToolDetails, createBashTool } from "../../src/harness/tools/bash.ts";
 import { createEditTool } from "../../src/harness/tools/edit.ts";
+import { createGlobTool } from "../../src/harness/tools/glob.ts";
+import { createGrepTool } from "../../src/harness/tools/grep.ts";
 import { createReadTool } from "../../src/harness/tools/read.ts";
 import { createWriteTool } from "../../src/harness/tools/write.ts";
 import {
@@ -617,6 +619,213 @@ describe("AgentHarness tools", () => {
 			const fullOutput = getOrThrow(await context.env.readTextFile(result.details!.fullOutputPath!));
 			expect(fullOutput).toContain("line-1\nline-2");
 			expect(fullOutput).toContain("line-2999\nline-3000");
+		});
+	});
+
+	describe("grep", () => {
+		it("searches a directory and groups matches by file", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile("src/a.ts", "alpha\nneedle here\nomega\n"));
+			getOrThrow(await context.env.writeFile("src/b.ts", "another needle\n"));
+			getOrThrow(await context.env.writeFile("docs/note.md", "nothing relevant\n"));
+
+			const result = await createGrepTool().execute("grep-1", { pattern: "needle" }, undefined, undefined, context);
+
+			const output = textOutput(result);
+			expect(output).toContain("Found 2 matches");
+			expect(output).toContain("src/a.ts\nLine 2: needle here");
+			expect(output).toContain("src/b.ts\nLine 1: another needle");
+			expect(output).not.toContain("docs/note.md");
+			expect(result.details?.filesSearched).toBe(3);
+			expect(result.details?.walkTruncated).toBe(false);
+		});
+
+		it("searches a single file and reports its basename", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile("solo.txt", "one\ntwo match\n"));
+
+			const result = await createGrepTool().execute(
+				"grep-2",
+				{ pattern: "match", path: "solo.txt" },
+				undefined,
+				undefined,
+				context,
+			);
+
+			expect(textOutput(result)).toContain("solo.txt\nLine 2: two match");
+		});
+
+		it("respects gitignore, excluded directories, glob filters, and ignoreCase", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile(".gitignore", "ignored.txt\n"));
+			getOrThrow(await context.env.writeFile("ignored.txt", "needle\n"));
+			getOrThrow(await context.env.writeFile("kept.ts", "NEEDLE\n"));
+			getOrThrow(await context.env.writeFile("kept.md", "needle\n"));
+			getOrThrow(await context.env.writeFile("node_modules/pkg/index.js", "needle\n"));
+
+			const result = await createGrepTool().execute(
+				"grep-3",
+				{ pattern: "needle", glob: "*.ts", ignoreCase: true },
+				undefined,
+				undefined,
+				context,
+			);
+
+			const output = textOutput(result);
+			expect(output).toContain("kept.ts\nLine 1: NEEDLE");
+			expect(output).not.toContain("ignored.txt");
+			expect(output).not.toContain("kept.md");
+			expect(output).not.toContain("node_modules");
+		});
+
+		it("skips binary files and reports no matches with the searched count", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile("blob.bin", "a\u0000b needle\n"));
+			getOrThrow(await context.env.writeFile("plain.txt", "nothing\n"));
+
+			const result = await createGrepTool().execute("grep-4", { pattern: "needle" }, undefined, undefined, context);
+
+			expect(textOutput(result)).toBe("No matches found (searched 1 files)");
+			expect(result.details?.filesSearched).toBe(1);
+		});
+
+		it("stops at the match limit with an actionable notice", async () => {
+			const context = createContext();
+			getOrThrow(
+				await context.env.writeFile("many.txt", Array.from({ length: 10 }, (_, i) => `hit ${i}`).join("\n")),
+			);
+
+			const result = await createGrepTool().execute(
+				"grep-5",
+				{ pattern: "hit", limit: 3 },
+				undefined,
+				undefined,
+				context,
+			);
+
+			const output = textOutput(result);
+			expect(output).toContain("Found 3 matches (limit 3 reached)");
+			expect(output).toContain("Use limit=6 for more, or refine pattern/path");
+			expect(result.details?.matchLimitReached).toBe(3);
+		});
+
+		it("rejects invalid arguments", async () => {
+			const context = createContext();
+			const tool = createGrepTool();
+			await expect(tool.execute("grep-err-1", { pattern: "" }, undefined, undefined, context)).rejects.toThrow(
+				"pattern must be a non-empty string",
+			);
+			await expect(
+				tool.execute("grep-err-2", { pattern: "x", glob: "!secret.ts" }, undefined, undefined, context),
+			).rejects.toThrow("positive filter");
+			await expect(
+				tool.execute("grep-err-3", { pattern: "x", glob: "a.ts,b.ts" }, undefined, undefined, context),
+			).rejects.toThrow("one pattern");
+			await expect(tool.execute("grep-err-4", { pattern: "x(" }, undefined, undefined, context)).rejects.toThrow(
+				"Invalid regular expression",
+			);
+			await expect(
+				tool.execute("grep-err-5", { pattern: "x", limit: 0 }, undefined, undefined, context),
+			).rejects.toThrow("limit must be a positive number");
+		});
+
+		it("fails on a missing path", async () => {
+			const context = createContext();
+			await expect(
+				createGrepTool().execute(
+					"grep-err-6",
+					{ pattern: "x", path: "missing.txt" },
+					undefined,
+					undefined,
+					context,
+				),
+			).rejects.toThrow("Path not found or unreadable");
+		});
+	});
+
+	describe("glob", () => {
+		it("matches basenames at any depth and sorts newest first", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile("root.txt", "old"));
+			getOrThrow(await context.env.writeFile("src/deep/nested.txt", "new"));
+			const envCwd = context.env.cwd;
+			await utimes(`${envCwd}/root.txt`, new Date(1000), new Date(1000));
+			await utimes(`${envCwd}/src/deep/nested.txt`, new Date(2000), new Date(2000));
+
+			const result = await createGlobTool().execute("glob-1", { pattern: "*.txt" }, undefined, undefined, context);
+
+			const output = textOutput(result);
+			const lines = output.split("\n");
+			expect(lines.indexOf("src/deep/nested.txt")).toBeLessThan(lines.indexOf("root.txt"));
+			expect(output).toContain("root.txt");
+		});
+
+		it("anchors patterns containing '/' to the search root", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile("src/a.ts", ""));
+			getOrThrow(await context.env.writeFile("src/sub/b.ts", ""));
+			getOrThrow(await context.env.writeFile("top.ts", ""));
+
+			const result = await createGlobTool().execute(
+				"glob-2",
+				{ pattern: "src/**/*.ts" },
+				undefined,
+				undefined,
+				context,
+			);
+
+			const output = textOutput(result);
+			expect(output).toContain("src/a.ts");
+			expect(output).toContain("src/sub/b.ts");
+			expect(output).not.toContain("top.ts");
+		});
+
+		it("respects gitignore and excluded directories", async () => {
+			const context = createContext();
+			getOrThrow(await context.env.writeFile(".gitignore", "hidden.txt\n"));
+			getOrThrow(await context.env.writeFile("hidden.txt", ""));
+			getOrThrow(await context.env.writeFile("visible.txt", ""));
+			getOrThrow(await context.env.writeFile("node_modules/pkg.js", ""));
+
+			const result = await createGlobTool().execute("glob-3", { pattern: "*" }, undefined, undefined, context);
+
+			const output = textOutput(result);
+			expect(output).toContain("visible.txt");
+			expect(output).not.toContain("hidden.txt");
+			expect(output).not.toContain("node_modules");
+			expect(output).not.toContain(".gitignore");
+		});
+
+		it("caps results with a notice", async () => {
+			const context = createContext();
+			for (let index = 0; index < 5; index++) {
+				getOrThrow(await context.env.writeFile(`f${index}.txt`, ""));
+			}
+
+			const result = await createGlobTool().execute(
+				"glob-4",
+				{ pattern: "*.txt", limit: 2 },
+				undefined,
+				undefined,
+				context,
+			);
+
+			const output = textOutput(result);
+			expect(output).toContain("Showing 2 of 5 matching files, newest first.");
+			expect(result.details?.resultLimitReached).toBe(2);
+		});
+
+		it("reports when nothing matches and rejects bad input", async () => {
+			const context = createContext();
+			const tool = createGlobTool();
+			const noMatch = await tool.execute("glob-5", { pattern: "*.xyz" }, undefined, undefined, context);
+			expect(textOutput(noMatch)).toBe("No files found matching pattern '*.xyz'");
+			await expect(tool.execute("glob-err-1", { pattern: " " }, undefined, undefined, context)).rejects.toThrow(
+				"pattern must be a non-empty string",
+			);
+			await expect(
+				tool.execute("glob-err-2", { pattern: "*", path: "missing-dir" }, undefined, undefined, context),
+			).rejects.toThrow("Directory not found");
 		});
 	});
 });

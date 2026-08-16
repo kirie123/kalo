@@ -9,6 +9,7 @@ import { computeEditsDiff } from "../src/core/tools/edit-diff.ts";
 import {
 	createEditTool,
 	createFindTool,
+	createGlobTool,
 	createGrepTool,
 	createLsTool,
 	createReadTool,
@@ -21,6 +22,7 @@ const writeTool = createWriteTool(process.cwd());
 const editTool = createEditTool(process.cwd());
 const bashTool = createBashTool(process.cwd());
 const grepTool = createGrepTool(process.cwd());
+const globTool = createGlobTool(process.cwd());
 const findTool = createFindTool(process.cwd());
 const lsTool = createLsTool(process.cwd());
 
@@ -780,7 +782,9 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("example.txt:2: match line");
+			expect(output).toContain("Found 1 match");
+			expect(output).toContain("example.txt");
+			expect(output).toContain("Line 2: match line");
 		});
 
 		it("should respect global limit and include context lines", async () => {
@@ -796,12 +800,32 @@ describe("Coding Agent Tools", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toContain("context.txt-1- before");
-			expect(output).toContain("context.txt:2: match one");
-			expect(output).toContain("context.txt-3- after");
+			expect(output).toContain("context.txt");
+			expect(output).toContain("Line 1- before");
+			expect(output).toContain("Line 2: match one");
+			expect(output).toContain("Line 3- after");
 			expect(output).toContain("[1 matches limit reached. Use limit=2 for more, or refine pattern]");
 			// Ensure second match is not present
 			expect(output).not.toContain("match two");
+		});
+
+		it("should group matches by file when searching a directory", async () => {
+			writeFileSync(join(testDir, "a.txt"), "hello world\nsecond hello");
+			mkdirSync(join(testDir, "sub"));
+			writeFileSync(join(testDir, "sub", "b.txt"), "hello from sub");
+
+			const result = await grepTool.execute("test-call-grep-group", {
+				pattern: "hello",
+				path: testDir,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("Found 3 matches");
+			expect(output).toContain("a.txt");
+			expect(output).toContain("Line 1: hello world");
+			expect(output).toContain("Line 2: second hello");
+			expect(output).toContain("sub/b.txt");
+			expect(output).toContain("Line 1: hello from sub");
 		});
 
 		it("should treat flag-like patterns as search text", async () => {
@@ -819,6 +843,58 @@ describe("Coding Agent Tools", () => {
 
 			expect(getTextOutput(result)).toContain("No matches found");
 			expect(existsSync(marker)).toBe(false);
+		});
+	});
+
+	describe("glob tool", () => {
+		it("should match basenames at any depth and report files", async () => {
+			writeFileSync(join(testDir, "top.ts"), "1");
+			mkdirSync(join(testDir, "src", "nested"), { recursive: true });
+			writeFileSync(join(testDir, "src", "nested", "deep.ts"), "2");
+			writeFileSync(join(testDir, "src", "other.md"), "3");
+
+			const result = await globTool.execute("test-call-glob-1", {
+				pattern: "*.ts",
+				path: testDir,
+			});
+
+			const lines = getTextOutput(result)
+				.split("\n")
+				.map((line) => line.trim())
+				.filter(Boolean);
+			expect(lines).toContain("top.ts");
+			expect(lines).toContain("src/nested/deep.ts");
+			expect(lines).not.toContain("src/other.md");
+		});
+
+		it("should respect .gitignore and excluded directories", async () => {
+			writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
+			writeFileSync(join(testDir, "ignored.txt"), "x");
+			writeFileSync(join(testDir, "kept.txt"), "x");
+			mkdirSync(join(testDir, "node_modules"));
+			writeFileSync(join(testDir, "node_modules", "dep.txt"), "x");
+
+			const result = await globTool.execute("test-call-glob-2", {
+				pattern: "*.txt",
+				path: testDir,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("kept.txt");
+			expect(output).not.toContain("ignored.txt");
+			expect(output).not.toContain("node_modules");
+		});
+
+		it("should reject non-directory search paths", async () => {
+			const testFile = join(testDir, "not-a-dir.txt");
+			writeFileSync(testFile, "x");
+
+			await expect(
+				globTool.execute("test-call-glob-3", {
+					pattern: "*.txt",
+					path: testFile,
+				}),
+			).rejects.toThrow(/Not a directory/);
 		});
 	});
 

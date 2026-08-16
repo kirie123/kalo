@@ -27,6 +27,15 @@ export {
 	type FindToolOptions,
 } from "./find.ts";
 export {
+	createGlobTool,
+	createGlobToolDefinition,
+	type GlobDirEntry,
+	type GlobOperations,
+	type GlobToolDetails,
+	type GlobToolInput,
+	type GlobToolOptions,
+} from "./glob.ts";
+export {
 	createGrepTool,
 	createGrepToolDefinition,
 	type GrepOperations,
@@ -73,6 +82,7 @@ import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
+import { createGlobTool, createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
 import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
 import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
@@ -80,8 +90,8 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
-export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "glob" | "find" | "ls";
+export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "glob", "find", "ls"]);
 
 export interface ToolsOptions {
 	read?: ReadToolOptions;
@@ -89,6 +99,7 @@ export interface ToolsOptions {
 	write?: WriteToolOptions;
 	edit?: EditToolOptions;
 	grep?: GrepToolOptions;
+	glob?: GlobToolOptions;
 	find?: FindToolOptions;
 	ls?: LsToolOptions;
 }
@@ -105,6 +116,8 @@ export function createToolDefinition(toolName: ToolName, cwd: string, options?: 
 			return createWriteToolDefinition(cwd, options?.write);
 		case "grep":
 			return createGrepToolDefinition(cwd, options?.grep);
+		case "glob":
+			return createGlobToolDefinition(cwd, options?.glob);
 		case "find":
 			return createFindToolDefinition(cwd, options?.find);
 		case "ls":
@@ -126,6 +139,8 @@ export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptio
 			return createWriteTool(cwd, options?.write);
 		case "grep":
 			return createGrepTool(cwd, options?.grep);
+		case "glob":
+			return createGlobTool(cwd, options?.glob);
 		case "find":
 			return createFindTool(cwd, options?.find);
 		case "ls":
@@ -148,6 +163,7 @@ export function createReadOnlyToolDefinitions(cwd: string, options?: ToolsOption
 	return [
 		createReadToolDefinition(cwd, options?.read),
 		createGrepToolDefinition(cwd, options?.grep),
+		createGlobToolDefinition(cwd, options?.glob),
 		createFindToolDefinition(cwd, options?.find),
 		createLsToolDefinition(cwd, options?.ls),
 	];
@@ -160,6 +176,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		edit: createEditToolDefinition(cwd, options?.edit),
 		write: createWriteToolDefinition(cwd, options?.write),
 		grep: createGrepToolDefinition(cwd, options?.grep),
+		glob: createGlobToolDefinition(cwd, options?.glob),
 		find: createFindToolDefinition(cwd, options?.find),
 		ls: createLsToolDefinition(cwd, options?.ls),
 	};
@@ -178,6 +195,7 @@ export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[]
 	return [
 		createReadTool(cwd, options?.read),
 		createGrepTool(cwd, options?.grep),
+		createGlobTool(cwd, options?.glob),
 		createFindTool(cwd, options?.find),
 		createLsTool(cwd, options?.ls),
 	];
@@ -190,6 +208,7 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		edit: createEditTool(cwd, options?.edit),
 		write: createWriteTool(cwd, options?.write),
 		grep: createGrepTool(cwd, options?.grep),
+		glob: createGlobTool(cwd, options?.glob),
 		find: createFindTool(cwd, options?.find),
 		ls: createLsTool(cwd, options?.ls),
 	};

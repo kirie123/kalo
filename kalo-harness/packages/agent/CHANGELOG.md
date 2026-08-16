@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added harness `grep` and `glob` tools plus the shared pure-TypeScript search core (`walkFiles`, `globToRegExp`, `grepFiles`) that respects `.gitignore`, skips dependency/build directories, and needs no external binaries.
+
 ### Fixed
 
 - Fixed `streamProxy()` dropping finalized tool-call metadata such as OpenAI Responses namespaces ([#7709](https://github.com/earendil-works/pi/issues/7709)).
