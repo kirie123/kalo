@@ -159,11 +159,35 @@ else
     PLATFORMS=(darwin-arm64 darwin-x64 linux-x64 linux-arm64 windows-x64 windows-arm64)
 fi
 
+# Detect the host platform/arch once. When the requested output platform matches
+# the host, we can omit --target and let bun use the installed runtime instead of
+# downloading a target runtime. This avoids failures on networks where the
+# bun runtime download is blocked or incomplete.
+host_platform=$(bun --print "process.platform")
+host_arch=$(bun --print "process.arch")
+host_bun_target=""
+case "$host_platform:$host_arch" in
+    win32:x64)   host_bun_target="bun-windows-x64" ;;
+    win32:arm64) host_bun_target="bun-windows-arm64" ;;
+    darwin:x64)  host_bun_target="bun-darwin-x64" ;;
+    darwin:arm64)host_bun_target="bun-darwin-arm64" ;;
+    linux:x64)   host_bun_target="bun-linux-x64" ;;
+    linux:arm64) host_bun_target="bun-linux-arm64" ;;
+esac
+
 for platform in "${PLATFORMS[@]}"; do
     echo "Building for $platform..."
     bun_target="bun-$platform"
     if [[ "$platform" == *-x64 ]]; then
         bun_target="${bun_target}-baseline"
+    fi
+
+    # Only pass --target when the host cannot natively produce this output.
+    # bun-windows-x64-baseline starts with the same prefix as bun-windows-x64,
+    # so a matching host avoids the explicit target and the associated download.
+    target_arg=""
+    if [[ -z "$host_bun_target" || "$bun_target" != "$host_bun_target"* ]]; then
+        target_arg="--target=$bun_target"
     fi
 
     # Bun compiled executables only embed worker scripts when they are passed as
@@ -173,9 +197,9 @@ for platform in "${PLATFORMS[@]}"; do
     # Disable cwd bunfig.toml autoload so project preload scripts cannot crash the
     # standalone binary before pi starts (see #7684).
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --no-compile-autoload-bunfig --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
+        bun build --compile --no-compile-autoload-bunfig ${target_arg} ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi.exe"
     else
-        bun build --compile --no-compile-autoload-bunfig --target="$bun_target" ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
+        bun build --compile --no-compile-autoload-bunfig ${target_arg} ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile "$OUTPUT_DIR/$platform/pi"
     fi
 done
 
