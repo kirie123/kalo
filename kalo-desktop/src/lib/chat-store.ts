@@ -38,6 +38,13 @@ import type {
   UserMessage,
 } from "../types";
 import {
+  accumulate,
+  createAccumulator,
+  summarize,
+  type ChangeAccumulator,
+  type ChangeSummary,
+} from "./changed-files";
+import {
   createSession,
   closeSession,
   onPiEvent,
@@ -111,7 +118,16 @@ export interface NoticeEntry {
   text: string;
 }
 
-export type TimelineEntry = UserEntry | AssistantEntry | ToolGroupEntry | RetryEntry | NoticeEntry;
+/**
+ * End-of-run summary of the files the agent wrote or edited. Pushed once at
+ * `agent_settled`, and only when at least one file changed.
+ */
+export interface ChangesEntry extends ChangeSummary {
+  id: string;
+  kind: "changes";
+}
+
+export type TimelineEntry = UserEntry | AssistantEntry | ToolGroupEntry | RetryEntry | NoticeEntry | ChangesEntry;
 
 // ============================================================================
 // Other state slices
@@ -285,6 +301,8 @@ class SessionRuntime {
   historyLiveBase = 0;
   /** Usage accumulator for the in-flight run (agent_start → agent_settled). */
   runUsage: TurnUsage | null = null;
+  /** Files written/edited during the in-flight run, folded per path. */
+  runChanges: ChangeAccumulator = createAccumulator();
   /** Auto-recovery attempts for this runtime's lifecycle (capped). */
   recoveryCount = 0;
   /** In-flight lazy engine connect (new chat) of this runtime. */
@@ -1228,6 +1246,7 @@ export class ChatStore {
       case "agent_start":
         // New run: discard any stale accumulator from a run that never settled.
         rt.runUsage = null;
+        rt.runChanges = createAccumulator();
         this.setRt(rt, { isStreaming: true });
         break;
       case "agent_end":
@@ -1237,6 +1256,7 @@ export class ChatStore {
       case "agent_settled":
         this.setRt(rt, { isStreaming: false, isCompacting: false });
         this.attachRunUsage(rt);
+        this.pushRunChanges(rt);
         break;
 
       case "message_start":
@@ -1258,11 +1278,17 @@ export class ChatStore {
       case "tool_execution_end":
         this.updateToolRecord(
           ev.toolCallId,
-          (rec) => ({
-            ...rec,
-            status: ev.isError ? "error" : "success",
-            result: ev.result,
-          }),
+          (rec) => {
+            const done: ToolCallRecord = {
+              ...rec,
+              status: ev.isError ? "error" : "success",
+              result: ev.result,
+            };
+            // Fold file mutations into this run's summary while the args and
+            // the result are together in one place.
+            accumulate(rt.runChanges, done, rt.view.cwd);
+            return done;
+          },
           rt,
         );
         break;
@@ -1404,6 +1430,17 @@ export class ChatStore {
         }
       }
     }, rt);
+  }
+
+  /**
+   * Close the run with a "changed files" card. Nothing changed → no card;
+   * an aborted run still gets one, listing whatever already hit disk.
+   */
+  private pushRunChanges(rt: SessionRuntime) {
+    const summary = summarize(rt.runChanges);
+    rt.runChanges = createAccumulator();
+    if (summary.files.length === 0) return;
+    this.mutateTimeline((t) => t.push({ id: nextEntryId(), kind: "changes", ...summary }), rt);
   }
 
   /**

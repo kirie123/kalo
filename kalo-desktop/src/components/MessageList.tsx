@@ -158,5 +158,9 @@ const TimelineItem = memo(function TimelineItem({ entry, copyText }: { entry: Ti
       );
     case "notice":
       return <div className="text-center text-xs text-dim">{entry.text}</div>;
+    case "changes":
+      return (
+        <ChangedFilesCard files={entry.files} totalAdded={entry.totalAdded} totalRemoved={entry.totalRemoved} />
+      );
   }
 });

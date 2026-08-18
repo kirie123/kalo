@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Container, Text } from "@earendil-works/pi-tui";
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
+import { mkdir as fsMkdir, readFile as fsReadFile, stat, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
@@ -33,12 +33,72 @@ export interface WriteOperations {
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
 	/** Create directory recursively */
 	mkdir: (dir: string) => Promise<void>;
+	/**
+	 * Read a file's current content, for the line-count stats in the result
+	 * details. Optional: a backend that cannot read (or is too slow to) simply
+	 * reports unknown stats — the write itself never depends on this.
+	 */
+	readFile?: (absolutePath: string) => Promise<string>;
 }
 
 const defaultWriteOperations: WriteOperations = {
 	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
 	mkdir: (dir) => fsMkdir(dir, { recursive: true }).then(() => {}),
+	readFile: (path) => fsReadFile(path, "utf-8"),
 };
+
+/**
+ * UI-side metadata about what a write changed. Never sent to the model (only
+ * `content` is), so this can grow without touching the prompt.
+ */
+export interface WriteToolDetails {
+	/** The file did not exist before this write. */
+	created: boolean;
+	/** Lines in the new content; undefined when the previous content was unreadable. */
+	added?: number;
+	/** Lines in the previous content (0 when created). */
+	removed?: number;
+}
+
+/** Above this size, reading the previous content to count lines is not worth it. */
+const MAX_STAT_BYTES = 2 * 1024 * 1024;
+
+function countLines(text: string): number {
+	if (text === "") return 0;
+	// A trailing newline terminates the last line rather than starting a new one.
+	return text.endsWith("\n") ? text.split("\n").length - 1 : text.split("\n").length;
+}
+
+/**
+ * Look at the file as it is *before* the write, so the result can report
+ * +/- line counts.
+ *
+ * `known: false` means "we could not tell" (unreadable, too large, or a
+ * backend without readFile) — it never means the write failed, and it is
+ * deliberately distinct from "the file did not exist".
+ */
+async function previousState(
+	ops: WriteOperations,
+	absolutePath: string,
+): Promise<{ known: true; created: boolean; lines: number } | { known: false }> {
+	if (!ops.readFile) return { known: false };
+	let size: number;
+	try {
+		const info = await stat(absolutePath);
+		if (!info.isFile()) return { known: false };
+		size = info.size;
+	} catch (err) {
+		// Missing file is the common case and is fully known: this write creates it.
+		if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return { known: true, created: true, lines: 0 };
+		return { known: false };
+	}
+	if (size > MAX_STAT_BYTES) return { known: false };
+	try {
+		return { known: true, created: false, lines: countLines(await ops.readFile(absolutePath)) };
+	} catch {
+		return { known: false };
+	}
+}
 
 export interface WriteToolOptions {
 	/** Custom operations for file writing. Default: local filesystem */
@@ -187,7 +247,7 @@ function formatWriteResult(
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
-): ToolDefinition<typeof writeSchema, undefined> {
+): ToolDefinition<typeof writeSchema, WriteToolDetails> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	return {
 		name: "write",
@@ -221,13 +281,21 @@ export function createWriteToolDefinition(
 				await ops.mkdir(dir);
 				throwIfAborted();
 
+				// Snapshot the line count before overwriting, purely for the UI's
+				// "changed files" summary. Best effort: a failure here must not
+				// affect the write, so previousState() never throws.
+				const before = await previousState(ops, absolutePath);
+				throwIfAborted();
+
 				// Write the file contents.
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
 
 				return {
 					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
-					details: undefined,
+					details: before.known
+						? { created: before.created, added: countLines(content), removed: before.lines }
+						: { created: false },
 				};
 			});
 		},
