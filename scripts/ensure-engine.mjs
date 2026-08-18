@@ -14,7 +14,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +34,12 @@ function run(cmd, args, cwd, useShell = false) {
     console.error(`[ensure-engine] command failed (${res.status}): ${cmd} ${args.join(" ")}`);
     process.exit(res.status ?? 1);
   }
+}
+
+/** Same as run(), but a failure is reported and swallowed. */
+function runSoft(cmd, args, cwd, useShell = false) {
+  const res = spawnSync(cmd, args, { stdio: "inherit", cwd, shell: useShell });
+  return res.status === 0;
 }
 
 /**
@@ -104,6 +110,33 @@ function gatewayStale() {
   return files.some((f) => existsSync(f) && newerThan(f, GATEWAY_EXE));
 }
 
+/**
+ * Install the gateway's dependencies only when the compiler actually needs
+ * them. `bun build --compile` bundles the runtime deps and never touches
+ * typescript / bun-types / @types/node, so a devDependency that cannot be
+ * downloaded (offline machine, expired TLS cert on a mirror) must not block
+ * `bun run dev`. A failed install is a warning as long as the runtime deps
+ * are already on disk; only a missing runtime dep is fatal.
+ */
+function ensureGatewayDeps() {
+  const modules = join(GATEWAY_DIR, "node_modules");
+  const runtimeDeps = Object.keys(
+    JSON.parse(readFileSync(join(GATEWAY_DIR, "package.json"), "utf8")).dependencies ?? {},
+  );
+  const haveRuntimeDeps = runtimeDeps.every((dep) => existsSync(join(modules, ...dep.split("/"))));
+  if (haveRuntimeDeps) {
+    console.log("[ensure-engine] gateway dependencies present — skipping bun install");
+    return;
+  }
+  if (runSoft("bun", ["install"], GATEWAY_DIR)) return;
+  const stillMissing = runtimeDeps.filter((dep) => !existsSync(join(modules, ...dep.split("/"))));
+  if (stillMissing.length) {
+    console.error(`[ensure-engine] bun install failed and these gateway deps are missing: ${stillMissing.join(", ")}`);
+    process.exit(1);
+  }
+  console.warn("[ensure-engine] bun install failed, but runtime deps are present — continuing");
+}
+
 // --- pi engine ---
 if (FORCE || engineStale()) {
   console.log(
@@ -128,7 +161,7 @@ if (FORCE || engineStale()) {
 // --- kalo-gateway ---
 if (FORCE || gatewayStale()) {
   console.log("[ensure-engine] building kalo-gateway...");
-  run("bun", ["install"], GATEWAY_DIR);
+  ensureGatewayDeps();
   run("bun", ["run", "build"], GATEWAY_DIR);
   if (!existsSync(GATEWAY_EXE)) {
     console.error(`[ensure-engine] gateway build finished but ${GATEWAY_EXE} is still missing`);
