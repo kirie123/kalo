@@ -131,6 +131,12 @@ impl NdjsonFramer {
 /// 1. `KALO_PI_PATH` env var (explicit override),
 /// 2. `binaries/pi-<target-triple>.exe` next to the app exe (Tauri sidecar),
 /// 3. `src-tauri/binaries/pi-<target-triple>.exe` (dev layout).
+/// Public alias: the engine binary path, for callers that need to hand it to
+/// a child process (a tool that spawns its own agent, for instance).
+pub fn engine_binary_path() -> Result<PathBuf, String> {
+    resolve_pi_path()
+}
+
 fn resolve_pi_path() -> Result<PathBuf, String> {
     const SIDECAR: &str = "pi-x86_64-pc-windows-msvc.exe";
 
@@ -293,19 +299,9 @@ impl PiProcess {
             let session_id = session_id.to_string();
             let child = Arc::clone(&child);
             thread::spawn(move || {
-                let code = match child.lock() {
-                    Ok(mut c) => match c.wait() {
-                        Ok(status) => status.code(),
-                        Err(e) => {
-                            eprintln!("[kalo] waiting for pi failed: {e}");
-                            None
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("[kalo] child lock poisoned: {e}");
-                        None
-                    }
-                };
+                // Polls instead of blocking in `wait`, so `kill` can take the
+                // lock while the engine is still alive. See `proc.rs`.
+                let code = crate::proc::wait_released(&child);
                 if let Err(e) = app.emit(&event_name, serde_json::json!({ "code": code })) {
                     eprintln!("[kalo] emit {event_name} failed: {e}");
                 }
@@ -332,17 +328,13 @@ impl PiProcess {
             .map_err(|e| format!("pi stdin channel is closed: {e}"))
     }
 
-    /// Terminate the child process. Errors are logged, never panicked.
+    /// Terminate the child process and everything it spawned. Errors are
+    /// logged, never panicked.
     pub fn kill(&mut self) {
-        match self.child.lock() {
-            Ok(mut c) => {
-                if let Err(e) = c.kill() {
-                    // Already exited is the common benign case.
-                    eprintln!("[kalo] pi kill failed (may already be dead): {e}");
-                }
-            }
-            Err(e) => eprintln!("[kalo] child lock poisoned during kill: {e}"),
-        }
+        // Recover from poisoning: a watcher thread that panicked is exactly
+        // when the engine still needs killing.
+        let mut child = self.child.lock().unwrap_or_else(|p| p.into_inner());
+        crate::proc::kill_tree(&mut child);
     }
 }
 

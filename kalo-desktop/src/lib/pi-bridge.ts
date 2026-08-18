@@ -37,13 +37,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AppPaths,
   AuthConfig,
   AttachmentDraft,
+  BackgroundJob,
+  DirDiff,
   DirEntry,
   FileMatch,
   FileTextContent,
   GatewayStatus,
   JobsSnapshot,
+  JobStartInput,
   KnowledgeCardMeta,
   McpConfig,
   McpStatus,
@@ -60,6 +64,7 @@ import type {
   ScheduleTaskInfo,
   SessionPage,
   SkillMeta,
+  TextSince,
 } from "../types";
 
 // ============================================================================
@@ -180,8 +185,38 @@ export function readFileText(path: string, maxBytes?: number): Promise<FileTextC
   return invoke<FileTextContent>("read_file_text", args);
 }
 
+/**
+ * Incremental tail of an append-only file. Pass back the returned `offset` on
+ * the next call; `reset: true` means the file shrank and the slice restarts
+ * from byte 0, so the caller must discard what it accumulated.
+ * A file that does not exist yet answers empty rather than failing.
+ */
+export function readTextSince(path: string, offset: number, maxBytes?: number): Promise<TextSince> {
+  const args: Record<string, unknown> = { path, offset };
+  if (maxBytes !== undefined) args.maxBytes = maxBytes;
+  return invoke<TextSince>("read_text_since", args);
+}
+
+/** Relative paths that differ between two directory trees. */
+export function dirDiffNames(a: string, b: string, ignore?: string[]): Promise<DirDiff> {
+  return invoke<DirDiff>("dir_diff_names", { a, b, ignore });
+}
+
+/**
+ * Stable paths for building commands: home, `~/.kalo`, and this app's engine
+ * binary. `engineBin` is an empty string when the binary cannot be found.
+ */
+export function appPaths(): Promise<AppPaths> {
+  return invoke<AppPaths>("app_paths", {});
+}
+
 export function readAttachment(path: string): Promise<AttachmentDraft> {
   return invoke<AttachmentDraft>("read_attachment", { path });
+}
+
+/** Same as readAttachment, for a pasted file (bytes without a path). */
+export function readAttachmentBytes(name: string, dataBase64: string): Promise<AttachmentDraft> {
+  return invoke<AttachmentDraft>("read_attachment_bytes", { name, dataBase64 });
 }
 
 /** Open with the system default app (reveal=false) or show in the OS file manager (reveal=true). */

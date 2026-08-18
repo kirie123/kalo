@@ -1,18 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView";
 import EmptyState from "./components/EmptyState";
+import EraPanel from "./features/era/EraPanel";
 import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
-import SettingsPage, { applyTheme, loadTheme, type ThemePref } from "./components/SettingsPage";
+import SettingsPage, { applyTheme, loadTheme, type SettingsTab, type ThemePref } from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
 import { listSessions, deleteSession } from "./lib/pi-bridge";
-import { chatStore, useChatStore } from "./lib/chat-store";
+import { chatStore, useChatSelector } from "./lib/chat-store";
 import { loadWidth, startColumnDrag } from "./lib/drag";
-import type { ProjectGroup } from "./types";
+import type { ProjectGroup, SessionSummary } from "./types";
 
 export default function App() {
-  const chat = useChatStore();
-  const [page, setPage] = useState<"chat" | "settings">("chat");
+  // Field-level subscription: the store commits ~20fps while streaming, and
+  // the shell only cares about these few values (never the timeline itself).
+  const chat = useChatSelector((s) => ({
+    cwd: s.cwd,
+    sessionId: s.sessionId,
+    engineSessionId: s.engineSessionId,
+    isStreaming: s.isStreaming,
+    runningByFile: s.runningByFile,
+    hasMessages: s.timeline.length > 0,
+  }));
+  const [page, setPage] = useState<"chat" | "settings" | "era">("chat");
+  // undefined → SettingsPage restores the last visited tab.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarW, setSidebarW] = useState(() => loadWidth("kalo.layout.sidebarW", 260));
   const [panelOpen, setPanelOpen] = useState(false);
@@ -40,8 +52,23 @@ export default function App() {
         // Backend not ready yet (e.g. dev without Rust side) — keep empty.
       });
   }, []);
+
+  // Debounced: the triggers below can flip several times in a row (a run
+  // starting flips isStreaming and runningByFile), and each refresh is a
+  // full scan of the sessions directory.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(refreshProjects, 300);
+  }, [refreshProjects]);
+
   const runningCount = Object.keys(chat.runningByFile).length;
-  useEffect(refreshProjects, [refreshProjects, chat.sessionId, chat.isStreaming, runningCount]);
+  useEffect(() => {
+    scheduleRefresh();
+    return () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
+  }, [scheduleRefresh, chat.sessionId, chat.isStreaming, runningCount]);
 
   // Custom providers from ~/.kalo/agent/models.json show up in the picker
   // immediately, without waiting for an engine session.
@@ -49,40 +76,80 @@ export default function App() {
     void chatStore.loadCustomModels();
   }, []);
 
-  const showEmpty = page === "chat" && chat.timeline.length === 0;
+  // Stable callbacks so the memoized Sidebar actually skips re-renders.
+  const onToggleCollapsed = useCallback(() => setSidebarCollapsed((v) => !v), []);
+  const onNewChat = useCallback(() => {
+    chatStore.newChat();
+    setPage("chat");
+  }, []);
+  const onSelectSession = useCallback((sessionPath: string, cwd: string) => {
+    void chatStore.resumeSession(sessionPath, cwd);
+    setPage("chat");
+  }, []);
+  const onDeleteSession = useCallback(
+    (s: SessionSummary) => {
+      void (async () => {
+        // Tear down the pooled runtime bound to this file first (kills
+        // its engine, switches away if it is the active view), so the
+        // engine can't rewrite the file after deletion.
+        await chatStore.closeSessionFile(s.path);
+        try {
+          await deleteSession(s.path);
+          refreshProjects();
+        } catch (err) {
+          chatStore.pushToast(`删除会话失败：${err instanceof Error ? err.message : String(err)}`, "error");
+        }
+      })();
+    },
+    [refreshProjects],
+  );
+  const onOpenSettings = useCallback(() => {
+    setSettingsTab(undefined);
+    setPage("settings");
+  }, []);
+  // 「自动化」lands directly on the 定时任务 panel.
+  const onOpenAutomation = useCallback(() => {
+    setSettingsTab("tasks");
+    setPage("settings");
+  }, []);
+  // 「演化」takes over the main pane, keeping the sidebar: a run is watched
+  // for a long time, and handing a spec back to a chat session is one click.
+  const onOpenEra = useCallback(() => setPage("era"), []);
+
+  const showEmpty = page === "chat" && !chat.hasMessages;
+
+  // Settings takes over the whole window — no session sidebar next to it.
+  if (page === "settings") {
+    return (
+      <div className="flex h-screen overflow-hidden bg-base text-ink">
+        <SettingsPage
+          theme={theme}
+          onThemeChange={setTheme}
+          onBack={() => setPage("chat")}
+          initialTab={settingsTab}
+        />
+        <ToastContainer />
+        <ExtensionModal />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-base text-ink">
       <Sidebar
         collapsed={sidebarCollapsed}
         width={sidebarW}
-        onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
+        onToggleCollapsed={onToggleCollapsed}
         sessionGroups={projects}
         activeSessionId={chat.engineSessionId ?? null}
         runningByFile={chat.runningByFile}
-        onNewChat={() => {
-          chatStore.newChat();
-          setPage("chat");
-        }}
-        onSelectSession={(sessionPath, cwd) => {
-          void chatStore.resumeSession(sessionPath, cwd);
-          setPage("chat");
-        }}
-        onDeleteSession={(s) => {
-          void (async () => {
-            // Tear down the pooled runtime bound to this file first (kills
-            // its engine, switches away if it is the active view), so the
-            // engine can't rewrite the file after deletion.
-            await chatStore.closeSessionFile(s.path);
-            try {
-              await deleteSession(s.path);
-              refreshProjects();
-            } catch (err) {
-              chatStore.pushToast(`删除会话失败：${err instanceof Error ? err.message : String(err)}`, "error");
-            }
-          })();
-        }}
-        onOpenSettings={() => setPage("settings")}
+        onNewChat={onNewChat}
+        onSelectSession={onSelectSession}
+        onDeleteSession={onDeleteSession}
+        onOpenAutomation={onOpenAutomation}
+        onOpenEra={onOpenEra}
+        eraActive={page === "era"}
+        onOpenSettings={onOpenSettings}
       />
 
       {/* Sidebar splitter */}
@@ -96,40 +163,42 @@ export default function App() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {page === "settings" ? (
-          <SettingsPage theme={theme} onThemeChange={setTheme} onBack={() => setPage("chat")} />
-        ) : (
-          <>
-            {/* Slim header: cwd on the left, file-panel toggle on the right */}
-            <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-4">
-              <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
-                {chat.cwd || "未选择目录"}
-              </span>
-              <div className="flex items-center gap-1">
-                <JobsCenter />
-                <button
-                  onClick={() => setPanelOpen((v) => !v)}
-                  title="文件面板"
-                  className={`shrink-0 rounded-md p-1.5 hover:bg-card ${
-                    panelOpen ? "text-ink" : "text-dim hover:text-ink"
-                  }`}
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-                    <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                    <path d="M9.5 3v10" />
-                  </svg>
-                </button>
-              </div>
-            </header>
+        {/* Slim header: cwd on the left, file-panel toggle on the right */}
+        <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-4">
+          <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
+            {page === "era" ? "演化" : chat.cwd || "未选择目录"}
+          </span>
+          <div className="flex items-center gap-1">
+            <JobsCenter />
+            <button
+              onClick={() => setPanelOpen((v) => !v)}
+              title="文件面板"
+              className={`shrink-0 rounded-md p-1.5 hover:bg-card ${
+                panelOpen ? "text-ink" : "text-dim hover:text-ink"
+              }`}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <path d="M9.5 3v10" />
+              </svg>
+            </button>
+          </div>
+        </header>
 
-            <div className="flex min-h-0 flex-1">
-              <div className="flex min-w-0 flex-1 flex-col">
-                {showEmpty ? <EmptyState /> : <ChatView />}
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {page === "era" ? (
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                <EraPanel onLeaveToChat={() => setPage("chat")} />
               </div>
-              {panelOpen && <FilePanel />}
-            </div>
-          </>
-        )}
+            ) : showEmpty ? (
+              <EmptyState />
+            ) : (
+              <ChatView />
+            )}
+          </div>
+          {panelOpen && page !== "era" && <FilePanel />}
+        </div>
       </main>
 
       <ToastContainer />

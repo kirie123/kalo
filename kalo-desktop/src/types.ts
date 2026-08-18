@@ -352,6 +352,34 @@ export interface FileTextContent {
   binary: boolean;
 }
 
+/** `app_paths` result: stable locations for building commands. */
+export interface AppPaths {
+  home: string;
+  /** `~/.kalo` */
+  kaloRoot: string;
+  /** Absolute path to the bundled engine binary; "" when not found. */
+  engineBin: string;
+}
+
+/** `read_text_since` result: an incremental slice of an append-only file. */
+export interface TextSince {
+  text: string;
+  /** Offset to pass on the next call. */
+  offset: number;
+  size: number;
+  /** True when the file shrank and this read restarted from 0. */
+  reset: boolean;
+}
+
+/** `dir_diff_names` result: relative paths that differ between two trees. */
+export interface DirDiff {
+  changed: string[];
+  added: string[];
+  removed: string[];
+  /** True when the walk hit its entry cap; lists are a prefix. */
+  truncated: boolean;
+}
+
 /**
  * Attachment draft, mirroring the `read_attachment` union (serde tag=kind).
  * Images go to the engine as ImageContent; text is appended to the prompt.

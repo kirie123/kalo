@@ -18,6 +18,12 @@ interface SidebarProps {
   onSelectSession: (sessionPath: string, cwd: string) => void;
   /** Delete one session's history file (confirmed in the menu already). */
   onDeleteSession: (session: SessionSummary) => void;
+  /** 「自动化」— opens settings on the 定时任务 tab. */
+  onOpenAutomation: () => void;
+  /** 「演化」— takes over the main pane with the era panel. */
+  onOpenEra: () => void;
+  /** True while the era panel is the current page, so the button reads as selected. */
+  eraActive?: boolean;
   onOpenSettings: () => void;
 }
 
@@ -76,6 +82,9 @@ export default memo(function Sidebar({
   onNewChat,
   onSelectSession,
   onDeleteSession,
+  onOpenAutomation,
+  onOpenEra,
+  eraActive,
   onOpenSettings,
 }: SidebarProps) {
   const [projects, setProjects] = useState<ProjectEntry[]>(() => listProjects());
@@ -149,7 +158,8 @@ export default memo(function Sidebar({
       <div className="mt-2 flex flex-col gap-0.5 px-2">
         <SideButton onClick={onNewChat} icon={<PencilIcon />} label="新对话" />
         <SideButton onClick={notImplemented} icon={<SearchIcon />} label="搜索" />
-        <SideButton onClick={notImplemented} icon={<PuzzleIcon />} label="插件" />
+        <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" />
+        <SideButton onClick={onOpenEra} icon={<EvolveIcon />} label="演化" active={eraActive} />
       </div>
 
       {/* Projects + chats share one scroll area */}
@@ -395,13 +405,26 @@ function SessionMenu({
   );
 }
 
-function SideButton({ onClick, icon, label }: { onClick: () => void; icon: ReactNode; label: string }) {
+function SideButton({
+  onClick,
+  icon,
+  label,
+  active,
+}: {
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  /** Pages that stay open (演化) mark themselves; one-shot actions don't. */
+  active?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-card"
+      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-card ${
+        active ? "bg-card" : ""
+      }`}
     >
-      <span className="text-dim">{icon}</span>
+      <span className={active ? "text-ink" : "text-dim"}>{icon}</span>
       <span>{label}</span>
     </button>
   );
@@ -453,11 +476,20 @@ function SearchIcon() {
   );
 }
 
-function PuzzleIcon() {
+function ClockIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-      <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
-      <path d="M2.5 8h3M10.5 8h3M8 2.5v3M8 10.5v3" strokeLinecap="round" />
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 4.8V8l2.2 1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** A rising staircase: repeated improvement, one step per generation. */
+function EvolveIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <path d="M2 13h3v-3h3V7h3V4h3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
