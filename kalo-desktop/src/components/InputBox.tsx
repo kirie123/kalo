@@ -380,27 +380,30 @@ export default function InputBox() {
         </button>
       </div>
 
-      {/* Image lightbox */}
-      {previewImage && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
-          onClick={() => setPreviewImage(null)}
-        >
-          <div className="flex max-h-full max-w-full flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <img
-              src={`data:${previewImage.mimeType};base64,${previewImage.dataBase64}`}
-              alt={previewImage.name}
-              className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
-            />
-            <div className="flex items-center gap-3 text-xs text-white/80">
-              <span>{previewImage.name}</span>
-              <button onClick={() => setPreviewImage(null)} className="rounded border border-white/30 px-2 py-0.5 hover:bg-white/10">
-                关闭
-              </button>
+      {/* Image lightbox — portaled to <body> so the chat-area zoom doesn't
+          scale its viewport-sized overlay past the actual viewport. */}
+      {previewImage &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div className="flex max-h-full max-w-full flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <img
+                src={`data:${previewImage.mimeType};base64,${previewImage.dataBase64}`}
+                alt={previewImage.name}
+                className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
+              />
+              <div className="flex items-center gap-3 text-xs text-white/80">
+                <span>{previewImage.name}</span>
+                <button onClick={() => setPreviewImage(null)} className="rounded border border-white/30 px-2 py-0.5 hover:bg-white/10">
+                  关闭
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

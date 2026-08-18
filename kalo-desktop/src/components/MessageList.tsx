@@ -38,7 +38,7 @@ export default function MessageList() {
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
-  }, [timeline]);
+  }, [timeline, zoom]);
 
   // After an older page is prepended, keep the viewport on the same message.
   useEffect(() => {
@@ -58,7 +58,7 @@ export default function MessageList() {
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="mx-auto flex max-w-3xl flex-col gap-1.5 px-4 py-4">
+        <div className="mx-auto flex max-w-3xl flex-col gap-1.5 px-4 py-4" style={{ zoom }}>
           {loadingOlder && <div className="text-center text-xs text-dim">加载更早的消息…</div>}
           {timeline.map((entry) => (
             <TimelineItem key={entry.id} entry={entry} />
