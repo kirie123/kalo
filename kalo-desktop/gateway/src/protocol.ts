@@ -5,7 +5,22 @@
  * gateway → Rust (stdout): one JSON object per line (see OutMessage).
  */
 
+import type { JobProbe, JobRule } from "./jobs/store";
+import type { JobSnapshot } from "./jobs/types";
 import type { ScheduleTask, ScheduleTaskInfo } from "./scheduler";
+
+/** job_start payload: everything the caller may specify for a command job. */
+export interface JobStartRequest {
+  label: string;
+  cwd: string;
+  cmd: string;
+  env?: Record<string, string>;
+  gate?: JobProbe;
+  health?: JobProbe;
+  rules?: JobRule[];
+  /** Owner fence: only this session sees/controls the job (omit = shared). */
+  owner?: string;
+}
 
 export type GatewayState = "connecting" | "connected" | "disconnected";
 
@@ -22,7 +37,14 @@ export type InCommand =
   | { cmd: "schedule_list" }
   // Rust bookkeeping replies for scheduler-requested headless sessions
   | { cmd: "session_started"; taskId: string; sessionId: string }
-  | { cmd: "session_start_failed"; taskId: string; error: string };
+  | { cmd: "session_start_failed"; taskId: string; error: string }
+  // Job runtime (P0-1). `requestId` correlates the reply; `caller` is the
+  // owner fence (session id, or omitted for desktop-wide callers).
+  | { cmd: "job_start"; requestId: string; caller?: string; job: JobStartRequest }
+  | { cmd: "job_status"; requestId: string; caller?: string; id?: string }
+  | { cmd: "job_logs"; requestId: string; caller?: string; id: string }
+  | { cmd: "job_stop"; requestId: string; caller?: string; id: string; reason?: string }
+  | { cmd: "job_metrics"; requestId: string; caller?: string; id: string; tail?: number };
 
 export type OutMessage =
   | { type: "pair_qr"; qrDataUrl: string; expiresIn: number }
@@ -37,7 +59,12 @@ export type OutMessage =
       cwd: string;
       prompt: string;
       model: string | null;
-    };
+    }
+  // Job runtime (P0-1). One reply per request, echoing `requestId`.
+  | { type: "job_reply"; requestId: string; ok: true; jobs?: JobSnapshot[]; text?: string; metrics?: unknown[]; id?: string; result?: string }
+  | { type: "job_reply"; requestId: string; ok: false; error: string }
+  /** Unsolicited: a job changed or finished (drives the desktop panel). */
+  | { type: "job_event"; event: "changed" | "done"; owner?: string; job?: JobSnapshot };
 
 /** Emit one message to Rust (stdout NDJSON). Must stay the ONLY stdout writer. */
 export function send(msg: OutMessage): void {

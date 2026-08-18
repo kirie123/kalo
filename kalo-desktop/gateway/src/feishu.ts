@@ -3,8 +3,8 @@
  *
  * The WS client is outbound-only (no public URL needed), handles heartbeat
  * and auto-reconnect internally, and refreshes tenant_access_token itself.
- * Inbound messages are ignored in P0 (read-only progress push); the bound
- * open_id whitelist will matter from P2 on.
+ * Inbound messages are admitted only from the bound open_id and handed up as
+ * plain text — this class is a carrier, all parsing lives in channel.ts.
  */
 
 import {
@@ -18,10 +18,15 @@ import {
 import type { FeishuCredentials } from "./credentials";
 import { log } from "./protocol";
 
+export interface FeishuDeps {
+  /** Called with the plain text of a message from the bound user. */
+  onText?: (text: string, messageId: string) => void;
+}
+
 export class FeishuConnection {
   readonly client: Client;
 
-  constructor(private creds: FeishuCredentials) {
+  constructor(private creds: FeishuCredentials, private deps: FeishuDeps = {}) {
     const domain = creds.domain === "lark" ? Domain.Lark : Domain.Feishu;
     this.client = new Client({
       appId: creds.appId,
@@ -44,11 +49,19 @@ export class FeishuConnection {
     });
     await ws.start({
       eventDispatcher: new EventDispatcher({ loggerLevel: LoggerLevel.warn }).register({
-        // P0: inbound messages are dropped; P2 will turn them into commands.
         "im.message.receive_v1": async (data: any) => {
+          const msg = data?.event?.message;
           const sender = data?.event?.sender?.sender_id?.open_id;
-          if (sender !== this.creds.boundOpenId) return; // whitelist
-          log("inbound message ignored (P0 read-only)");
+          // §3.4: only the paired user is admitted, and only plain text.
+          if (sender !== this.creds.boundOpenId) return;
+          if (msg?.message_type !== "text") return;
+          const text = parseTextContent(msg.content);
+          if (!text) return;
+          try {
+            this.deps.onText?.(text, msg.message_id);
+          } catch (err) {
+            log("inbound handler failed:", err instanceof Error ? err.message : err);
+          }
         },
       }),
     });
@@ -91,5 +104,16 @@ export class FeishuConnection {
     } catch (err) {
       log(`reaction ${emojiType} failed:`, err instanceof Error ? err.message : err);
     }
+  }
+}
+
+/** Feishu text payload is a JSON string: {"text":"..."}. */
+export function parseTextContent(content: unknown): string {
+  if (typeof content !== "string") return "";
+  try {
+    const parsed = JSON.parse(content);
+    return typeof parsed?.text === "string" ? parsed.text : "";
+  } catch {
+    return "";
   }
 }

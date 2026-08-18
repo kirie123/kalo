@@ -12,6 +12,7 @@
  */
 
 import readline from "node:readline";
+import { homedir } from "node:os";
 import {
   acquireLock,
   deleteCredentials,
@@ -21,6 +22,7 @@ import {
   type FeishuCredentials,
 } from "./credentials";
 import { FeishuConnection } from "./feishu";
+import { Channel } from "./channel";
 import { send, log, type InCommand } from "./protocol";
 import {
   RegistrationDenied,
@@ -29,6 +31,9 @@ import {
   probeBot,
   qrDataUrl,
 } from "./registration";
+import { GatewayJobBackend } from "./jobs/gateway-backend";
+import { JobsServer } from "./jobs/server";
+import { OPERATOR } from "./jobs/types";
 import { ProgressRenderer } from "./renderer";
 import { Scheduler, type ScheduleTask } from "./scheduler";
 
@@ -75,6 +80,95 @@ const scheduler = new Scheduler({
   onChange: broadcastSchedules,
 });
 
+// ---------------------------------------------------------------------------
+// Job runtime (P0-1): detached long-running commands living in this sidecar.
+// Jobs outlive this process — a gateway crash/restart re-verifies PIDs rather
+// than killing anything (see jobs/gateway-backend.ts).
+// ---------------------------------------------------------------------------
+
+const jobs = new GatewayJobBackend({
+  onChange: (owner) => send({ type: "job_event", event: "changed", owner }),
+});
+
+jobs.onJobDone((job, owner) => {
+  send({ type: "job_event", event: "done", owner, job });
+  // A finished job is worth a push even when nobody is watching the desktop.
+  const verdict = job.status === "completed" ? "✅ 完成" : job.status === "killed" ? "⏹ 已停止" : "❌ 失败";
+  connection
+    ?.sendText(`[${job.id}] ${job.label}\n${verdict}${job.detail ? `\n${job.detail}` : ""}`)
+    .catch((err) => log(`job push failed (${job.id}):`, err instanceof Error ? err.message : err));
+});
+
+/**
+ * Loopback control endpoint: how a pi session (in another process) reaches the
+ * same registry. Our stdio is already the Rust protocol, so the tool layer
+ * talks HTTP over 127.0.0.1 with a token from ~/.kalo/agent/jobs/endpoint.json.
+ */
+const jobsServer = new JobsServer(jobs);
+
+// ---------------------------------------------------------------------------
+// Channel (P0-2): one way in and out. Feishu is only the carrier — parsing,
+// double-confirm and routing all live in channel.ts.
+// ---------------------------------------------------------------------------
+const channel = new Channel({
+  transport: () => connection,
+  listJobs: () => jobs.list(OPERATOR),
+  killJob: (id, reason) => jobs.kill(id, OPERATOR, reason),
+  listSchedules: () => scheduler.list(),
+  requestSession: (taskId, prompt) => {
+    send({ type: "session_request", taskId, cwd: channelCwd(), prompt, model: null });
+  },
+  cwd: channelCwd,
+});
+
+/** Neutral cwd for channel-opened sessions: the home that owns ~/.kalo. */
+function channelCwd(): string {
+  return process.env.USERPROFILE || process.env.HOME || homedir();
+}
+
+/** Run one job command, replying exactly once with ok/error. */
+function handleJobCommand(cmd: Extract<InCommand, { requestId: string }>): void {
+  // No caller = the desktop UI asking on the user's behalf, not an anonymous
+  // session, so it gets the operator view rather than the unowned-only slice.
+  const caller = cmd.caller ?? OPERATOR;
+  try {
+    switch (cmd.cmd) {
+      case "job_start": {
+        const id = jobs.startCommand({ ...cmd.job, owner: cmd.job.owner });
+        send({ type: "job_reply", requestId: cmd.requestId, ok: true, id, jobs: [jobs.get(id, caller)] });
+        return;
+      }
+      case "job_status": {
+        const list = cmd.id ? [jobs.get(cmd.id, caller)] : jobs.list(caller);
+        send({ type: "job_reply", requestId: cmd.requestId, ok: true, jobs: list });
+        return;
+      }
+      case "job_logs": {
+        const read = jobs.read(cmd.id, caller);
+        send({ type: "job_reply", requestId: cmd.requestId, ok: true, text: read.text, jobs: [read.snapshot] });
+        return;
+      }
+      case "job_stop": {
+        const result = jobs.kill(cmd.id, caller, cmd.reason);
+        send({ type: "job_reply", requestId: cmd.requestId, ok: true, result, jobs: [jobs.get(cmd.id, caller)] });
+        return;
+      }
+      case "job_metrics": {
+        const metrics = jobs.metrics(cmd.id, caller, cmd.tail);
+        send({ type: "job_reply", requestId: cmd.requestId, ok: true, metrics });
+        return;
+      }
+    }
+  } catch (err) {
+    send({
+      type: "job_reply",
+      requestId: cmd.requestId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 function emitStatus(
   state: "connecting" | "connected" | "disconnected",
   extra?: { user?: string; message?: string },
@@ -88,7 +182,11 @@ function emitError(message: string): void {
 
 async function connect(creds: FeishuCredentials): Promise<void> {
   emitStatus("connecting");
-  const conn = new FeishuConnection(creds);
+  const conn = new FeishuConnection(creds, {
+    onText: (text) => {
+      void channel.handleText(text);
+    },
+  });
   await conn.start();
   connection = conn;
   renderer = new ProgressRenderer(conn);
@@ -164,14 +262,15 @@ function handleCommand(cmd: InCommand): void {
       return;
     }
     case "unbind": {
+      // Unbind drops the Feishu binding only. The process stays up: it also
+      // owns the job runtime, and killing it would take every running job
+      // and the model's job tools with it.
       renderer?.dispose();
       renderer = null;
       connection = null;
       deleteCredentials();
       emitStatus("disconnected");
-      releaseLock();
-      // Rust marked this exit deliberate (stopping=true) — no restart.
-      process.exit(0);
+      return;
     }
     case "event": {
       renderer?.handleEvent(cmd.sessionId, cmd.cwd, cmd.payload);
@@ -201,11 +300,21 @@ function handleCommand(cmd: InCommand): void {
       return;
     }
     case "session_started": {
-      scheduler.handleSessionStarted(cmd.taskId, cmd.sessionId);
+      if (channel.owns(cmd.taskId)) channel.handleSessionStarted(cmd.taskId);
+      else scheduler.handleSessionStarted(cmd.taskId, cmd.sessionId);
       return;
     }
     case "session_start_failed": {
-      scheduler.handleSessionStartFailed(cmd.taskId, cmd.error);
+      if (channel.owns(cmd.taskId)) channel.handleSessionStartFailed(cmd.taskId, cmd.error);
+      else scheduler.handleSessionStartFailed(cmd.taskId, cmd.error);
+      return;
+    }
+    case "job_start":
+    case "job_status":
+    case "job_logs":
+    case "job_stop":
+    case "job_metrics": {
+      handleJobCommand(cmd);
       return;
     }
   }
@@ -219,7 +328,10 @@ function main(): void {
     return;
   }
 
-  process.on("exit", releaseLock);
+  process.on("exit", () => {
+    jobsServer.stop();
+    releaseLock();
+  });
   process.on("SIGTERM", () => process.exit(0));
   process.on("SIGINT", () => process.exit(0));
   process.on("uncaughtException", (err) => {
@@ -247,6 +359,19 @@ function main(): void {
   scheduler.load();
   scheduler.start();
   broadcastSchedules();
+
+  // Jobs were launched detached: load() re-verifies each recorded PID instead
+  // of assuming anything died with the previous gateway process.
+  jobs.load();
+  jobs.startTicking();
+  send({ type: "job_event", event: "changed" });
+  try {
+    jobsServer.start();
+  } catch (err) {
+    // A dead endpoint costs the model its job tools, not the gateway: the
+    // desktop path (NDJSON) and the channel keep working.
+    log("jobs endpoint failed to start:", err instanceof Error ? err.message : err);
+  }
 
   // Startup: resume from persisted credentials or wait for pairing.
   const creds = loadCredentials();

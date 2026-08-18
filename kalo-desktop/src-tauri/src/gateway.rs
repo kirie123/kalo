@@ -13,10 +13,17 @@
 //!   {"type":"status","state":"connecting|connected|disconnected","user":"ou_..."}
 //!   {"type":"error","message":"..."}
 //!
+//! Job runtime (P0-1) rides the same pipe as a request/reply pair:
+//!   Rust → {"cmd":"job_status","requestId":"desk-1"}
+//!   gateway → {"type":"job_reply","requestId":"desk-1","ok":true,"jobs":[...]}
+//! plus unsolicited {"type":"job_event","event":"changed|done"} notices that
+//! trigger a refresh and the `job-status` / `job-done` Tauri events.
+//!
 //! Every state change is cached here and pushed to the frontend as the
 //! `gateway-status` Tauri event. Engine events are forwarded best-effort:
 //! with no gateway running the forward is a cheap mutex check and a drop.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -67,6 +74,12 @@ struct GatewayInner {
     stopping: bool,
     /// Latest scheduler task-table snapshot (P0-A), pushed by the gateway.
     schedules: Vec<serde_json::Value>,
+    /// Latest job snapshot (P0-1); refreshed whenever the gateway says so.
+    jobs: Vec<serde_json::Value>,
+    /// In-flight job requests, keyed by requestId (the gateway echoes it back).
+    job_waiters: HashMap<String, mpsc::Sender<Result<serde_json::Value, String>>>,
+    /// Monotonic source of requestIds.
+    job_seq: u64,
 }
 
 impl GatewayInner {
@@ -91,6 +104,9 @@ impl Default for GatewayInner {
             want_running: false,
             stopping: false,
             schedules: Vec::new(),
+            jobs: Vec::new(),
+            job_waiters: HashMap::new(),
+            job_seq: 0,
         }
     }
 }
@@ -211,11 +227,9 @@ impl GatewayManager {
             let app = app.clone();
             let child_arc = Arc::clone(&child_arc);
             thread::spawn(move || {
-                let code = child_arc
-                    .lock()
-                    .ok()
-                    .and_then(|mut c| c.wait().ok())
-                    .and_then(|s| s.code());
+                // Polls instead of blocking in `wait`, so `shutdown` can take
+                // the lock while the sidecar is still alive. See `proc.rs`.
+                let code = crate::proc::wait_released(&child_arc);
                 on_gateway_exit(&app, code);
             });
         }
@@ -259,18 +273,14 @@ impl GatewayManager {
         self.send_cmd("pair_cancel")
     }
 
-    /// Unbind: the gateway deletes credentials and exits; the exit watcher
-    /// finalizes the "disconnected" state without restarting.
+    /// Unbind: the gateway deletes its credentials and reports "disconnected".
+    /// It stays running — the job runtime lives there too, so this is a
+    /// logout, not a shutdown.
     pub fn unbind(&self) -> Result<(), String> {
-        {
-            let mut inner = self.lock();
-            inner.stopping = true;
-        }
         let result = self.send_cmd("unbind");
         if result.is_err() {
             // Gateway already gone — fall back to a local reset.
             let mut inner = self.lock();
-            inner.stopping = false;
             inner.want_running = false;
             inner.process = None;
             inner.status = GatewayStatusData::new("disconnected");
@@ -333,6 +343,146 @@ impl GatewayManager {
         self.lock().schedules.clone()
     }
 
+    // ------------------------------------------------------------------
+    // Job runtime (P0-1): the registry lives in the gateway sidecar. Each
+    // command carries a requestId; the reply arrives on the stdout reader
+    // thread and is handed back through a one-shot channel. No `caller` is
+    // sent — the desktop asks on the user's behalf and gets the operator
+    // view (see gateway/src/main.ts).
+    // ------------------------------------------------------------------
+
+    /// Send one job command and block for its reply.
+    fn job_request(
+        &self,
+        app: &AppHandle,
+        mut value: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String> {
+        self.ensure_spawned(app)?;
+        let request_id = {
+            let mut inner = self.lock();
+            inner.job_seq += 1;
+            format!("desk-{}", inner.job_seq)
+        };
+        value["requestId"] = serde_json::json!(request_id);
+
+        let (tx, rx) = mpsc::channel();
+        self.lock().job_waiters.insert(request_id.clone(), tx);
+        if let Err(e) = self.send(value.to_string()) {
+            self.lock().job_waiters.remove(&request_id);
+            return Err(e);
+        }
+        let outcome = rx
+            .recv_timeout(timeout)
+            .unwrap_or_else(|_| Err("网关没有响应任务请求".to_string()));
+        // Always drop the slot: a timed-out request must not leak a waiter.
+        self.lock().job_waiters.remove(&request_id);
+        outcome
+    }
+
+    /// Start a background job; returns its id.
+    pub fn job_start(&self, app: &AppHandle, job: serde_json::Value) -> Result<String, String> {
+        let reply = self.job_request(
+            app,
+            serde_json::json!({ "cmd": "job_start", "job": job }),
+            Duration::from_secs(10),
+        )?;
+        self.cache_jobs_from(&reply);
+        reply
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| "网关没有返回任务 id".to_string())
+    }
+
+    /// Full job list, refreshed from the gateway.
+    pub fn job_list(&self, app: &AppHandle) -> Result<Vec<serde_json::Value>, String> {
+        let reply = self.job_request(
+            app,
+            serde_json::json!({ "cmd": "job_status" }),
+            Duration::from_secs(10),
+        )?;
+        let jobs = reply
+            .get("jobs")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        self.lock().jobs = jobs.clone();
+        Ok(jobs)
+    }
+
+    /// Consuming read of a job's new output.
+    pub fn job_logs(&self, app: &AppHandle, id: &str) -> Result<String, String> {
+        let reply = self.job_request(
+            app,
+            serde_json::json!({ "cmd": "job_logs", "id": id }),
+            Duration::from_secs(10),
+        )?;
+        self.cache_jobs_from(&reply);
+        Ok(reply
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
+    }
+
+    /// Stop a job; "requested" or "already-finished".
+    pub fn job_stop(&self, app: &AppHandle, id: &str, reason: Option<String>) -> Result<String, String> {
+        let reply = self.job_request(
+            app,
+            serde_json::json!({ "cmd": "job_stop", "id": id, "reason": reason }),
+            Duration::from_secs(10),
+        )?;
+        self.cache_jobs_from(&reply);
+        Ok(reply
+            .get("result")
+            .and_then(|v| v.as_str())
+            .unwrap_or("requested")
+            .to_string())
+    }
+
+    /// Metrics extracted by the job's rules (newest `tail` entries).
+    pub fn job_metrics(
+        &self,
+        app: &AppHandle,
+        id: &str,
+        tail: Option<u32>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let reply = self.job_request(
+            app,
+            serde_json::json!({ "cmd": "job_metrics", "id": id, "tail": tail }),
+            Duration::from_secs(10),
+        )?;
+        Ok(reply
+            .get("metrics")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Last known job list without touching the gateway (panel first paint).
+    pub fn jobs_snapshot(&self) -> Vec<serde_json::Value> {
+        self.lock().jobs.clone()
+    }
+
+    /// Merge the single-job snapshots a reply carries into the cache, so the
+    /// panel stays current without a full refresh round-trip.
+    fn cache_jobs_from(&self, reply: &serde_json::Value) {
+        let Some(updates) = reply.get("jobs").and_then(|v| v.as_array()) else {
+            return;
+        };
+        let mut inner = self.lock();
+        for update in updates {
+            let Some(id) = update.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            match inner.jobs.iter().position(|j| j.get("id").and_then(|v| v.as_str()) == Some(id)) {
+                Some(i) => inner.jobs[i] = update.clone(),
+                None => inner.jobs.push(update.clone()),
+            }
+        }
+    }
+
     pub fn status(&self) -> GatewayStatusData {
         self.lock().status.clone()
     }
@@ -359,10 +509,8 @@ impl GatewayManager {
             inner.process.take()
         };
         if let Some(p) = process {
-            if let Ok(mut child) = p.child.lock() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+            let mut child = p.child.lock().unwrap_or_else(|e| e.into_inner());
+            crate::proc::kill_tree(&mut child);
         }
     }
 }
@@ -439,6 +587,50 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
             if let Err(e) = app.emit("schedule-error", message.to_string()) {
                 eprintln!("[kalo] emit schedule-error failed: {e}");
             }
+        }
+        "job_reply" => {
+            let Some(request_id) = value.get("requestId").and_then(|v| v.as_str()) else {
+                return;
+            };
+            let waiter = gateway.lock().job_waiters.remove(request_id);
+            let Some(tx) = waiter else {
+                // Timed out already, or a reply to a request we never made.
+                return;
+            };
+            let outcome = if value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                Ok(value.clone())
+            } else {
+                Err(value
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("任务操作失败")
+                    .to_string())
+            };
+            let _ = tx.send(outcome);
+        }
+        "job_event" => {
+            // Unsolicited: something changed in the registry. The payload is
+            // deliberately thin, so refresh off-thread and push the whole list
+            // rather than trying to patch state from an event.
+            if let Some(job) = value.get("job") {
+                if let Err(e) = app.emit("job-done", job.clone()) {
+                    eprintln!("[kalo] emit job-done failed: {e}");
+                }
+            }
+            let app = app.clone();
+            thread::spawn(move || {
+                let Some(gateway) = app.try_state::<GatewayManager>() else {
+                    return;
+                };
+                match gateway.job_list(&app) {
+                    Ok(jobs) => {
+                        if let Err(e) = app.emit("job-status", jobs) {
+                            eprintln!("[kalo] emit job-status failed: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("[kalo] job refresh failed: {e}"),
+                }
+            });
         }
         "session_request" => handle_session_request(app, &value),
         _ => {}
@@ -658,20 +850,6 @@ fn resolve_gateway_path() -> Result<PathBuf, String> {
     ))
 }
 
-/// Whether Feishu credentials exist (gates auto-start on app launch).
-pub fn credentials_exist() -> bool {
-    agent_dir()
-        .map(|d| d.join("feishu.json").is_file())
-        .unwrap_or(false)
-}
-
-fn agent_dir() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("agent"))
-}
-
 // ============================================================================
 // Free functions used by session.rs (zero-cost when no gateway is running)
 // ============================================================================
@@ -690,11 +868,14 @@ pub fn forward_engine_exit(app: &AppHandle, session_id: &str, code: Option<i32>)
     }
 }
 
-/// Best-effort auto-start on app launch when credentials already exist.
+/// Auto-start on app launch.
+///
+/// The gateway is no longer just the Feishu bridge: it also owns the job
+/// runtime, which pi sessions reach over the loopback endpoint. Gating the
+/// start on Feishu credentials therefore left every job tool dead on a
+/// machine that never paired. It now always starts; with no credentials it
+/// simply reports "disconnected" and serves jobs.
 pub fn autostart(app: &AppHandle) {
-    if !credentials_exist() {
-        return;
-    }
     if let Err(e) = app.state::<GatewayManager>().ensure_spawned(app) {
         eprintln!("[kalo] gateway autostart skipped: {e}");
     }

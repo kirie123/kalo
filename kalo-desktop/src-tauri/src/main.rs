@@ -14,9 +14,10 @@ mod session;
 mod session_paging;
 mod sessions_store;
 mod pi_config;
+mod proc;
 mod skills;
 
-use files::{AttachmentData, DirEntry, FileText};
+use files::{AttachmentData, DirDiff, DirEntry, FileText, TextSince};
 use gateway::GatewayManager;
 use session::{PiProcess, SessionManager};
 use session_paging::SessionPage;
@@ -26,7 +27,11 @@ use tauri::{AppHandle, Manager, State};
 
 /// Create a new chat session: spawn `pi --mode rpc` in `cwd` and return
 /// the generated session id used in `pi-*:{session_id}` event names.
-#[tauri::command]
+///
+/// `(async)` on this and the other IO-heavy commands below moves the body off
+/// the main thread (= the window event loop), so process spawns and directory
+/// scans can no longer freeze the UI.
+#[tauri::command(async)]
 fn create_session(
     cwd: String,
     state: State<SessionManager>,
@@ -39,6 +44,9 @@ fn create_session(
 }
 
 /// Forward one RPC command object to the session's pi process stdin.
+/// Stays on the main thread on purpose: the body only takes a lock and pushes
+/// onto the writer thread's channel (no IO), and running it inline preserves
+/// the order in which the frontend issued its commands.
 #[tauri::command]
 fn send_command(
     session_id: String,
@@ -54,7 +62,7 @@ fn send_command(
 
 /// Kill the pi process for a session and drop it from the registry.
 /// Closing an already-unknown session is a no-op.
-#[tauri::command]
+#[tauri::command(async)]
 fn close_session(session_id: String, state: State<SessionManager>) -> Result<(), String> {
     let mut sessions = lock_sessions(&state)?;
     if let Some(mut process) = sessions.remove(&session_id) {
@@ -64,7 +72,7 @@ fn close_session(session_id: String, state: State<SessionManager>) -> Result<(),
 }
 
 /// List historical sessions from ~/.kalo/agent/sessions, grouped by cwd.
-#[tauri::command]
+#[tauri::command(async)]
 fn list_sessions() -> Result<Vec<ProjectGroup>, String> {
     sessions_store::list_sessions()
 }
@@ -111,7 +119,7 @@ fn jobs_list(
 }
 
 /// Delete one historical session file (guarded to the sessions root).
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_session(path: String) -> Result<(), String> {
     sessions_store::delete_session(&path)
 }
@@ -119,7 +127,7 @@ fn delete_session(path: String) -> Result<(), String> {
 /// Read one page of a session file's active branch for the history viewer.
 /// `before` is the exclusive end offset (default: branch end), `limit` the
 /// window size (default 30); results come oldest-to-newest.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_session_page(
     path: String,
     before: Option<usize>,
@@ -130,51 +138,51 @@ fn read_session_page(
 
 /// List skills from ~/.kalo/skills (user scope) and, when `cwd` is
 /// given, <cwd>/.kalo/skills (project scope).
-#[tauri::command]
+#[tauri::command(async)]
 fn list_skills(cwd: Option<String>) -> Result<Vec<SkillMeta>, String> {
     skills::list_skills(cwd.as_deref())
 }
 
 /// Read a skill file verbatim.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_skill(path: String) -> Result<String, String> {
     skills::read_skill(&path)
 }
 
 /// Overwrite a skill file.
-#[tauri::command]
+#[tauri::command(async)]
 fn write_skill(path: String, content: String) -> Result<(), String> {
     skills::write_skill(&path, &content)
 }
 
 /// Create a directory skill with a frontmatter template. `scope` is "user"
 /// or "project" (project requires `cwd`). Returns the new SKILL.md path.
-#[tauri::command]
+#[tauri::command(async)]
 fn create_skill(name: String, scope: String, cwd: Option<String>) -> Result<String, String> {
     skills::create_skill(&name, &scope, cwd.as_deref())
 }
 
 /// Delete a skill file or skill directory, restricted to pi skills roots.
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_skill(path: String) -> Result<(), String> {
     skills::delete_skill(&path)
 }
 
 /// List personal memories from ~/.kalo/memory (frontmatter + summary).
-#[tauri::command]
+#[tauri::command(async)]
 fn list_memories() -> Result<Vec<memory::MemoryMeta>, String> {
     memory::list_memories()
 }
 
 /// Read one memory by slug.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_memory(slug: String) -> Result<memory::MemoryEntry, String> {
     memory::read_memory(&slug)
 }
 
 /// Create or overwrite a memory; returns the slug. `slug` None derives one
 /// from the title.
-#[tauri::command]
+#[tauri::command(async)]
 fn write_memory(
     slug: Option<String>,
     title: String,
@@ -185,63 +193,109 @@ fn write_memory(
 }
 
 /// Delete a memory by slug, restricted to the memory root.
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_memory(slug: String) -> Result<(), String> {
     memory::delete_memory(&slug)
 }
 
 /// Read ~/.kalo/agent/models.json (custom provider definitions).
-#[tauri::command]
+#[tauri::command(async)]
 fn read_models_config() -> Result<serde_json::Value, String> {
     pi_config::read_models_config()
 }
 
 /// Write ~/.kalo/agent/models.json. Takes effect for newly spawned sessions.
-#[tauri::command]
+#[tauri::command(async)]
 fn write_models_config(config: serde_json::Value) -> Result<(), String> {
     pi_config::write_models_config(&config)
 }
 
 /// Read ~/.kalo/agent/auth.json (provider API keys / OAuth tokens).
-#[tauri::command]
+#[tauri::command(async)]
 fn read_auth_config() -> Result<serde_json::Value, String> {
     pi_config::read_auth_config()
 }
 
 /// Write ~/.kalo/agent/auth.json. Takes effect for newly spawned sessions.
-#[tauri::command]
+#[tauri::command(async)]
 fn write_auth_config(config: serde_json::Value) -> Result<(), String> {
     pi_config::write_auth_config(&config)
 }
 
 /// List one directory level for the file panel (dirs first, name-sorted).
-#[tauri::command]
+#[tauri::command(async)]
 fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
     files::list_dir(&path)
 }
 
 /// Read a file as capped text for preview (binary files flagged, not read).
-#[tauri::command]
+#[tauri::command(async)]
 fn read_file_text(path: String, max_bytes: Option<usize>) -> Result<FileText, String> {
     files::read_file_text(&path, max_bytes)
 }
 
+/// Stable paths the frontend needs to build commands: the user's home, the
+/// `~/.kalo` root, and the engine binary this app ships. Generic — nothing
+/// here knows what the caller intends to do with them.
+#[tauri::command(async)]
+fn app_paths() -> Result<serde_json::Value, String> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "cannot resolve user home directory".to_string())?;
+    let kalo_root = std::path::PathBuf::from(&home).join(".kalo");
+    // A missing engine binary is not fatal here: the caller may only want the
+    // paths, and it will get a clear error when it actually tries to spawn.
+    let engine = session::engine_binary_path()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(serde_json::json!({
+        "home": home,
+        "kaloRoot": kalo_root.to_string_lossy(),
+        "engineBin": engine,
+    }))
+}
+
+/// Incremental tail of an append-only file: everything from `offset` to EOF,
+/// plus the offset to resume from. Generic — any growing log can use it.
+#[tauri::command(async)]
+fn read_text_since(
+    path: String,
+    offset: u64,
+    max_bytes: Option<usize>,
+) -> Result<TextSince, String> {
+    files::read_text_since(&path, offset, max_bytes)
+}
+
+/// Relative paths that differ between two directory trees (added / removed /
+/// changed). Generic "what changed between these two copies" primitive.
+#[tauri::command(async)]
+fn dir_diff_names(a: String, b: String, ignore: Option<Vec<String>>) -> Result<DirDiff, String> {
+    files::dir_diff_names(&a, &b, &ignore.unwrap_or_default())
+}
+
 /// Read a file as a chat attachment (image base64 or extracted text).
-#[tauri::command]
+#[tauri::command(async)]
 fn read_attachment(path: String) -> Result<AttachmentData, String> {
     files::read_attachment(&path)
 }
 
+/// Read a chat attachment from raw bytes — a pasted file, which the webview
+/// hands over as content without a path.
+#[tauri::command(async)]
+fn read_attachment_bytes(name: String, data_base64: String) -> Result<AttachmentData, String> {
+    files::read_attachment_bytes(&name, &data_base64)
+}
+
 /// Open a path with the system default app, or reveal it in the OS file
 /// manager (reveal = true).
-#[tauri::command]
+#[tauri::command(async)]
 fn open_path(path: String, reveal: bool) -> Result<(), String> {
     files::open_path(&path, reveal)
 }
 
 /// Search entry names under `root` (substring, case-insensitive) for the
 /// input box's @ file completion.
-#[tauri::command]
+#[tauri::command(async)]
 fn search_files(root: String, query: String, limit: Option<usize>) -> Result<Vec<files::FileMatch>, String> {
     files::search_files(&root, &query, limit)
 }
@@ -251,13 +305,13 @@ fn search_files(root: String, query: String, limit: Option<usize>) -> Result<Vec
 // ============================================================================
 
 /// Begin Feishu QR pairing: spawn the gateway sidecar if needed.
-#[tauri::command]
+#[tauri::command(async)]
 fn gateway_pair_start(state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
     state.pair_start(&app)
 }
 
 /// Cancel an in-flight pairing attempt.
-#[tauri::command]
+#[tauri::command(async)]
 fn gateway_pair_cancel(state: State<GatewayManager>) -> Result<(), String> {
     state.pair_cancel()
 }
@@ -269,7 +323,7 @@ fn gateway_status(state: State<GatewayManager>) -> gateway::GatewayStatusData {
 }
 
 /// Delete stored Feishu credentials and stop the gateway.
-#[tauri::command]
+#[tauri::command(async)]
 fn gateway_unbind(state: State<GatewayManager>) -> Result<(), String> {
     state.unbind()
 }
@@ -280,7 +334,7 @@ fn gateway_unbind(state: State<GatewayManager>) -> Result<(), String> {
 
 /// Create or replace a scheduled task (validated gateway-side; a
 /// `schedule-error` event is emitted on invalid input).
-#[tauri::command]
+#[tauri::command(async)]
 fn schedule_upsert(
     task: serde_json::Value,
     state: State<GatewayManager>,
@@ -290,13 +344,13 @@ fn schedule_upsert(
 }
 
 /// Remove a scheduled task by id.
-#[tauri::command]
+#[tauri::command(async)]
 fn schedule_remove(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
     state.schedule_remove(&app, &id)
 }
 
 /// Manually trigger a task now (ignores enabled/cooldown).
-#[tauri::command]
+#[tauri::command(async)]
 fn schedule_run(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
     state.schedule_run(&app, &id)
 }
@@ -308,24 +362,74 @@ fn schedule_list(state: State<GatewayManager>) -> Vec<serde_json::Value> {
 }
 
 // ============================================================================
+// Job runtime (registry lives in the gateway sidecar, P0-1)
+// ============================================================================
+
+/// Start a background job (label/cwd/cmd plus optional gate/health/rules).
+#[tauri::command(async)]
+fn job_start(job: serde_json::Value, state: State<GatewayManager>, app: AppHandle) -> Result<String, String> {
+    state.job_start(&app, job)
+}
+
+/// Fresh job list from the gateway (also refreshes the cached snapshot).
+#[tauri::command(async)]
+fn job_list(state: State<GatewayManager>, app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    state.job_list(&app)
+}
+
+/// Cached job list, for the panel's first paint without a round-trip.
+#[tauri::command]
+fn job_snapshot(state: State<GatewayManager>) -> Vec<serde_json::Value> {
+    state.jobs_snapshot()
+}
+
+/// Consuming read of a job's new output.
+#[tauri::command(async)]
+fn job_logs(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<String, String> {
+    state.job_logs(&app, &id)
+}
+
+/// Stop a job; returns "requested" or "already-finished".
+#[tauri::command(async)]
+fn job_stop(
+    id: String,
+    reason: Option<String>,
+    state: State<GatewayManager>,
+    app: AppHandle,
+) -> Result<String, String> {
+    state.job_stop(&app, &id, reason)
+}
+
+/// Metrics a job's rules extracted from its output (newest `tail` entries).
+#[tauri::command(async)]
+fn job_metrics(
+    id: String,
+    tail: Option<u32>,
+    state: State<GatewayManager>,
+    app: AppHandle,
+) -> Result<Vec<serde_json::Value>, String> {
+    state.job_metrics(&app, &id, tail)
+}
+
+// ============================================================================
 // Knowledge base (~/.kalo/knowledge, P0-B)
 // ============================================================================
 
 /// List all knowledge cards (frontmatter metadata), newest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn list_knowledge_cards() -> Result<Vec<knowledge::KnowledgeCardMeta>, String> {
     knowledge::list_cards()
 }
 
 /// Read one card by its root-relative path.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_knowledge_card(rel_path: String) -> Result<String, String> {
     knowledge::read_card(&rel_path)
 }
 
 /// Create (rel_path None → `<domain>/<slug>.md`) or overwrite a card;
 /// returns the rel path.
-#[tauri::command]
+#[tauri::command(async)]
 fn write_knowledge_card(
     rel_path: Option<String>,
     domain: String,
@@ -336,7 +440,7 @@ fn write_knowledge_card(
 }
 
 /// Delete a card by rel path.
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_knowledge_card(rel_path: String) -> Result<(), String> {
     knowledge::delete_card(&rel_path)
 }
@@ -409,7 +513,11 @@ fn main() {
             delete_memory,
             list_dir,
             read_file_text,
+            app_paths,
+            read_text_since,
+            dir_diff_names,
             read_attachment,
+            read_attachment_bytes,
             open_path,
             search_files,
             gateway_pair_start,
@@ -420,6 +528,12 @@ fn main() {
             schedule_remove,
             schedule_run,
             schedule_list,
+            job_start,
+            job_list,
+            job_snapshot,
+            job_logs,
+            job_stop,
+            job_metrics,
             list_knowledge_cards,
             read_knowledge_card,
             write_knowledge_card,

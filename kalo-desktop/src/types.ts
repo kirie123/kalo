@@ -545,3 +545,61 @@ export interface JobsSnapshot {
   running: RunningJobSession[];
   tasks: ScheduleTaskInfo[];
 }
+
+// ----------------------------------------------------------------------------
+// Background command jobs (gateway job runtime, P0-1)
+// ----------------------------------------------------------------------------
+
+/** Mirrors the gateway's `JobStatus` (gateway/src/jobs/types.ts). */
+export type BackgroundJobStatus =
+  | "queued"
+  | "running"
+  | "stopping"
+  | "completed"
+  | "killed"
+  | "failed";
+
+/** True for the three terminal statuses. */
+export function isJobTerminal(s: BackgroundJobStatus): boolean {
+  return s === "completed" || s === "killed" || s === "failed";
+}
+
+/** A bash probe: exit code 0 passes. Entirely user-authored. */
+export interface JobProbe {
+  script: string;
+  intervalSec: number;
+}
+
+/** A log rule: regex whose first capture group becomes a metric value. */
+export interface JobRule {
+  match: string;
+  metric?: string;
+}
+
+/** What `job_start` accepts. */
+export interface JobStartInput {
+  label: string;
+  cwd: string;
+  cmd: string;
+  env?: Record<string, string>;
+  /** Pre-launch gate: the job stays `queued` until this passes. */
+  gate?: JobProbe;
+  health?: JobProbe;
+  rules?: JobRule[];
+  /** Id prefix; defaults to `gateway`. */
+  kind?: string;
+  owner?: string;
+}
+
+/** Read-only projection of one background job. */
+export interface BackgroundJob {
+  id: string;
+  kind: string;
+  label: string;
+  ownerSession?: string;
+  status: BackgroundJobStatus;
+  detail?: string;
+  startedAt: number;
+  finishedAt?: number;
+  reported: boolean;
+}
