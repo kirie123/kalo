@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
 import type { ProjectGroup, SessionSummary } from "../types";
@@ -61,7 +61,12 @@ function notImplemented() {
   chatStore.pushToast("该功能暂未实现", "info");
 }
 
-export default function Sidebar({
+/**
+ * Memoized: App re-renders whenever the chat shell's fields change, but the
+ * sidebar only depends on the session list, the active id and the run flags.
+ * Its callbacks are stabilized with useCallback on the App side.
+ */
+export default memo(function Sidebar({
   collapsed,
   width,
   onToggleCollapsed,
@@ -85,8 +90,11 @@ export default function Sidebar({
   const sessionsOf = (cwd: string): SessionSummary[] =>
     sessionGroups.find((g) => normalizeCwd(g.cwd) === normalizeCwd(cwd))?.sessions ?? [];
 
-  // Flat history across all projects, newest first.
-  const allSessions = sessionGroups
+  // Flat history, newest first. Sessions under a pinned project live in that
+  // project's row, so they're excluded here to avoid showing up twice.
+  const projectCwds = new Set(projects.map((p) => normalizeCwd(p.cwd)));
+  const looseSessions = sessionGroups
+    .filter((g) => !projectCwds.has(normalizeCwd(g.cwd)))
     .flatMap((g) => g.sessions.map((s) => ({ ...s, cwd: g.cwd })))
     .sort((a, b) => b.modifiedMs - a.modifiedMs);
 
@@ -197,8 +205,8 @@ export default function Sidebar({
         </div>
         {chatsOpen && (
           <>
-            {allSessions.length === 0 && <div className="px-2 py-1 text-xs text-dim">暂无历史会话</div>}
-            {allSessions.map((s) => (
+            {looseSessions.length === 0 && <div className="px-2 py-1 text-xs text-dim">暂无历史会话</div>}
+            {looseSessions.map((s) => (
               <div
                 key={s.path}
                 className={`group flex w-full items-center gap-1 rounded-md px-2 py-1.5 hover:bg-card ${
@@ -238,7 +246,7 @@ export default function Sidebar({
       )}
     </aside>
   );
-}
+});
 
 function ProjectRow({
   project,

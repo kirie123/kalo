@@ -1,15 +1,59 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { chatStore, useChatStore, type ExtensionUiPrompt, type Toast } from "../lib/chat-store";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { chatStore, useChatSelector, type ExtensionUiPrompt, type Toast } from "../lib/chat-store";
+import { resetChatZoom, stepChatZoom, useChatZoom } from "../lib/chat-zoom";
 import InputBox from "./InputBox";
 import MessageList from "./MessageList";
 
 export default function ChatView() {
+  const zoom = useChatZoom();
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Transient "120%" badge, shown for a moment after each zoom change.
+  const [badge, setBadge] = useState(false);
+  const badgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Native listener: React's onWheel is passive, so it can't preventDefault
+  // (Shift+wheel would otherwise scroll the column sideways).
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.shiftKey && !e.ctrlKey) return;
+      // Chromium reports Shift+wheel on deltaX; fall back to it.
+      const delta = e.deltaY || e.deltaX;
+      if (!delta) return;
+      e.preventDefault();
+      stepChatZoom(delta < 0 ? 1 : -1);
+      setBadge(true);
+      if (badgeTimer.current) clearTimeout(badgeTimer.current);
+      badgeTimer.current = setTimeout(() => setBadge(false), 1200);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (badgeTimer.current) clearTimeout(badgeTimer.current);
+    };
+  }, []);
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div ref={rootRef} className="relative flex min-h-0 flex-1 flex-col">
       <MessageList />
-      <div className="shrink-0 px-4 pb-4 pt-1">
+      {/* zoom (not transform) so the composer keeps its normal layout box. */}
+      <div className="shrink-0 px-4 pb-4 pt-1" style={{ zoom }}>
         <InputBox />
       </div>
+
+      {badge && (
+        <button
+          onClick={() => {
+            resetChatZoom();
+            setBadge(false);
+          }}
+          title="点击恢复默认大小"
+          className="pointer-events-auto absolute right-4 top-3 z-20 rounded-full border border-edge bg-card px-3 py-1 text-xs text-dim shadow-lg hover:text-ink"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+      )}
     </div>
   );
 }
@@ -51,7 +95,7 @@ function ToastItem({ toast }: { toast: Toast }) {
 // ============================================================================
 
 export function ExtensionModal() {
-  const { extensionQueue } = useChatStore();
+  const extensionQueue = useChatSelector((s) => s.extensionQueue);
   const prompt = extensionQueue[0];
   if (!prompt) return null;
   return <ExtensionModalInner key={prompt.id} prompt={prompt} queued={extensionQueue.length - 1} />;

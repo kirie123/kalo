@@ -1,13 +1,22 @@
-import { memo, useEffect, useRef, useState } from "react";
-import { chatStore, useChatStore, type TimelineEntry } from "../lib/chat-store";
-import AssistantMessage from "./AssistantMessage";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { chatStore, useChatSelector, type TimelineEntry } from "../lib/chat-store";
+import { useChatZoom } from "../lib/chat-zoom";
+import AssistantMessage, { assistantText } from "./AssistantMessage";
+import ChangedFilesCard from "./ChangedFilesCard";
 import RetryNotice from "./RetryNotice";
 import ToolCallGroup from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
 
 export default function MessageList() {
-  const { timeline, history, loadingOlder, isStreaming, isCompacting } = useChatStore();
+  const { timeline, history, loadingOlder, isStreaming, isCompacting } = useChatSelector((s) => ({
+    timeline: s.timeline,
+    history: s.history,
+    loadingOlder: s.loadingOlder,
+    isStreaming: s.isStreaming,
+    isCompacting: s.isCompacting,
+  }));
   const scrollRef = useRef<HTMLDivElement>(null);
+  const zoom = useChatZoom();
   // Stick to bottom unless the user scrolled up.
   const stickToBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);

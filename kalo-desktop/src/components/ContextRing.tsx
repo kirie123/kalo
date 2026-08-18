@@ -1,4 +1,4 @@
-import { useChatStore, chatStore } from "../lib/chat-store";
+import { useChatSelector, chatStore } from "../lib/chat-store";
 
 /**
  * Circular context-usage indicator. The ring fills with the used percentage;
@@ -12,7 +12,11 @@ function formatK(n: number): string {
 export { formatK };
 
 export default function ContextRing() {
-  const { contextUsage, isCompacting, sessionId } = useChatStore();
+  const { contextUsage, isCompacting, sessionId } = useChatSelector((s) => ({
+    contextUsage: s.contextUsage,
+    isCompacting: s.isCompacting,
+    sessionId: s.sessionId,
+  }));
 
   const percent = contextUsage?.percent ?? null;
   const tokens = contextUsage?.tokens ?? null;

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
-import { chatStore, useChatStore } from "../lib/chat-store";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { chatStore, useChatSelector } from "../lib/chat-store";
 import { listDir, searchFiles } from "../lib/pi-bridge";
 import { cwdBasename } from "../lib/projects";
 import type { FileMatch } from "../types";
@@ -37,7 +39,17 @@ const ATTACHMENT_EXTENSIONS = [
 ];
 
 export default function InputBox() {
-  const chat = useChatStore();
+  // Only the fields the composer actually shows: the timeline churns at
+  // ~20fps while streaming and must not re-render the input.
+  const chat = useChatSelector((s) => ({
+    cwd: s.cwd,
+    inputDraft: s.inputDraft,
+    commands: s.commands,
+    attachments: s.attachments,
+    isStreaming: s.isStreaming,
+    connecting: s.connecting,
+    steeringMode: s.steeringMode,
+  }));
   const [text, setText] = useState("");
   const [previewImage, setPreviewImage] = useState<{ name: string; mimeType: string; dataBase64: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

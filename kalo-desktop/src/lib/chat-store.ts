@@ -15,7 +15,7 @@
  * (runningByFile drives the sidebar spinners).
  */
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import type {
   AgentMessage,
   AssistantMessage,
@@ -230,6 +230,13 @@ function normPath(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase();
 }
 
+/** Same-keys-same-values check for the runningByFile flag maps. */
+function sameFlags(a: Record<string, boolean>, b: Record<string, boolean>): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => a[k] === b[k]);
+}
+
 /** Session-view changes that alter pool-visible flags (runningByFile) must commit. */
 function affectsPoolFlags(p: Partial<SessionView>): boolean {
   return "isStreaming" in p || "connecting" in p || "sessionFile" in p;
@@ -407,7 +414,9 @@ export class ChatStore {
   /**
    * Rebuild the composed snapshot and notify listeners. runningByFile is
    * recomputed here so background streaming flips sidebar spinners even
-   * though the parked runtime's view is not rendered.
+   * though the parked runtime's view is not rendered. Its object identity is
+   * kept stable while the flags are unchanged, so field-level subscribers
+   * (useChatSelector) are not woken by every commit.
    */
   private commit() {
     const runningByFile: Record<string, boolean> = {};
@@ -415,7 +424,9 @@ export class ChatStore {
       const f = rt.view.sessionFile;
       if (f && (rt.view.isStreaming || rt.view.connecting)) runningByFile[normPath(f)] = rt.view.isStreaming;
     }
-    this._state = { ...this.global, ...this.active.view, runningByFile };
+    const prev = this._state?.runningByFile;
+    const stable = prev && sameFlags(prev, runningByFile) ? prev : runningByFile;
+    this._state = { ...this.global, ...this.active.view, runningByFile: stable };
     this.listeners.forEach((l) => l());
   }
 
@@ -640,13 +651,18 @@ export class ChatStore {
    * Probe the engine with get_state until it answers (or the budget runs
    * out). Commands sent before the RPC dispatch loop is up are silently
    * dropped, so the probe retries with exponential backoff + jitter.
+   *
+   * The per-probe timeout grows with the backoff instead of sitting at the
+   * full budget: a dropped first probe used to cost a flat 2s before the
+   * second one was even sent, which is most of the perceived startup lag.
    */
   private async waitForEngine(sid: string, budgetMs = 20000) {
     const start = Date.now();
     let delay = 250;
+    let probeTimeout = 300;
     while (Date.now() - start < budgetMs) {
       try {
-        await sendCommand(sid, { type: "get_state" }, 2000);
+        await sendCommand(sid, { type: "get_state" }, probeTimeout);
         return;
       } catch {
         // Not ready yet — back off and retry.
@@ -654,6 +670,7 @@ export class ChatStore {
       const jitter = delay * (0.75 + Math.random() * 0.5);
       await new Promise((r) => setTimeout(r, jitter));
       delay = Math.min(delay * 2, 2000);
+      probeTimeout = Math.min(probeTimeout * 2, 2000);
     }
     throw new Error("引擎无响应");
   }
@@ -1001,11 +1018,34 @@ export class ChatStore {
       }
       return raw;
     };
+
+    // Optimistic: the picker updates now, the engine catches up. Reverted
+    // below if the engine rejects the model.
+    const previous = this.rt.view.currentModel;
+    const known =
+      this.global.models.find((m) => m.provider === provider && m.id === modelId) ??
+      this.global.customModels.find((m) => m.provider === provider && m.id === modelId);
+    this.set({ currentModel: known ?? ({ id: modelId, name: modelId, provider } as ModelInfo) });
+    saveLastModel({ provider, modelId, name: known?.name });
+
+    // No engine yet (e.g. the model is picked before the first message):
+    // the preference is saved, and applySavedModel applies it at spawn.
+    // Spawning one here is what made switching cost seconds.
+    const rt = this.rt;
+    if (!rt.view.sessionId) return;
+
+    const revert = () => {
+      // Only revert if the user has not picked yet another model since.
+      const cur = rt.view.currentModel;
+      if (cur?.provider !== provider || cur?.id !== modelId) return;
+      this.setRt(rt, { currentModel: previous });
+      if (previous) saveLastModel({ provider: previous.provider, modelId: previous.id, name: previous.name });
+    };
+
     try {
-      const sid = await this.ensureSession();
-      const resp = await sendCommand(sid, { type: "set_model", provider, modelId }, 15000);
+      const resp = await sendCommand(rt.view.sessionId, { type: "set_model", provider, modelId }, 15000);
       if (resp.success) {
-        this.set({ currentModel: resp.data as ModelInfo });
+        this.setRt(rt, { currentModel: resp.data as ModelInfo });
         saveLastModel({ provider, modelId, name: (resp.data as ModelInfo)?.name });
         return;
       }
@@ -1015,21 +1055,24 @@ export class ChatStore {
       const isCustom = this.global.customModels.some(
         (m) => m.provider === provider && m.id === modelId,
       );
-      if (isCustom && this.rt.view.timeline.length === 0) {
-        await this.restartSession(this.rt);
-        const sid2 = this.rt.view.sessionId;
+      if (isCustom && rt.view.timeline.length === 0) {
+        await this.restartSession(rt);
+        const sid2 = rt.view.sessionId;
         if (!sid2) throw new Error("session restart failed");
         const retry = await sendCommand(sid2, { type: "set_model", provider, modelId }, 15000);
         if (retry.success) {
-          this.set({ currentModel: retry.data as ModelInfo });
+          this.setRt(rt, { currentModel: retry.data as ModelInfo });
           saveLastModel({ provider, modelId, name: (retry.data as ModelInfo)?.name });
           return;
         }
+        revert();
         this.pushToast(`切换模型失败：${friendlyError(retry.error)}`, "error");
         return;
       }
+      revert();
       this.pushToast(`切换模型失败：${friendlyError(resp.error)}`, "error");
     } catch (err) {
+      revert();
       this.pushToast(`切换模型失败：${errText(err)}`, "error");
     }
   }
@@ -1069,30 +1112,41 @@ export class ChatStore {
   }
 
   async cycleThinkingLevel() {
-    const sid = this.rt.view.sessionId;
+    const rt = this.rt;
+    const sid = rt.view.sessionId;
     if (!sid) {
       this.pushToast("请先开始一段对话", "info");
       return;
     }
+    // Optimistic: advance locally through the known level table, then let the
+    // engine's answer (or thinking_level_changed) confirm it.
+    const levels = this.global.thinkingLevels;
+    const previous = rt.view.thinkingLevel;
+    const i = levels.indexOf(previous);
+    if (i !== -1) this.setRt(rt, { thinkingLevel: levels[(i + 1) % levels.length] });
+
     const resp = await sendCommand(sid, { type: "cycle_thinking_level" });
     if (resp.success) {
       const level = (resp.data as { level: ThinkingLevel } | null)?.level;
-      if (level) this.set({ thinkingLevel: level });
+      if (level) this.setRt(rt, { thinkingLevel: level });
     } else {
+      this.setRt(rt, { thinkingLevel: previous });
       this.pushToast(`切换思考等级失败：${resp.error}`, "error");
     }
   }
 
   async setSteeringMode(mode: "all" | "one-at-a-time") {
-    const sid = this.rt.view.sessionId;
-    if (!sid) {
-      // No engine yet: remember locally, applied implicitly on next session.
-      this.set({ steeringMode: mode });
-      return;
-    }
+    const rt = this.rt;
+    const sid = rt.view.sessionId;
+    const previous = rt.view.steeringMode;
+    // No engine yet: remember locally, applied implicitly on next session.
+    this.setRt(rt, { steeringMode: mode });
+    if (!sid) return;
     const resp = await sendCommand(sid, { type: "set_steering_mode", mode });
-    if (resp.success) this.set({ steeringMode: mode });
-    else this.pushToast(`设置权限模式失败：${resp.error}`, "error");
+    if (!resp.success) {
+      this.setRt(rt, { steeringMode: previous });
+      this.pushToast(`设置权限模式失败：${resp.error}`, "error");
+    }
   }
 
   clearInputDraft() {
@@ -1560,4 +1614,46 @@ export const chatStore = new ChatStore();
 
 export function useChatStore(): ChatState {
   return useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+}
+
+/** Shallow object/primitive comparison used as useChatSelector's default. */
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const ka = Object.keys(a as object);
+  if (ka.length !== Object.keys(b as object).length) return false;
+  return ka.every((k) =>
+    Object.is((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
+  );
+}
+
+/**
+ * Subscribe to a slice of the store instead of the whole snapshot.
+ *
+ * The store commits on every streaming flush (~20fps), so components reading
+ * the full state re-render at that rate even when nothing they show changed.
+ * Selected values are cached and compared (shallow by default), so a commit
+ * only re-renders the components whose slice actually moved.
+ *
+ * The selector must be pure and is read from a ref, so an inline arrow is fine.
+ */
+export function useChatSelector<T>(
+  selector: (s: ChatState) => T,
+  isEqual: (a: T, b: T) => boolean = shallowEqual,
+): T {
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+  const equalRef = useRef(isEqual);
+  equalRef.current = isEqual;
+  const cache = useRef<{ value: T } | null>(null);
+
+  const getSelection = useCallback(() => {
+    const next = selectorRef.current(chatStore.getSnapshot());
+    const cached = cache.current;
+    if (cached && equalRef.current(cached.value, next)) return cached.value;
+    cache.current = { value: next };
+    return next;
+  }, []);
+
+  return useSyncExternalStore(chatStore.subscribe, getSelection);
 }

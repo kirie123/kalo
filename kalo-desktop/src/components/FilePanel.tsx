@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { listDir, openPath, readFileText } from "../lib/pi-bridge";
-import { chatStore, useChatStore } from "../lib/chat-store";
+import { chatStore, useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
 import type { DirEntry } from "../types";
 
@@ -35,7 +35,7 @@ function parentDir(path: string): string | null {
 /** Right-side file browser with a text preview. The tree root follows the
  * session cwd until the user navigates elsewhere via the path bar. */
 export default function FilePanel() {
-  const { cwd } = useChatStore();
+  const cwd = useChatSelector((s) => s.cwd);
   const [rootOverride, setRootOverride] = useState<string | null>(null);
   const root = rootOverride ?? cwd;
   const [pathDraft, setPathDraft] = useState(root ?? "");

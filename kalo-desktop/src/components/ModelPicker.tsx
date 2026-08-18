@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { chatStore, useChatStore } from "../lib/chat-store";
+import { chatStore, useChatSelector } from "../lib/chat-store";
 import type { ModelInfo } from "../types";
 import ProviderEditModal from "./ProviderEditModal";
 
@@ -14,7 +14,12 @@ function groupByProvider(models: ModelInfo[]): Array<[string, ModelInfo[]]> {
 }
 
 export default function ModelPicker() {
-  const { models, customModels, currentModel, sessionId } = useChatStore();
+  const { models, customModels, currentModel, sessionId } = useChatSelector((s) => ({
+    models: s.models,
+    customModels: s.customModels,
+    currentModel: s.currentModel,
+    sessionId: s.sessionId,
+  }));
   const [open, setOpen] = useState(false);
   const [showAddModel, setShowAddModel] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);

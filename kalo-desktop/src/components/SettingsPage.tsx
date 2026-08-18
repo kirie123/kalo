@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { chatStore, useChatStore } from "../lib/chat-store";
+import { chatStore, useChatSelector } from "../lib/chat-store";
 import {
   createSkill,
   deleteSkill,
@@ -37,6 +37,8 @@ interface SettingsPageProps {
   theme: ThemePref;
   onThemeChange: (t: ThemePref) => void;
   onBack: () => void;
+  /** Open straight on this tab (e.g. 侧边栏「自动化」→ 任务); otherwise the last visited one. */
+  initialTab?: SettingsTab;
 }
 
 const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
@@ -46,7 +48,7 @@ const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
 ];
 
 /** Left navigation tabs; the key is persisted across visits. */
-type SettingsTab = "models" | "skills" | "memory" | "appearance" | "gateway" | "tasks" | "knowledge" | "mcp" | "about";
+export type SettingsTab = "models" | "skills" | "memory" | "appearance" | "gateway" | "tasks" | "knowledge" | "mcp" | "about";
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "models", label: "模型" },
@@ -67,8 +69,8 @@ function loadTab(): SettingsTab {
   return TABS.some((t) => t.id === v) ? (v as SettingsTab) : "models";
 }
 
-export default function SettingsPage({ theme, onThemeChange, onBack }: SettingsPageProps) {
-  const [tab, setTab] = useState<SettingsTab>(() => loadTab());
+export default function SettingsPage({ theme, onThemeChange, onBack, initialTab }: SettingsPageProps) {
+  const [tab, setTab] = useState<SettingsTab>(() => initialTab ?? loadTab());
 
   const selectTab = (id: SettingsTab) => {
     setTab(id);
@@ -380,7 +382,7 @@ export function Section({ title, children }: { title: string; children: ReactNod
 // ============================================================================
 
 function SkillsSettings() {
-  const { cwd } = useChatStore();
+  const cwd = useChatSelector((s) => s.cwd);
   const [skills, setSkills] = useState<SkillMeta[] | null>(null);
   const [editing, setEditing] = useState<SkillMeta | null>(null);
   const [showCreate, setShowCreate] = useState(false);
