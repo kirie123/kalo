@@ -16,9 +16,13 @@
  *   list_knowledge_cards / read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
  *   jobs_list {} -> JobsSnapshot
+ *   job_start / job_list / job_snapshot / job_logs / job_stop / job_metrics
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
+ *   read_text_since { path, offset, maxBytes? } -> { text, offset, size, reset }
+ *   dir_diff_names { a, b, ignore? } -> { changed, added, removed, truncated }
  *   read_attachment { path } -> AttachmentDraft (image base64 or text)
+ *   read_attachment_bytes { name, dataBase64 } -> AttachmentDraft (pasted file)
  *   open_path { path, reveal } -> void
  *
  * events:
@@ -279,6 +283,48 @@ export function readMcpStatus(): Promise<McpStatus> {
 /** Running engine sessions + latest gateway task snapshot. */
 export function jobsList(): Promise<JobsSnapshot> {
   return invoke<JobsSnapshot>("jobs_list", {});
+}
+
+// ============================================================================
+// Background command jobs (gateway job runtime, P0-1)
+//
+// These reach the gateway sidecar, which owns the registry. Every call fails
+// with a plain message when the gateway is not running — callers surface it
+// rather than pretending the job list is empty.
+// ============================================================================
+
+/** Start a detached background command; returns the new job id. */
+export function jobStart(job: JobStartInput): Promise<string> {
+  return invoke<string>("job_start", { job });
+}
+
+/** Fresh list from the gateway (also refreshes the cached snapshot). */
+export function jobList(): Promise<BackgroundJob[]> {
+  return invoke<BackgroundJob[]>("job_list", {});
+}
+
+/** Cached list, for a first paint without a round-trip. */
+export function jobSnapshot(): Promise<BackgroundJob[]> {
+  return invoke<BackgroundJob[]>("job_snapshot", {});
+}
+
+/**
+ * Consuming read of a job's new output: each call returns only what arrived
+ * since the previous one. Do not use it to render a log a panel must keep —
+ * read the file the job writes instead.
+ */
+export function jobLogs(id: string): Promise<string> {
+  return invoke<string>("job_logs", { id });
+}
+
+/** Stop a job; resolves to "requested" or "already-finished". */
+export function jobStop(id: string, reason?: string): Promise<string> {
+  return invoke<string>("job_stop", { id, reason });
+}
+
+/** Metrics the job's rules extracted from its output (newest `tail` first). */
+export function jobMetrics(id: string, tail?: number): Promise<Record<string, unknown>[]> {
+  return invoke<Record<string, unknown>[]>("job_metrics", { id, tail });
 }
 
 // ============================================================================

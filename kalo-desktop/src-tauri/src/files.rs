@@ -4,11 +4,14 @@
 //! - `read_file_text`: capped, lossy text preview with binary detection.
 //! - `read_attachment`: type-dispatched extraction (image base64, pdf,
 //!   office documents, plain text) for conversation attachments.
+//! - `read_attachment_bytes`: same, for clipboard payloads that carry bytes
+//!   but no path (pasted files).
 
 use std::fs;
 use std::io::Read;
-use std::path::Path;
-use std::time::UNIX_EPOCH;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use serde::Serialize;
@@ -19,6 +22,8 @@ const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_CHARS: usize = 200_000;
 /// Upper bound of bytes read for a text attachment before char truncation.
 const MAX_ATTACHMENT_BYTES: usize = 4 * 1024 * 1024;
+/// Upper bound on a single pasted payload (bytes, before base64 decoding).
+const MAX_PASTE_BYTES: usize = 32 * 1024 * 1024;
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 const TEXT_EXTS: &[&str] = &[
@@ -165,6 +170,65 @@ pub fn read_attachment(path: &str) -> Result<AttachmentData, String> {
         text,
         truncated,
     })
+}
+
+/// Read a chat attachment from raw bytes (a pasted file: the webview gives
+/// us a name and the content, never a path).
+///
+/// The bytes are spilled to a private temp directory and handed to
+/// `read_attachment`, so extension dispatch, size caps and the pdf/office
+/// extractors — all of which are path-based — stay in exactly one place.
+/// The directory is removed on every exit path.
+pub fn read_attachment_bytes(name: &str, data_base64: &str) -> Result<AttachmentData, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64)
+        .map_err(|e| format!("invalid base64 payload: {e}"))?;
+    if bytes.len() > MAX_PASTE_BYTES {
+        return Err("文件过大".to_string());
+    }
+    let file_name = sanitize_file_name(name);
+    let dir = unique_temp_dir();
+    fs::create_dir_all(&dir).map_err(|e| format!("cannot create temp dir: {e}"))?;
+    let path = dir.join(&file_name);
+    let result = fs::write(&path, &bytes)
+        .map_err(|e| format!("cannot write temp file: {e}"))
+        .and_then(|()| read_attachment(&path.to_string_lossy()));
+    let _ = fs::remove_dir_all(&dir);
+    result
+}
+
+/// Reduce an untrusted name to a plain file name: no separators, no `..`,
+/// never empty.
+fn sanitize_file_name(name: &str) -> String {
+    let base = name
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or(name)
+        .trim()
+        .trim_matches('.');
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') && !c.is_control())
+        .collect();
+    if cleaned.is_empty() {
+        "attachment".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// A temp directory unique per call, so two pastes of the same file name
+/// cannot clobber each other.
+fn unique_temp_dir() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir()
+        .join("kalo-paste")
+        .join(format!("{}-{nanos}-{n}", std::process::id()))
 }
 
 fn read_image_attachment(p: &Path, name: &str, ext: &str) -> Result<AttachmentData, String> {

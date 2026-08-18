@@ -11,8 +11,6 @@ import ModelPicker from "./ModelPicker";
 
 const MAX_TEXTAREA_HEIGHT = 192; // ~8 lines
 
-let pastedImageCounter = 1;
-
 /** Active autocomplete token: `/cmd` or `@file`, right before the cursor. */
 interface AcToken {
   mode: "slash" | "file";
@@ -57,6 +55,7 @@ export default function InputBox() {
   const [ac, setAc] = useState<AcToken | null>(null);
   const [acIndex, setAcIndex] = useState(0);
   const [fileMatches, setFileMatches] = useState<FileMatch[]>([]);
+  const [dragging, setDragging] = useState(false);
 
   // Auto-grow the textarea (1-8 lines).
   useEffect(() => {
@@ -175,27 +174,34 @@ export default function InputBox() {
     }
   };
 
-  // Ctrl+V: turn pasted images into attachments.
+  // Ctrl+V: turn pasted files (images, documents, text files) into attachments.
+  // Plain-text pastes fall through to the textarea untouched.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = Array.from(e.clipboardData.items);
-    const images = items.filter((it) => it.type.startsWith("image/"));
-    if (images.length === 0) return;
+    const files = Array.from(e.clipboardData.files);
+    if (files.length === 0) return;
     e.preventDefault();
-    for (const item of images) {
-      const file = item.getAsFile();
-      if (!file) continue;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result ?? "");
-        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-        if (base64) {
-          const ext = file.type.split("/")[1] || "png";
-          chatStore.addImageAttachment(`粘贴图片-${pastedImageCounter++}.${ext}`, file.type, base64);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
+    void chatStore.addFiles(files);
   };
+
+  // Drag & drop from the OS. The webview swallows HTML5 drop events
+  // (tauri's dragDropEnabled), so we listen on the webview instead — which
+  // also hands us real paths, letting us reuse the path-based reader.
+  // Anywhere in the window counts as a drop target; the hint is drawn on the
+  // composer so the destination stays obvious.
+  useEffect(() => {
+    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
+      const p = event.payload;
+      if (p.type === "enter" || p.type === "over") setDragging(true);
+      else if (p.type === "leave") setDragging(false);
+      else if (p.type === "drop") {
+        setDragging(false);
+        if (p.paths.length > 0) void chatStore.addAttachments(p.paths);
+      }
+    });
+    return () => {
+      void unlisten.then((off) => off());
+    };
+  }, []);
 
   const pickCwd = async () => {
     try {
@@ -222,6 +228,12 @@ export default function InputBox() {
   return (
     <div className="mx-auto w-full max-w-3xl">
       <div className="relative rounded-2xl border border-edge bg-card shadow-lg">
+        {/* Drop hint while a file is dragged over the window */}
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-card/90 text-xs text-dim">
+            松开以添加附件
+          </div>
+        )}
         {/* Autocomplete popup (/ commands, @ files) */}
         {acOpen && ac && (
           <div className="absolute bottom-full left-0 right-0 z-30 mb-1.5 max-h-64 overflow-auto rounded-xl border border-edge bg-card py-1 shadow-2xl">
@@ -305,7 +317,7 @@ export default function InputBox() {
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           rows={1}
-          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : chat.connecting ? "正在连接引擎，可先发消息…" : "输入消息，Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片"}
+          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : chat.connecting ? "正在连接引擎，可先发消息…" : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"}
           className="max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm outline-none placeholder:text-dim"
         />
 

@@ -51,6 +51,7 @@ import {
   onPiExit,
   onPiStderr,
   readAttachment,
+  readAttachmentBytes,
   readModelsConfig,
   readSessionPage,
   rejectSessionPending,
@@ -339,6 +340,43 @@ let toastCounter = 1;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Base64 payload of a File, without the `data:...;base64,` prefix. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("读取文件失败"));
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? "");
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let pastedImageCounter = 1;
+
+/** A raw clipboard bitmap (a screenshot) arrives as a nameless `image.png`;
+ *  label those, and keep real file names as-is. */
+function pastedImageName(file: File): string {
+  if (file.name && file.name !== "image.png") return file.name;
+  const ext = file.type.split("/")[1] || "png";
+  return `粘贴图片-${pastedImageCounter++}.${ext}`;
+}
+
+/** Attachment names are the chip key and the removal key, so they must be
+ *  distinct: a collision gets `(2)`, `(3)`, … before the extension. */
+function uniqueAttachmentName(name: string, existing: AttachmentDraft[]): string {
+  const taken = new Set(existing.map((a) => a.name));
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : "";
+  for (let i = 2; ; i++) {
+    const candidate = `${stem} (${i})${ext}`;
+    if (!taken.has(candidate)) return candidate;
+  }
 }
 
 // ============================================================================
@@ -877,9 +915,34 @@ export class ChatStore {
     for (const path of paths) {
       try {
         const draft = await readAttachment(path);
-        this.set({ attachments: [...this.rt.view.attachments, draft] });
+        this.pushAttachment(draft);
       } catch (err) {
         this.pushToast(`无法添加附件 ${path}：${errText(err)}`, "warning");
+      }
+    }
+  }
+
+  /**
+   * Add attachments from webview File objects (clipboard paste). These carry
+   * bytes but no path, so images are kept in memory and everything else is
+   * handed to the backend extractor as base64.
+   */
+  async addFiles(files: File[]) {
+    for (const file of files) {
+      try {
+        const base64 = await fileToBase64(file);
+        if (file.type.startsWith("image/")) {
+          this.pushAttachment({
+            kind: "image",
+            name: pastedImageName(file),
+            mimeType: file.type,
+            dataBase64: base64,
+          });
+        } else {
+          this.pushAttachment(await readAttachmentBytes(file.name, base64));
+        }
+      } catch (err) {
+        this.pushToast(`无法添加附件 ${file.name}：${errText(err)}`, "warning");
       }
     }
   }
@@ -888,11 +951,11 @@ export class ChatStore {
     this.set({ attachments: this.rt.view.attachments.filter((a) => a.name !== name) });
   }
 
-  /** Add an image attachment directly (e.g. a clipboard paste). */
-  addImageAttachment(name: string, mimeType: string, dataBase64: string) {
-    this.set({
-      attachments: [...this.rt.view.attachments, { kind: "image", name, mimeType, dataBase64 }],
-    });
+  /** Append one draft, renaming on collision — `name` is the chip's identity. */
+  private pushAttachment(draft: AttachmentDraft) {
+    const existing = this.rt.view.attachments;
+    const name = uniqueAttachmentName(draft.name, existing);
+    this.set({ attachments: [...existing, name === draft.name ? draft : { ...draft, name }] });
   }
 
   clearAttachments() {
