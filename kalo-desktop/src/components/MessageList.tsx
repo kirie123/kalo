@@ -23,6 +23,15 @@ export default function MessageList() {
   // Scroll height captured before an older-history prepend, to restore the viewport.
   const prependHeight = useRef<number | null>(null);
 
+  // One copy button per turn, on the turn's last assistant message, carrying the
+  // turn's full text. A turn ends at the next user message; the trailing turn
+  // only qualifies once the run has settled.
+  const turnCopyText = useMemo(() => buildTurnCopyText(timeline, isStreaming || isCompacting), [
+    timeline,
+    isStreaming,
+    isCompacting,
+  ]);
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -61,7 +70,7 @@ export default function MessageList() {
         <div className="mx-auto flex max-w-3xl flex-col gap-1.5 px-4 py-4" style={{ zoom }}>
           {loadingOlder && <div className="text-center text-xs text-dim">加载更早的消息…</div>}
           {timeline.map((entry) => (
-            <TimelineItem key={entry.id} entry={entry} />
+            <TimelineItem key={entry.id} entry={entry} copyText={turnCopyText.get(entry.id)} />
           ))}
           {/* Working indicator while the agent is running but nothing visible yet */}
           {(isStreaming || isCompacting) && (
@@ -92,14 +101,49 @@ export default function MessageList() {
   );
 }
 
+/**
+ * Maps the id of each turn's last assistant entry to the markdown of every
+ * assistant text block in that turn. Entries not in the map render no copy
+ * button. `running` suppresses the trailing turn, which isn't finished yet.
+ */
+function buildTurnCopyText(timeline: TimelineEntry[], running: boolean): Map<string, string> {
+  const map = new Map<string, string>();
+  let parts: string[] = [];
+  let lastId: string | null = null;
+
+  const flush = () => {
+    if (lastId && parts.length > 0) map.set(lastId, parts.join("\n\n"));
+    parts = [];
+    lastId = null;
+  };
+
+  for (const entry of timeline) {
+    if (entry.kind === "user") flush();
+    else if (entry.kind === "assistant") {
+      const text = assistantText(entry.message);
+      if (text) parts.push(text);
+      lastId = entry.id;
+    }
+  }
+  if (!running) flush();
+  return map;
+}
+
 // Memoized: the store's throttled flush clones only mutated entries, so
 // untouched timeline items skip re-rendering entirely during streaming.
-const TimelineItem = memo(function TimelineItem({ entry }: { entry: TimelineEntry }) {
+const TimelineItem = memo(function TimelineItem({ entry, copyText }: { entry: TimelineEntry; copyText?: string }) {
   switch (entry.kind) {
     case "user":
       return <UserBubble message={entry.message} />;
     case "assistant":
-      return <AssistantMessage message={entry.message} streaming={entry.streaming} usage={entry.usage} />;
+      return (
+        <AssistantMessage
+          message={entry.message}
+          streaming={entry.streaming}
+          usage={entry.usage}
+          copyText={copyText}
+        />
+      );
     case "toolGroup":
       return <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />;
     case "retry":

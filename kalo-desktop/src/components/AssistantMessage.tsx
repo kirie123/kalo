@@ -1,5 +1,5 @@
 import hljs from "highlight.js";
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -15,13 +15,19 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Code renderer: inline code vs fenced block (highlight.js for blocks). */
-export function CodeRenderer({ className, children }: { className?: string; children?: ReactNode }) {
-  const code = String(children ?? "").replace(/\n$/, "");
-  const lang = /language-([\w-]+)/.exec(className ?? "")?.[1];
-  const isInline = !lang && !code.includes("\n");
-  if (isInline) return <code className="md-inline-code">{code}</code>;
+/**
+ * Highlight cache. A streaming message re-renders ~20 times a second, and
+ * `highlightAuto` (used for fenced blocks without a language) is by far the
+ * most expensive step in that path — without a cache it runs on every frame
+ * for every code block already on screen.
+ */
+const HL_CACHE = new Map<string, string>();
+const HL_CACHE_MAX = 200;
 
+function highlight(code: string, lang?: string): string {
+  const key = `${lang ?? ""}${code}`;
+  const cached = HL_CACHE.get(key);
+  if (cached !== undefined) return cached;
   let html: string;
   try {
     html =
@@ -31,6 +37,24 @@ export function CodeRenderer({ className, children }: { className?: string; chil
   } catch {
     html = escapeHtml(code);
   }
+  // Crude FIFO trim: streaming produces a new key per frame, so the map must
+  // not be allowed to grow without bound.
+  if (HL_CACHE.size >= HL_CACHE_MAX) {
+    const oldest = HL_CACHE.keys().next().value;
+    if (oldest !== undefined) HL_CACHE.delete(oldest);
+  }
+  HL_CACHE.set(key, html);
+  return html;
+}
+
+/** Code renderer: inline code vs fenced block (highlight.js for blocks). */
+export function CodeRenderer({ className, children }: { className?: string; children?: ReactNode }) {
+  const code = String(children ?? "").replace(/\n$/, "");
+  const lang = /language-([\w-]+)/.exec(className ?? "")?.[1];
+  const isInline = !lang && !code.includes("\n");
+  if (isInline) return <code className="md-inline-code">{code}</code>;
+
+  const html = highlight(code, lang);
   return (
     <div className="md-codeblock">
       {lang && <div className="md-codeblock-lang">{lang}</div>}
@@ -41,14 +65,43 @@ export function CodeRenderer({ className, children }: { className?: string; chil
   );
 }
 
+/**
+ * One markdown text block, memoized on its source text: while the last block
+ * of a streaming message grows, the earlier (finished) blocks skip remark/
+ * rehype parsing entirely.
+ */
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  return (
+    <div className="markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          code: CodeRenderer as any,
+          // CodeRenderer renders its own <pre>; avoid a double wrapper.
+          pre: ({ children }) => <>{children}</>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+});
+
 export default function AssistantMessage({
   message,
   streaming,
   usage,
+  copyText,
 }: {
   message: AssistantMessageType;
   streaming?: boolean;
   usage?: TurnUsage;
+  /**
+   * Markdown of the whole turn, set only on the turn's last assistant message.
+   * When absent no copy button is rendered — one button per turn, not per bubble.
+   */
+  copyText?: string;
 }) {
   const failed = message.stopReason === "error" && message.errorMessage;
   const lastIdx = message.content.length - 1;
@@ -60,21 +113,7 @@ export default function AssistantMessage({
       {message.content.map((block, i) => {
         if (block.type === "text") {
           if (!block.text && !streaming) return null;
-          return (
-            <div key={i} className="markdown">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeKatex]}
-                components={{
-                  code: CodeRenderer as any,
-                  // CodeRenderer renders its own <pre>; avoid a double wrapper.
-                  pre: ({ children }) => <>{children}</>,
-                }}
-              >
-                {block.text}
-              </ReactMarkdown>
-            </div>
-          );
+          return <MarkdownBlock key={i} text={block.text} />;
         }
         if (block.type === "thinking") {
           // Spinner only while this block is the one currently streaming;
@@ -86,7 +125,7 @@ export default function AssistantMessage({
         return null;
       })}
       {failed && <ErrorBanner raw={message.errorMessage!} />}
-      {!streaming && (
+      {!streaming && (usage || copyText) && (
         <div className="group/msg mt-2 flex items-end justify-between gap-2 text-xs text-dim">
           <span>
             {usage &&
@@ -94,9 +133,11 @@ export default function AssistantMessage({
                 hitRate !== null ? ` · 缓存命中 ${hitRate}%` : ""
               }`}
           </span>
-          <span className="opacity-0 transition-opacity group-hover/msg:opacity-100">
-            <CopyButton text={assistantText(message)} title="复制本轮回复" />
-          </span>
+          {copyText && (
+            <span className="opacity-0 transition-opacity group-hover/msg:opacity-100">
+              <CopyButton text={copyText} title="复制本轮回复" />
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -104,7 +145,7 @@ export default function AssistantMessage({
 }
 
 /** Markdown source of all text blocks, joined with a blank line. */
-function assistantText(message: AssistantMessageType): string {
+export function assistantText(message: AssistantMessageType): string {
   return message.content
     .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
     .map((block) => block.text)
