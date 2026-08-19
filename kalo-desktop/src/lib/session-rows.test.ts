@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSessionRows } from "./session-rows";
+import { mergeSessionRows, visibleRows, type SessionRow } from "./session-rows";
 import type { PendingSession, ProjectGroup } from "../types";
 
 const disk = (path: string, title: string, modifiedMs: number, cwd = "d:\\proj"): ProjectGroup => ({
@@ -70,5 +70,43 @@ describe("mergeSessionRows", () => {
 
   it("handles both sides empty", () => {
     expect(mergeSessionRows([], [])).toEqual([]);
+  });
+});
+
+describe("visibleRows", () => {
+  const rows = (n: number): SessionRow[] =>
+    Array.from({ length: n }, (_, i) => ({
+      path: `s${i}.jsonl`,
+      id: `id-${i}`,
+      timestamp: 1000 - i,
+      title: `S${i}`,
+      modifiedMs: 1000 - i,
+      cwd: "d:\\proj",
+    }));
+
+  it("returns the same array when the list fits", () => {
+    const all = rows(3);
+    expect(visibleRows(all, 10)).toBe(all);
+  });
+
+  it("returns everything at exactly the limit", () => {
+    expect(visibleRows(rows(10), 10)).toHaveLength(10);
+  });
+
+  it("cuts to the limit past it", () => {
+    expect(visibleRows(rows(25), 10).map((r) => r.title)).toEqual(
+      rows(10).map((r) => r.title),
+    );
+  });
+
+  it("keeps a marked row that falls past the limit", () => {
+    const visible = visibleRows(rows(25), 10, (r) => r.id === "id-20");
+    expect(visible).toHaveLength(11);
+    expect(visible.at(-1)?.id).toBe("id-20");
+  });
+
+  it("does not duplicate a marked row already inside the limit", () => {
+    const visible = visibleRows(rows(25), 10, (r) => r.id === "id-3");
+    expect(visible).toHaveLength(10);
   });
 });

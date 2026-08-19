@@ -41,3 +41,21 @@ export function mergeSessionRows(groups: ProjectGroup[], pending: PendingSession
   }
   return rows.sort((a, b) => b.modifiedMs - a.modifiedMs);
 }
+
+/** How many session rows a sidebar list shows before「显示更多」. */
+export const SESSION_PAGE_SIZE = 10;
+
+/**
+ * The first `limit` rows, plus any row `keep` marks as must-show — the active
+ * session and running ones would otherwise be hidden behind「显示更多」, and
+ * their selection / spinner with them. Kept rows stay in the input's order
+ * (newest first), so nothing jumps around when a run starts deep in history.
+ */
+export function visibleRows(
+  rows: SessionRow[],
+  limit: number,
+  keep?: (row: SessionRow) => boolean,
+): SessionRow[] {
+  if (rows.length <= limit) return rows;
+  return rows.filter((row, i) => i < limit || (keep ? keep(row) : false));
+}

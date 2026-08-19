@@ -14,7 +14,10 @@
       {
         "title": "Kalo",
         "width": 1280,
-        "height": 800
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 560,
+        "decorations": false
       }
     ],
     "security": {

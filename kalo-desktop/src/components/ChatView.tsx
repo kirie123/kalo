@@ -65,7 +65,7 @@ export default function ChatView() {
 export function ToastContainer() {
   const toasts = useChatSelector((s) => s.toasts);
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-80 flex-col gap-2">
+    <div className="pointer-events-none fixed right-4 top-12 z-50 flex w-80 flex-col gap-2">
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} />
       ))}

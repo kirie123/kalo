@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
-import { mergeSessionRows, type SessionRow } from "../lib/session-rows";
+import { mergeSessionRows, SESSION_PAGE_SIZE, visibleRows, type SessionRow } from "../lib/session-rows";
 import type { PendingSession, ProjectGroup, SessionSummary } from "../types";
 import NewProjectModal from "./NewProjectModal";
 
@@ -95,10 +95,17 @@ export default memo(function Sidebar({
   const [showNewProject, setShowNewProject] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [chatsOpen, setChatsOpen] = useState(true);
+  // How many rows the flat 聊天 list renders; grows by a page per「显示更多」.
+  const [chatLimit, setChatLimit] = useState(SESSION_PAGE_SIZE);
 
   const reloadProjects = () => setProjects(listProjects());
 
   const isRunning = (path: string) => runningByFile[normPath(path)] === true;
+
+  // Rows that must stay visible even past the limit: the open session and any
+  // session with a run in flight (its spinner is the point).
+  const mustShow = (row: SessionRow) =>
+    (activeSessionId !== null && row.id === activeSessionId) || row.pending === true || isRunning(row.path);
 
   // Every row, on-disk and optimistic, newest first.
   const allRows = mergeSessionRows(sessionGroups, pendingSessions);
@@ -112,6 +119,7 @@ export default memo(function Sidebar({
   const looseSessions = allRows
     .filter((s) => !projectCwds.has(normalizeCwd(s.cwd)))
     .sort((a, b) => b.modifiedMs - a.modifiedMs);
+  const looseVisible = visibleRows(looseSessions, chatLimit, mustShow);
   // Clicking a project starts a fresh chat in its directory.
   const openProject = (cwd: string) => {
     onNewChat();
@@ -146,9 +154,8 @@ export default memo(function Sidebar({
       className="flex shrink-0 flex-col border-r border-edge bg-sidebar"
       style={width ? { width } : undefined}
     >
-      {/* Top actions */}
-      <div className="flex items-center justify-between px-3 pt-3">
-        <span className="px-1 text-sm font-semibold">Kalo</span>
+      {/* Top actions — the brand lives in the title bar, so only the toggle. */}
+      <div className="flex items-center justify-end px-3 pt-3">
         <button
           onClick={onToggleCollapsed}
           title="折叠侧边栏"
@@ -197,6 +204,7 @@ export default memo(function Sidebar({
                 sessions={sessionsOf(p.cwd)}
                 activeSessionId={activeSessionId}
                 isRunning={isRunning}
+                mustShow={mustShow}
                 onOpen={() => openProject(p.cwd)}
                 onNewSession={() => openProject(p.cwd)}
                 onRemove={() => {
@@ -212,7 +220,13 @@ export default memo(function Sidebar({
 
         <div className="mt-4 px-2 pb-1">
           <button
-            onClick={() => setChatsOpen((v) => !v)}
+            onClick={() =>
+              setChatsOpen((v) => {
+                // Collapsing resets the page, so reopening starts at 10 again.
+                if (v) setChatLimit(SESSION_PAGE_SIZE);
+                return !v;
+              })
+            }
             className="flex items-center gap-1 text-xs font-medium text-dim hover:text-ink"
           >
             <ChevronIcon open={chatsOpen} />
@@ -222,7 +236,7 @@ export default memo(function Sidebar({
         {chatsOpen && (
           <>
             {looseSessions.length === 0 && <div className="px-2 py-1 text-xs text-dim">暂无历史会话</div>}
-            {looseSessions.map((s) => (
+            {looseVisible.map((s) => (
               <div
                 key={s.path}
                 className={`group flex w-full items-center gap-1 rounded-md px-2 py-1.5 hover:bg-card ${
@@ -243,6 +257,12 @@ export default memo(function Sidebar({
                 <SessionMenu session={s} onDeleteSession={onDeleteSession} disabled={s.pending} />
               </div>
             ))}
+            {looseSessions.length > chatLimit && (
+              <ShowMoreButton
+                remaining={looseSessions.length - chatLimit}
+                onClick={() => setChatLimit((n) => n + SESSION_PAGE_SIZE)}
+              />
+            )}
           </>
         )}
       </div>
@@ -269,6 +289,7 @@ function ProjectRow({
   sessions,
   activeSessionId,
   isRunning,
+  mustShow,
   onOpen,
   onNewSession,
   onRemove,
@@ -279,6 +300,8 @@ function ProjectRow({
   sessions: SessionRow[];
   activeSessionId: string | null;
   isRunning: (path: string) => boolean;
+  /** Rows the pagination must keep visible (active / running / optimistic). */
+  mustShow: (row: SessionRow) => boolean;
   onOpen: () => void;
   /** 「+」— starts a fresh chat in this project without collapsing its list. */
   onNewSession: () => void;
@@ -287,11 +310,19 @@ function ProjectRow({
   onDeleteSession: (session: SessionSummary) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Per-project page counter, reset whenever the row is collapsed.
+  const [limit, setLimit] = useState(SESSION_PAGE_SIZE);
+  const visible = visibleRows(sessions, limit, mustShow);
+  const toggleOpen = () =>
+    setOpen((v) => {
+      if (v) setLimit(SESSION_PAGE_SIZE);
+      return !v;
+    });
   return (
     <div className="mb-1">
       <div className="group flex w-full items-center gap-1 rounded-md px-1 py-1 hover:bg-card">
         <button
-          onClick={() => setOpen((v) => !v)}
+          onClick={toggleOpen}
           title={open ? "收起会话" : "展开会话"}
           className="shrink-0 rounded p-1 text-dim hover:text-ink"
         >
@@ -340,7 +371,7 @@ function ProjectRow({
       </div>
       {open && sessions.length === 0 && <div className="py-1 pl-9 text-xs text-dim">暂无会话</div>}
       {open &&
-        sessions.map((s) => (
+        visible.map((s) => (
           <div
             key={s.path}
             className={`group flex w-full items-center gap-1 rounded-md py-1.5 pl-9 pr-2 hover:bg-card ${
@@ -359,7 +390,37 @@ function ProjectRow({
             <SessionMenu session={s} onDeleteSession={onDeleteSession} disabled={s.pending} />
           </div>
         ))}
+      {open && sessions.length > limit && (
+        <ShowMoreButton
+          remaining={sessions.length - limit}
+          indent
+          onClick={() => setLimit((n) => n + SESSION_PAGE_SIZE)}
+        />
+      )}
     </div>
+  );
+}
+
+/** 「显示更多」— renders one more page of session rows. */
+function ShowMoreButton({
+  remaining,
+  indent,
+  onClick,
+}: {
+  remaining: number;
+  /** Inside a project row: line up with the indented session rows. */
+  indent?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full rounded-md py-1.5 text-left text-xs text-dim hover:bg-card hover:text-ink ${
+        indent ? "pl-9 pr-2" : "px-2"
+      }`}
+    >
+      显示更多（剩余 {remaining}）
+    </button>
   );
 }
 
