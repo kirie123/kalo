@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
-import type { ProjectGroup, SessionSummary } from "../types";
+import { mergeSessionRows, type SessionRow } from "../lib/session-rows";
+import type { PendingSession, ProjectGroup, SessionSummary } from "../types";
 import NewProjectModal from "./NewProjectModal";
 
 interface SidebarProps {
@@ -11,6 +12,8 @@ interface SidebarProps {
   onToggleCollapsed: () => void;
   /** Session history grouped by cwd, straight from list_sessions. */
   sessionGroups: ProjectGroup[];
+  /** Sessions started but not yet on disk; merged into the lists below. */
+  pendingSessions: PendingSession[];
   activeSessionId: string | null;
   /** Engine-pool flags: session files (normalized) with a run in flight. */
   runningByFile: Record<string, boolean>;
@@ -77,6 +80,7 @@ export default memo(function Sidebar({
   width,
   onToggleCollapsed,
   sessionGroups,
+  pendingSessions,
   activeSessionId,
   runningByFile,
   onNewChat,
@@ -96,17 +100,18 @@ export default memo(function Sidebar({
 
   const isRunning = (path: string) => runningByFile[normPath(path)] === true;
 
-  const sessionsOf = (cwd: string): SessionSummary[] =>
-    sessionGroups.find((g) => normalizeCwd(g.cwd) === normalizeCwd(cwd))?.sessions ?? [];
+  // Every row, on-disk and optimistic, newest first.
+  const allRows = mergeSessionRows(sessionGroups, pendingSessions);
+
+  const sessionsOf = (cwd: string): SessionRow[] =>
+    allRows.filter((s) => normalizeCwd(s.cwd) === normalizeCwd(cwd));
 
   // Flat history, newest first. Sessions under a pinned project live in that
   // project's row, so they're excluded here to avoid showing up twice.
   const projectCwds = new Set(projects.map((p) => normalizeCwd(p.cwd)));
-  const looseSessions = sessionGroups
-    .filter((g) => !projectCwds.has(normalizeCwd(g.cwd)))
-    .flatMap((g) => g.sessions.map((s) => ({ ...s, cwd: g.cwd })))
+  const looseSessions = allRows
+    .filter((s) => !projectCwds.has(normalizeCwd(s.cwd)))
     .sort((a, b) => b.modifiedMs - a.modifiedMs);
-
   // Clicking a project starts a fresh chat in its directory.
   const openProject = (cwd: string) => {
     onNewChat();
@@ -193,6 +198,7 @@ export default memo(function Sidebar({
                 activeSessionId={activeSessionId}
                 isRunning={isRunning}
                 onOpen={() => openProject(p.cwd)}
+                onNewSession={() => openProject(p.cwd)}
                 onRemove={() => {
                   removeProject(p.cwd);
                   reloadProjects();
@@ -234,7 +240,7 @@ export default memo(function Sidebar({
                     {cwdBasename(s.cwd)} · {formatRelativeTime(s.modifiedMs)}
                   </span>
                 </button>
-                <SessionMenu session={s} onDeleteSession={onDeleteSession} />
+                <SessionMenu session={s} onDeleteSession={onDeleteSession} disabled={s.pending} />
               </div>
             ))}
           </>
@@ -264,15 +270,18 @@ function ProjectRow({
   activeSessionId,
   isRunning,
   onOpen,
+  onNewSession,
   onRemove,
   onSelectSession,
   onDeleteSession,
 }: {
   project: ProjectEntry;
-  sessions: SessionSummary[];
+  sessions: SessionRow[];
   activeSessionId: string | null;
   isRunning: (path: string) => boolean;
   onOpen: () => void;
+  /** 「+」— starts a fresh chat in this project without collapsing its list. */
+  onNewSession: () => void;
   onRemove: () => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
   onDeleteSession: (session: SessionSummary) => void;
@@ -307,6 +316,19 @@ function ProjectRow({
           <span className="truncate">{project.name}</span>
         </button>
         <button
+          onClick={() => {
+            // Show the list so the new chat's optimistic row is visible.
+            setOpen(true);
+            onNewSession();
+          }}
+          title={`在「${project.name}」下新建会话`}
+          className="hidden shrink-0 rounded p-1 text-dim hover:text-ink group-hover:block"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+          </svg>
+        </button>
+        <button
           onClick={onRemove}
           title="移除项目（不删除会话）"
           className="hidden shrink-0 rounded p-1 text-dim hover:text-[var(--danger)] group-hover:block"
@@ -334,7 +356,7 @@ function ProjectRow({
               <span className="truncate">{s.title || "未命名会话"}</span>
               <span className="shrink-0 text-xs text-dim">{formatRelativeTime(s.modifiedMs)}</span>
             </button>
-            <SessionMenu session={s} onDeleteSession={onDeleteSession} />
+            <SessionMenu session={s} onDeleteSession={onDeleteSession} disabled={s.pending} />
           </div>
         ))}
     </div>
@@ -345,9 +367,12 @@ function ProjectRow({
 function SessionMenu({
   session,
   onDeleteSession,
+  disabled,
 }: {
   session: SessionSummary;
   onDeleteSession: (session: SessionSummary) => void;
+  /** Optimistic rows have no file to delete yet. */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -371,20 +396,22 @@ function SessionMenu({
 
   return (
     <div ref={ref} className="relative shrink-0">
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        title="更多操作"
-        className={`rounded p-1 text-dim hover:text-ink ${open ? "block" : "hidden group-hover:block"}`}
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-          <circle cx="3" cy="8" r="1.4" />
-          <circle cx="8" cy="8" r="1.4" />
-          <circle cx="13" cy="8" r="1.4" />
-        </svg>
-      </button>
+      {!disabled && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((v) => !v);
+          }}
+          title="更多操作"
+          className={`rounded p-1 text-dim hover:text-ink ${open ? "block" : "hidden group-hover:block"}`}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="3" cy="8" r="1.4" />
+            <circle cx="8" cy="8" r="1.4" />
+            <circle cx="13" cy="8" r="1.4" />
+          </svg>
+        </button>
+      )}
       {open && (
         <div className="absolute right-0 top-6 z-20 w-32 overflow-hidden rounded-md border border-edge bg-card py-1 shadow-lg">
           <button

@@ -20,6 +20,7 @@ export default function App() {
     engineSessionId: s.engineSessionId,
     isStreaming: s.isStreaming,
     runningByFile: s.runningByFile,
+    pendingSessions: s.pendingSessions,
     hasMessages: s.timeline.length > 0,
   }));
   const [page, setPage] = useState<"chat" | "settings" | "era">("chat");
@@ -47,7 +48,11 @@ export default function App() {
   // any pooled run (including background ones) starts or ends.
   const refreshProjects = useCallback(() => {
     listSessions()
-      .then(setProjects)
+      .then((groups) => {
+        setProjects(groups);
+        // Retire optimistic rows whose file the scan can now see.
+        chatStore.notePersistedSessions(groups.flatMap((g) => g.sessions.map((s) => s.path)));
+      })
       .catch(() => {
         // Backend not ready yet (e.g. dev without Rust side) — keep empty.
       });
@@ -69,6 +74,17 @@ export default function App() {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, [scheduleRefresh, chat.sessionId, chat.isStreaming, runningCount]);
+
+  // While an optimistic row is up, the real file lands at the first assistant
+  // message — an event the triggers above do not cover. Poll until the scan
+  // picks it up, so the row is swapped for the real entry (title + timestamp)
+  // without waiting for the whole run to settle.
+  const pendingCount = chat.pendingSessions.length;
+  useEffect(() => {
+    if (pendingCount === 0) return;
+    const t = setInterval(refreshProjects, 2000);
+    return () => clearInterval(t);
+  }, [pendingCount, refreshProjects]);
 
   // Custom providers from ~/.kalo/agent/models.json show up in the picker
   // immediately, without waiting for an engine session.
@@ -141,6 +157,7 @@ export default function App() {
         width={sidebarW}
         onToggleCollapsed={onToggleCollapsed}
         sessionGroups={projects}
+        pendingSessions={chat.pendingSessions}
         activeSessionId={chat.engineSessionId ?? null}
         runningByFile={chat.runningByFile}
         onNewChat={onNewChat}

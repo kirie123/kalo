@@ -23,6 +23,7 @@ import type {
   AttachmentDraft,
   ImageContent,
   ModelInfo,
+  PendingSession,
   PiEvent,
   PiEventPayload,
   PiExitInfo,
@@ -188,6 +189,12 @@ export interface ChatState {
   commands: SlashCommand[];
   /** Engine-pool: which session files (normalized paths) have a run in flight. */
   runningByFile: Record<string, boolean>;
+  /**
+   * Sessions started in this app run that `list_sessions` may not see yet
+   * (pi withholds the `.jsonl` until the first assistant message). Merged into
+   * the sidebar list, deduped by path.
+   */
+  pendingSessions: PendingSession[];
 }
 
 /**
@@ -254,9 +261,24 @@ function sameFlags(a: Record<string, boolean>, b: Record<string, boolean>): bool
   return ka.every((k) => a[k] === b[k]);
 }
 
-/** Session-view changes that alter pool-visible flags (runningByFile) must commit. */
+/** Field-wise comparison of the optimistic session list (identity stability). */
+function samePending(a: PendingSession[], b: PendingSession[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((x, i) => {
+    const y = b[i];
+    return x.path === y.path && x.id === y.id && x.title === y.title && x.cwd === y.cwd;
+  });
+}
+
+/** First line of a prompt, trimmed to a sidebar-sized title. */
+function promptTitle(text: string): string {
+  const line = text.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line || "新对话";
+}
+
+/** Session-view changes that alter pool-visible state (runningByFile / pendingSessions) must commit. */
 function affectsPoolFlags(p: Partial<SessionView>): boolean {
-  return "isStreaming" in p || "connecting" in p || "sessionFile" in p;
+  return "isStreaming" in p || "connecting" in p || "sessionFile" in p || "engineSessionId" in p || "cwd" in p;
 }
 
 /** Session-scoped fields reset for every fresh runtime. */
@@ -308,6 +330,13 @@ class SessionRuntime {
   recoveryCount = 0;
   /** In-flight lazy engine connect (new chat) of this runtime. */
   sessionInit: Promise<string> | null = null;
+  /**
+   * Set on the first prompt of a brand-new chat: pi does not write the session
+   * file until the first assistant message, so the sidebar's disk scan cannot
+   * see this session yet. Published as a PendingSession until then. Undefined
+   * for resumed sessions (already on disk) and for chats never prompted.
+   */
+  pending: { title: string; at: number } | null = null;
   /** Background engine connect of a resume; sendPrompt awaits it. */
   resumePromise: Promise<void> | null = null;
   compactionNoticeId: string | null = null;
@@ -473,16 +502,44 @@ export class ChatStore {
    * though the parked runtime's view is not rendered. Its object identity is
    * kept stable while the flags are unchanged, so field-level subscribers
    * (useChatSelector) are not woken by every commit.
+   *
+   * pendingSessions is computed the same way, and for the same reason the
+   * sidebar needs it: a just-prompted chat has no file on disk yet.
    */
   private commit() {
     const runningByFile: Record<string, boolean> = {};
+    const pendingSessions: PendingSession[] = [];
     for (const rt of this.runtimes.values()) {
       const f = rt.view.sessionFile;
-      if (f && (rt.view.isStreaming || rt.view.connecting)) runningByFile[normPath(f)] = rt.view.isStreaming;
+      // Optimistic rows are keyed on the runtime until the file is known, so
+      // their spinner works too.
+      const rowKey = f ? normPath(f) : rt.pending ? `pending:${rt.key}` : null;
+      if (rowKey && (rt.view.isStreaming || rt.view.connecting)) runningByFile[rowKey] = rt.view.isStreaming;
+      if (rt.pending) {
+        pendingSessions.push({
+          // Before the engine reports its file, key on the runtime so the row
+          // is stable across re-renders; it is replaced by the real path once
+          // get_state answers, and dropped when the disk scan catches up.
+          path: f ?? `pending:${rt.key}`,
+          id: rt.view.engineSessionId ?? `pending:${rt.key}`,
+          title: rt.pending.title,
+          cwd: rt.view.cwd,
+          modifiedMs: rt.pending.at,
+        });
+      }
     }
-    const prev = this._state?.runningByFile;
-    const stable = prev && sameFlags(prev, runningByFile) ? prev : runningByFile;
-    this._state = { ...this.global, ...this.active.view, runningByFile: stable };
+    pendingSessions.sort((a, b) => b.modifiedMs - a.modifiedMs);
+
+    const prev = this._state;
+    const stableFlags = prev && sameFlags(prev.runningByFile, runningByFile) ? prev.runningByFile : runningByFile;
+    const stablePending =
+      prev && samePending(prev.pendingSessions, pendingSessions) ? prev.pendingSessions : pendingSessions;
+    this._state = {
+      ...this.global,
+      ...this.active.view,
+      runningByFile: stableFlags,
+      pendingSessions: stablePending,
+    };
     this.listeners.forEach((l) => l());
   }
 
@@ -642,6 +699,9 @@ export class ChatStore {
     const isActive = rt === this.active;
     const file = rt.view.sessionFile;
     if (!file || rt.recoveryCount >= 2) {
+      // Nothing on disk and no engine left to write it: retire the optimistic
+      // sidebar row rather than leave a chat that can never be reopened.
+      if (!file) this.dropPending(rt);
       if (isActive) {
         this.pushToast(
           file
@@ -760,6 +820,19 @@ export class ChatStore {
    * switch_session -> meta) so the session becomes continuable.
    */
   async resumeSession(sessionPath: string, cwd: string) {
+    // An optimistic sidebar row whose file does not exist yet: its runtime is
+    // in the pool already, so this is a plain view switch, not a file read.
+    if (sessionPath.startsWith("pending:")) {
+      const rt = this.runtimes.get(sessionPath.slice("pending:".length));
+      if (!rt) return;
+      rt.lastActive = Date.now();
+      if (rt === this.active) return;
+      this.active = rt;
+      this.commit();
+      this.evictIdle();
+      return;
+    }
+
     const key = normPath(sessionPath);
 
     const existing = this.runtimes.get(key);
@@ -981,6 +1054,15 @@ export class ChatStore {
       }
     }
     if (!message && images.length === 0) return;
+    // Publish the session to the sidebar right now. pi withholds the session
+    // file until the first assistant message, so without this the row only
+    // appears once the whole first run has produced output — which on a slow
+    // model is a long stare at a sidebar that forgot your chat. Resumed
+    // sessions (history / file already known) are on disk already.
+    if (!rt.pending && !rt.view.sessionFile && !rt.view.history) {
+      rt.pending = { title: promptTitle(message), at: Date.now() };
+      this.commit();
+    }
     // A resumed session may still be connecting its engine in the background.
     if (rt.resumePromise) await rt.resumePromise;
     try {
@@ -995,8 +1077,36 @@ export class ChatStore {
       if (!resp.success) this.pushToast(`发送失败：${resp.error}`, "error");
       else void this.syncSessionFile(rt);
     } catch (err) {
+      // The prompt never reached the engine, so nothing will ever persist:
+      // drop the optimistic row instead of leaving a ghost in the sidebar.
+      this.dropPending(rt);
       this.pushToast(`发送失败：${errText(err)}`, "error");
     }
+  }
+
+  /**
+   * Called by the sidebar after each `list_sessions`: any pending row whose
+   * file the disk scan can now see is retired, so the real (titled, dated)
+   * entry takes over and there is no duplicate.
+   */
+  notePersistedSessions(paths: string[]) {
+    const seen = new Set(paths.map(normPath));
+    let changed = false;
+    for (const rt of this.runtimes.values()) {
+      const f = rt.view.sessionFile;
+      if (rt.pending && f && seen.has(normPath(f))) {
+        rt.pending = null;
+        changed = true;
+      }
+    }
+    if (changed) this.commit();
+  }
+
+  /** Retire a runtime's optimistic sidebar row (nothing will persist). */
+  private dropPending(rt: SessionRuntime) {
+    if (!rt.pending) return;
+    rt.pending = null;
+    this.commit();
   }
 
   /** Refresh context-window usage from the engine (get_session_stats). */
@@ -1411,6 +1521,8 @@ export class ChatStore {
         this.setRt(rt, { thinkingLevel: ev.level });
         break;
       case "session_info_changed":
+        // The engine's own name beats the first-line-of-prompt placeholder.
+        if (rt.pending && ev.name) rt.pending = { ...rt.pending, title: ev.name };
         this.setRt(rt, { sessionName: ev.name });
         break;
       case "extension_error":
