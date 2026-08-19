@@ -537,17 +537,54 @@ export interface ScheduleTaskInfo extends ScheduleTask {
 // Knowledge base (~/.kalo/knowledge)
 // ============================================================================
 
-/** One knowledge card's index metadata (frontmatter, no body). */
+/** One knowledge card's index metadata (frontmatter + derived, no body). */
 export interface KnowledgeCardMeta {
   title: string;
-  /** cards | training-notes | investing | math */
+  /** Top-level directory the note lives in; "" for root-level notes. */
   domain: string;
   tags: string[];
   date: string;
+  /** Last substantive edit, stamped by write_knowledge_card. */
+  updated: string;
+  /** seed | active | stable | stale, or "" when unset. */
+  status: string;
+  /** `_by` frontmatter — who wrote it. "" means the user. */
+  by: string;
+  /** `_reviewed` frontmatter; null when the card has no review state. */
+  reviewed: boolean | null;
+  /** Body length in characters (CJK counts per character). */
+  wordCount: number;
+  /** First body line that is neither blank nor a heading. */
+  snippet: string;
   /** Path relative to the knowledge root (forward slashes); the stable handle used by all commands. */
   relPath: string;
   /** Absolute path. */
   path: string;
+}
+
+/**
+ * A domain is a top-level directory. `_types/<key>.md` may decorate it, but
+ * the directory is the source of truth — a missing type note just means the
+ * label falls back to the key.
+ */
+export interface KnowledgeDomain {
+  key: string;
+  label: string;
+  /** "" when the type note omits it. */
+  icon: string;
+  color: string;
+  /** Unspecified sorts last. */
+  order: number;
+  count: number;
+}
+
+/** One matching line from search_knowledge. */
+export interface KnowledgeSearchHit {
+  relPath: string;
+  title: string;
+  /** 1-based line number. */
+  line: number;
+  snippet: string;
 }
 
 // ============================================================================

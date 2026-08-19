@@ -430,6 +430,22 @@ fn list_knowledge_cards() -> Result<Vec<knowledge::KnowledgeCardMeta>, String> {
     knowledge::list_cards()
 }
 
+/// List the domains (= top-level directories), decorated with the optional
+/// `_types/<domain>.md` presentation note.
+#[tauri::command(async)]
+fn list_knowledge_domains() -> Result<Vec<knowledge::KnowledgeDomain>, String> {
+    knowledge::list_domains()
+}
+
+/// Case-insensitive substring search over card bodies and frontmatter.
+#[tauri::command(async)]
+fn search_knowledge(
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<knowledge::KnowledgeSearchHit>, String> {
+    knowledge::search_cards(&query, limit)
+}
+
 /// Read one card by its root-relative path.
 #[tauri::command(async)]
 fn read_knowledge_card(rel_path: String) -> Result<String, String> {
@@ -559,6 +575,8 @@ fn main() {
             job_stop,
             job_metrics,
             list_knowledge_cards,
+            list_knowledge_domains,
+            search_knowledge,
             read_knowledge_card,
             write_knowledge_card,
             delete_knowledge_card,

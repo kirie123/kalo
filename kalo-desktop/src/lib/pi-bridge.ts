@@ -14,7 +14,8 @@
  *   read_models_config / write_models_config / read_auth_config / write_auth_config
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   schedule_list / schedule_upsert / schedule_remove / schedule_run
- *   list_knowledge_cards / read_knowledge_card / write_knowledge_card / delete_knowledge_card
+ *   list_knowledge_cards / list_knowledge_domains / search_knowledge
+ *   read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
  *   jobs_list {} -> JobsSnapshot
  *   job_start / job_list / job_snapshot / job_logs / job_stop / job_metrics
@@ -50,6 +51,8 @@ import type {
   JobsSnapshot,
   JobStartInput,
   KnowledgeCardMeta,
+  KnowledgeDomain,
+  KnowledgeSearchHit,
   McpConfig,
   McpStatus,
   MemoryEntry,
@@ -379,6 +382,21 @@ export function jobMetrics(id: string, tail?: number): Promise<Record<string, un
 
 export function listKnowledgeCards(): Promise<KnowledgeCardMeta[]> {
   return invoke<KnowledgeCardMeta[]>("list_knowledge_cards", {});
+}
+
+/** Domains = top-level directories, ordered by `_order` then key. */
+export function listKnowledgeDomains(): Promise<KnowledgeDomain[]> {
+  return invoke<KnowledgeDomain[]>("list_knowledge_domains", {});
+}
+
+/**
+ * Case-insensitive substring search over bodies and frontmatter. Not
+ * tokenized and with no minimum length, so two-character Chinese queries
+ * work. The UI's only retrieval entry point — swapped for `recall` (P1-R)
+ * without touching callers.
+ */
+export function searchKnowledge(query: string, limit?: number): Promise<KnowledgeSearchHit[]> {
+  return invoke<KnowledgeSearchHit[]>("search_knowledge", { query, limit });
 }
 
 /** Full markdown text of one card. */

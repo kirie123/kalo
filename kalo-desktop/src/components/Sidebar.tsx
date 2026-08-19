@@ -27,6 +27,10 @@ interface SidebarProps {
   onOpenEra: () => void;
   /** True while the era panel is the current page, so the button reads as selected. */
   eraActive?: boolean;
+  /** 「知识笔记」— takes over the main pane with the notes workspace. */
+  onOpenNotes: () => void;
+  /** True while the notes panel is the current page. */
+  notesActive?: boolean;
   onOpenSettings: () => void;
 }
 
@@ -89,6 +93,8 @@ export default memo(function Sidebar({
   onOpenAutomation,
   onOpenEra,
   eraActive,
+  onOpenNotes,
+  notesActive,
   onOpenSettings,
 }: SidebarProps) {
   const [projects, setProjects] = useState<ProjectEntry[]>(() => listProjects());
@@ -171,6 +177,7 @@ export default memo(function Sidebar({
         <SideButton onClick={onNewChat} icon={<PencilIcon />} label="新对话" />
         <SideButton onClick={notImplemented} icon={<SearchIcon />} label="搜索" />
         <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" />
+        <SideButton onClick={onOpenNotes} icon={<BookIcon />} label="知识笔记" active={notesActive} />
         <SideButton onClick={onOpenEra} icon={<EvolveIcon />} label="演化" active={eraActive} />
       </div>
 
@@ -578,6 +585,16 @@ function EvolveIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
       <path d="M2 13h3v-3h3V7h3V4h3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** An open book: the knowledge library. */
+function BookIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <path d="M8 4.2S6.8 3 4.6 3H2v9h2.6C6.8 12 8 13 8 13s1.2-1 3.4-1H14V3h-2.6C9.2 3 8 4.2 8 4.2z" strokeLinejoin="round" />
+      <path d="M8 4.2V13" />
     </svg>
   );
 }
