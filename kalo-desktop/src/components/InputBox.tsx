@@ -275,35 +275,51 @@ export default function InputBox() {
           </div>
         )}
 
-        {/* Pending attachment chips */}
+        {/* Pending attachment chips. Hovering shows where the file came from;
+            image chips open the lightbox on click. */}
         {chat.attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
-            {chat.attachments.map((a) => (
-              <span
-                key={a.name}
-                className="flex items-center gap-1.5 rounded-md border border-edge bg-base px-2 py-1 text-xs"
-              >
-                {a.kind === "image" && (
-                  <img
-                    src={`data:${a.mimeType};base64,${a.dataBase64}`}
-                    alt={a.name}
-                    title="点击查看大图"
-                    onClick={() => setPreviewImage(a)}
-                    className="h-6 w-6 cursor-zoom-in rounded object-cover"
-                  />
-                )}
-                <span className="max-w-40 truncate">{a.name}</span>
-                <button
-                  onClick={() => chatStore.removeAttachment(a.name)}
-                  title="移除附件"
-                  className="shrink-0 text-dim hover:text-ink"
+            {chat.attachments.map((a) => {
+              const origin = a.sourcePath ?? `${a.name}（粘贴内容，无路径）`;
+              const tip =
+                a.kind === "image"
+                  ? `${origin}\n点击查看大图`
+                  : a.truncated
+                    ? `${origin}\n（内容过长，已截断）`
+                    : origin;
+              return (
+                <span
+                  key={a.name}
+                  title={tip}
+                  className="flex items-center gap-1.5 rounded-md border border-edge bg-base px-2 py-1 text-xs"
                 >
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </span>
-            ))}
+                  {a.kind === "image" ? (
+                    <button
+                      onClick={() => setPreviewImage(a)}
+                      className="flex min-w-0 cursor-zoom-in items-center gap-1.5 text-left"
+                    >
+                      <img
+                        src={`data:${a.mimeType};base64,${a.dataBase64}`}
+                        alt={a.name}
+                        className="size-6 shrink-0 rounded object-cover"
+                      />
+                      <span className="max-w-40 truncate">{a.name}</span>
+                    </button>
+                  ) : (
+                    <span className="max-w-40 truncate">{a.name}</span>
+                  )}
+                  <button
+                    onClick={() => chatStore.removeAttachment(a.name)}
+                    title="移除附件"
+                    className="shrink-0 text-dim hover:text-ink"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
         <textarea

@@ -226,7 +226,7 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   if (rec.toolName === "edit" && diff) {
     return (
       <div className="mb-1 ml-6 mt-1">
-        <DiffView diff={diff} />
+        <DiffView diff={diff} collapsible />
       </div>
     );
   }

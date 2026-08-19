@@ -1,6 +1,6 @@
 ---
 name: knowledge
-description: 个人知识库（~/.kalo/knowledge）的存取与检索。当会话产出可复用的结论/经验时，主动建议用户存卡；用户说「存」「存入知识库」时执行 save。需要引用过往经验时用 search；会话主题涉及训练/投资/数学时可主动 recall 相关卡片。
+description: 个人知识库（~/.kalo/knowledge）的存取与检索。当会话产出可复用的结论/经验时，主动建议用户存卡；用户说「存」「存入知识库」时执行 save。需要引用过往经验时用 search；会话主题与已有卡片相关时可主动 recall。
 ---
 
 # knowledge — 个人知识库技能
@@ -9,12 +9,13 @@ description: 个人知识库（~/.kalo/knowledge）的存取与检索。当会�
 
 ```
 ~/.kalo/knowledge/
-  cards/            # 通用经验卡（跨领域）
-  training-notes/   # 训练实验结论
-  investing/        # 交易日志、复盘、策略笔记
-  math/             # 探索笔记：猜想→验证→结论/反例
+  cards/            # 默认落点：通用经验卡
+  inbox/            # 速记，待整理
   INDEX.md          # 全库目录（title + tags + 路径），由你维护
 ```
+
+**领域（domain）就是顶层目录，没有预设清单。** 除上面两个目录外，其余领域由用户
+自己按需要建；不要替用户凭空创建领域目录。
 
 ## save：把当前会话的结论存为经验卡
 
@@ -27,7 +28,7 @@ description: 个人知识库（~/.kalo/knowledge）的存取与检索。当会�
 ```markdown
 ---
 title: 一句话结论式标题
-domain: training-notes        # cards | training-notes | investing | math
+domain: training-notes        # 已存在的顶层目录名；拿不准就用 cards
 tags: [hrm, prefixlm, ablation]
 date: 2026-08-15              # 今天
 source_session: a3f9c2        # 当前会话 id（能拿到就填）
@@ -43,10 +44,10 @@ source_session: a3f9c2        # 当前会话 id（能拿到就填）
 ```
 
 写入步骤：
-1. 按内容选择 domain 目录（拿不准用 `cards/`）。
+1. 在**已存在**的顶层目录里选 domain（拿不准用 `cards/`）；需要新领域时先问用户。
 2. 文件名用结论的短 slug（小写字母/数字/连字符，如 `prefixlm-beats-causallm-hrm.md`）。
 3. 写入卡片后，**必须更新 `INDEX.md`**：在对应域的分节下追加一行
-   `- [标题](相对路径) — tags: a, b（日期）`。INDEX.md 不存在就创建并带上四域分节。
+   `- [标题](相对路径) — tags: a, b（日期）`。INDEX.md 不存在就创建，分节按实际目录来。
 
 ## search：检索知识库
 
@@ -62,6 +63,6 @@ rg -i "关键词" ~/.kalo/knowledge/ -g '*.md'   # 带上下文
 
 ## recall：会话开始时自动唤起
 
-当用户的开场话题明显涉及训练实验、投资或数学探索时，先做一次针对性 search
+当用户的开场话题明显与知识库里已有的卡片相关时，先做一次针对性 search
 （话题关键词 + 相关标签），把最相关的 3-5 张卡的「标题 + 结论」注入你的上下文，
 再继续工作。检索为空就直接继续，不要编造不存在的卡片。

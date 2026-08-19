@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView";
 import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
 import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
 import NotesPanel from "./features/notes/NotesPanel";
-import SettingsPage, { applyTheme, loadTheme, type SettingsTab, type ThemePref } from "./components/SettingsPage";
+import SettingsPage, {
+  applyTheme,
+  loadTheme,
+  THEME_OPTIONS,
+  type SettingsTab,
+  type ThemePref,
+} from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
-import TitleBar from "./components/TitleBar";
+import TasksSettings from "./components/TasksSettings";
+import TitleBar, { type MenuEntry, type TitleMenu } from "./components/TitleBar";
 import { listSessions, deleteSession } from "./lib/pi-bridge";
 import { chatStore, useChatSelector } from "./lib/chat-store";
 import { loadWidth, startColumnDrag } from "./lib/drag";
@@ -27,7 +36,7 @@ export default function App() {
     pendingSessions: s.pendingSessions,
     hasMessages: s.timeline.length > 0,
   }));
-  const [page, setPage] = useState<"chat" | "settings" | "era" | "notes">("chat");
+  const [page, setPage] = useState<"chat" | "settings" | "era" | "notes" | "automation">("chat");
   // undefined → SettingsPage restores the last visited tab.
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -123,21 +132,108 @@ export default function App() {
     },
     [refreshProjects],
   );
-  const onOpenSettings = useCallback(() => {
-    setSettingsTab(undefined);
+  const onOpenSettings = useCallback((tab?: SettingsTab) => {
+    setSettingsTab(tab);
     setPage("settings");
   }, []);
-  // 「自动化」lands directly on the 定时任务 panel.
-  const onOpenAutomation = useCallback(() => {
-    setSettingsTab("tasks");
-    setPage("settings");
-  }, []);
+  // 「自动化」is the 定时任务 table on its own main-pane page — opening the
+  // whole settings window for it read as too abrupt.
+  const onOpenAutomation = useCallback(() => setPage("automation"), []);
   // 「演化」takes over the main pane, keeping the sidebar: a run is watched
   // for a long time, and handing a spec back to a chat session is one click.
   const onOpenEra = useCallback(() => setPage("era"), []);
   // 「知识笔记」is a full main-pane workspace of its own (three columns), so
   // it takes the pane the same way 演化 does rather than opening a modal.
   const onOpenNotes = useCallback(() => setPage("notes"), []);
+
+  // 文件 → 选择工作目录…: same picker as the composer's cwd button.
+  const pickCwd = useCallback(() => {
+    void (async () => {
+      try {
+        const dir = await open({ directory: true });
+        if (typeof dir === "string") {
+          await chatStore.setCwd(dir);
+          setPage("chat");
+        }
+      } catch (err) {
+        chatStore.pushToast(`选择目录失败：${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    })();
+  }, []);
+
+  // App menus (rendered by TitleBar). Every entry is an action that already
+  // exists elsewhere in the UI — the bar is a second, discoverable route to it.
+  const menus: TitleMenu[] = useMemo(
+    () => [
+      {
+        label: "文件",
+        entries: [
+          { kind: "item", label: "新对话", onClick: onNewChat },
+          { kind: "item", label: "选择工作目录…", onClick: pickCwd },
+          { kind: "sep" },
+          { kind: "item", label: "设置", onClick: () => onOpenSettings() },
+          {
+            kind: "item",
+            label: "退出",
+            onClick: () => {
+              try {
+                void getCurrentWindow().close();
+              } catch {
+                // Plain browser (vite dev): nothing to close.
+              }
+            },
+          },
+        ],
+      },
+      {
+        label: "视图",
+        entries: [
+          { kind: "item", label: "侧边栏", checked: !sidebarCollapsed, onClick: onToggleCollapsed },
+          {
+            kind: "item",
+            label: "文件面板",
+            checked: panelOpen && page === "chat",
+            disabled: page !== "chat",
+            onClick: () => setPanelOpen((v) => !v),
+          },
+          { kind: "sep" },
+          { kind: "item", label: "聊天", checked: page === "chat", onClick: () => setPage("chat") },
+          { kind: "item", label: "自动化", checked: page === "automation", onClick: onOpenAutomation },
+          { kind: "item", label: "知识笔记", checked: page === "notes", onClick: onOpenNotes },
+          { kind: "item", label: "演化", checked: page === "era", onClick: onOpenEra },
+          { kind: "sep" },
+          ...THEME_OPTIONS.map(
+            (t): MenuEntry => ({
+              kind: "item",
+              label: t.label,
+              checked: theme === t.value,
+              onClick: () => setTheme(t.value),
+            }),
+          ),
+        ],
+      },
+      {
+        label: "帮助",
+        entries: [
+          { kind: "item", label: "技能与内置技能", onClick: () => onOpenSettings("skills") },
+          { kind: "item", label: "关于 Kalo", onClick: () => onOpenSettings("about") },
+        ],
+      },
+    ],
+    [
+      onNewChat,
+      pickCwd,
+      onOpenSettings,
+      onToggleCollapsed,
+      sidebarCollapsed,
+      panelOpen,
+      page,
+      onOpenAutomation,
+      onOpenNotes,
+      onOpenEra,
+      theme,
+    ],
+  );
 
   const showEmpty = page === "chat" && !chat.hasMessages;
 
@@ -150,13 +246,15 @@ export default function App() {
         ? "演化"
         : page === "notes"
           ? "知识笔记"
-          : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
+          : page === "automation"
+            ? "自动化"
+            : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
 
   // Settings takes over the whole window — no session sidebar next to it.
   if (page === "settings") {
     return (
       <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
-        <TitleBar title={barTitle} />
+        <TitleBar title={barTitle} menus={menus} />
         <div className="flex min-h-0 flex-1">
           <SettingsPage
             theme={theme}
@@ -173,7 +271,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
-      <TitleBar title={barTitle} />
+      <TitleBar title={barTitle} menus={menus} />
       <div className="flex min-h-0 flex-1">
         <Sidebar
           collapsed={sidebarCollapsed}
@@ -187,6 +285,7 @@ export default function App() {
           onSelectSession={onSelectSession}
           onDeleteSession={onDeleteSession}
           onOpenAutomation={onOpenAutomation}
+          automationActive={page === "automation"}
           onOpenEra={onOpenEra}
           eraActive={page === "era"}
           onOpenNotes={onOpenNotes}
@@ -208,7 +307,7 @@ export default function App() {
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
           <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-4">
             <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
-              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : chat.cwd || "未选择目录"}
+              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : page === "automation" ? "自动化 · 定时任务" : chat.cwd || "未选择目录"}
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
@@ -239,6 +338,12 @@ export default function App() {
                 </div>
               ) : page === "notes" ? (
                 <NotesPanel />
+              ) : page === "automation" ? (
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="mx-auto max-w-2xl px-6 py-6">
+                    <TasksSettings />
+                  </div>
+                </div>
               ) : showEmpty ? (
                 <EmptyState />
               ) : (

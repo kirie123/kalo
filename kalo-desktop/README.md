@@ -52,11 +52,11 @@ cd gateway && bun install && bun run build   # 产出 ../src-tauri/binaries/kalo
 
 ## 知识库（Knowledge）
 
-设置 →「知识库」浏览/搜索/编辑 `~/.kalo/knowledge/` 下的 markdown 经验卡
-（cards / training-notes / investing / math 四个域）。目录树与 INDEX.md stub 由
-`knowledge::ensure_knowledge_base` 首启创建；驱动它的 `knowledge` skill 作为内置
-skill 分发（见下一节）：对话中产生可复用结论时 agent 会主动建议存卡，用户确认后
-写入并维护 INDEX.md；任何会话可让其 `search` 检索知识库。
+设置 →「知识库」浏览/搜索/编辑 `~/.kalo/knowledge/` 下的 markdown 经验卡。领域即顶层
+目录，没有预设清单：首启只创建 `cards/`（默认落点）、`inbox/`、`_types/`、`.trash/`
+与 INDEX.md stub（`knowledge::ensure_knowledge_base`），其余领域由用户自建。驱动它的
+`knowledge` skill 作为内置 skill 分发（见下一节）：对话中产生可复用结论时 agent 会主动
+建议存卡，用户确认后写入并维护 INDEX.md；任何会话可让其 `search` 检索知识库。
 
 ## 内置 Skills（internal-skills）
 

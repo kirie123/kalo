@@ -6,7 +6,7 @@
 //! frontmatter listing and body search (desktop UI side).
 //!
 //! Layout (seeded by `ensure_knowledge_base` on app setup):
-//!   cards/  inbox/  review/  _types/  .trash/  INDEX.md
+//!   cards/  inbox/  _types/  .trash/  INDEX.md
 //!
 //! **Domains are directories, not a compile-time list.** Any top-level
 //! directory is a domain; `_types/<domain>.md` may describe it (label, icon,
@@ -24,10 +24,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-/// Directories created on first run. Pre-existing domains from earlier
-/// versions (training-notes/ investing/ math/) are left alone: they keep
-/// working because domains are discovered by scanning, not declared here.
-const SEED_DIRS: [&str; 5] = ["cards", "inbox", "review", "_types", TRASH_DIR];
+/// Directories created on first run: the default write target (`cards/`), the
+/// quick-capture inbox, plus the two infrastructure dirs. Deliberately *not* a
+/// starter set of topic domains — those are the user's to create, and
+/// pre-existing ones from earlier versions keep working because domains are
+/// discovered by scanning, not declared here.
+const SEED_DIRS: [&str; 4] = ["cards", "inbox", "_types", TRASH_DIR];
 
 /// Backups of overwritten/deleted cards. Excluded from every scan.
 const TRASH_DIR: &str = ".trash";

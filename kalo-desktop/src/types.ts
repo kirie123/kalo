@@ -411,10 +411,14 @@ export interface DirDiff {
 /**
  * Attachment draft, mirroring the `read_attachment` union (serde tag=kind).
  * Images go to the engine as ImageContent; text is appended to the prompt.
+ *
+ * `sourcePath` is added on the frontend when the draft came from a real file
+ * (picker / drag-drop), so the chip can show where it came from. Pasted bytes
+ * have no path, hence optional.
  */
 export type AttachmentDraft =
-  | { kind: "image"; name: string; mimeType: string; dataBase64: string }
-  | { kind: "text"; name: string; text: string; truncated: boolean };
+  | { kind: "image"; name: string; mimeType: string; dataBase64: string; sourcePath?: string }
+  | { kind: "text"; name: string; text: string; truncated: boolean; sourcePath?: string };
 
 // ============================================================================
 // pi engine configuration (~/.kalo/agent/models.json + auth.json)

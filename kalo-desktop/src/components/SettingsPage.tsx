@@ -41,7 +41,7 @@ interface SettingsPageProps {
   initialTab?: SettingsTab;
 }
 
-const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
+export const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
   { value: "system", label: "跟随系统" },
   { value: "light", label: "浅色" },
   { value: "dark", label: "深色" },

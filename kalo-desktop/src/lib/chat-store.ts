@@ -988,7 +988,7 @@ export class ChatStore {
     for (const path of paths) {
       try {
         const draft = await readAttachment(path);
-        this.pushAttachment(draft);
+        this.pushAttachment({ ...draft, sourcePath: path });
       } catch (err) {
         this.pushToast(`无法添加附件 ${path}：${errText(err)}`, "warning");
       }

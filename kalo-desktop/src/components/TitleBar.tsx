@@ -1,15 +1,28 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 
 /**
  * Self-drawn title bar (the window runs with `decorations: false`).
  *
- * One full-width strip above the sidebar: brand on the left, the current
- * page/session title centered, window buttons on the right. The strip itself
+ * One full-width strip above the sidebar: the app menus on the left, the
+ * current page/session title centered, window buttons on the right. The strip
  * carries `data-tauri-drag-region`, so dragging it moves the window and a
  * double-click toggles maximize — both handled by Tauri, which is why the
  * capability needs `core:window:allow-start-dragging`.
+ *
+ * The menus are declarative on purpose: App owns every action, this file only
+ * knows how to render and dismiss a dropdown.
  */
+
+/** One row in a dropdown. `checked` renders the ✓ column (toggles / radios). */
+export type MenuEntry =
+  | { kind: "item"; label: string; onClick: () => void; checked?: boolean; disabled?: boolean; hint?: string }
+  | { kind: "sep" };
+
+export interface TitleMenu {
+  label: string;
+  entries: MenuEntry[];
+}
 
 /** The Tauri window handle, or null when running in a plain browser (vite dev). */
 function tauriWindow(): Window | null {
@@ -20,7 +33,7 @@ function tauriWindow(): Window | null {
   }
 }
 
-export default function TitleBar({ title }: { title: string }) {
+export default function TitleBar({ title, menus }: { title: string; menus?: TitleMenu[] }) {
   const [win] = useState<Window | null>(tauriWindow);
   const [maximized, setMaximized] = useState(false);
 
@@ -47,11 +60,8 @@ export default function TitleBar({ title }: { title: string }) {
       data-tauri-drag-region
       className="relative z-[100] flex h-8 shrink-0 select-none items-center border-b border-edge bg-sidebar"
     >
-      {/* Brand — no pointer events, so this whole area stays draggable. */}
-      <div data-tauri-drag-region className="pointer-events-none flex items-center gap-2 pl-3">
-        <BrandMark />
-        <span className="text-xs font-medium text-ink">Kalo</span>
-      </div>
+      {/* Menu bar — clickable, so it must not carry the drag-region flag. */}
+      {menus && menus.length > 0 && <MenuBar menus={menus} />}
 
       {/* Centered title; absolute so it ignores the side clusters' widths. */}
       <div
@@ -88,6 +98,71 @@ export default function TitleBar({ title }: { title: string }) {
 }
 
 /**
+ * Desktop-style menu bar: click a label to open it, then hovering the other
+ * labels switches menus (the usual behaviour once a bar is "armed"). Outside
+ * click and Escape close it.
+ */
+function MenuBar({ menus }: { menus: TitleMenu[] }) {
+  const [open, setOpen] = useState<number | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open === null) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(null);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="flex items-center pl-1.5">
+      {menus.map((m, i) => (
+        <div key={m.label} className="relative">
+          <button
+            onClick={() => setOpen((v) => (v === i ? null : i))}
+            onMouseEnter={() => open !== null && setOpen(i)}
+            className={`rounded px-2 py-1 text-xs ${open === i ? "bg-card text-ink" : "text-dim hover:text-ink"}`}
+          >
+            {m.label}
+          </button>
+          {open === i && (
+            <div className="absolute left-0 top-7 z-50 min-w-52 overflow-hidden rounded-md border border-edge bg-card py-1 shadow-2xl">
+              {m.entries.map((e, j) =>
+                e.kind === "sep" ? (
+                  <div key={`sep${j}`} className="my-1 border-t border-edge" />
+                ) : (
+                  <button
+                    key={e.label}
+                    disabled={e.disabled}
+                    onClick={() => {
+                      setOpen(null);
+                      e.onClick();
+                    }}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-ink hover:bg-base disabled:cursor-default disabled:text-dim disabled:hover:bg-transparent"
+                  >
+                    <span className="w-3 shrink-0 text-center text-accent">{e.checked ? "✓" : ""}</span>
+                    <span className="min-w-0 flex-1 truncate">{e.label}</span>
+                    {e.hint && <span className="mono shrink-0 text-[10px] text-dim">{e.hint}</span>}
+                  </button>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Windows-style caption button: wide flat rectangle, no radius, close turns
  * red on hover.
  */
@@ -116,21 +191,5 @@ function WindowButton({
         {children}
       </svg>
     </button>
-  );
-}
-
-/** Small rounded square with the staircase glyph — same family as the sidebar icons. */
-function BrandMark() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
-      <rect x="0.5" y="0.5" width="15" height="15" rx="4" fill="var(--accent)" />
-      <path
-        d="M4 11.5h2.5V9h2.5V6.5h2.5V4"
-        stroke="var(--accent-contrast)"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }

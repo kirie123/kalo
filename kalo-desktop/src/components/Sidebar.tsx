@@ -21,8 +21,10 @@ interface SidebarProps {
   onSelectSession: (sessionPath: string, cwd: string) => void;
   /** Delete one session's history file (confirmed in the menu already). */
   onDeleteSession: (session: SessionSummary) => void;
-  /** 「自动化」— opens settings on the 定时任务 tab. */
+  /** 「自动化」— takes over the main pane with the 定时任务 table. */
   onOpenAutomation: () => void;
+  /** True while the automation page is the current page. */
+  automationActive?: boolean;
   /** 「演化」— takes over the main pane with the era panel. */
   onOpenEra: () => void;
   /** True while the era panel is the current page, so the button reads as selected. */
@@ -91,6 +93,7 @@ export default memo(function Sidebar({
   onSelectSession,
   onDeleteSession,
   onOpenAutomation,
+  automationActive,
   onOpenEra,
   eraActive,
   onOpenNotes,
@@ -160,8 +163,9 @@ export default memo(function Sidebar({
       className="flex shrink-0 flex-col border-r border-edge bg-sidebar"
       style={width ? { width } : undefined}
     >
-      {/* Top actions — the brand lives in the title bar, so only the toggle. */}
-      <div className="flex items-center justify-end px-3 pt-3">
+      {/* Top row — wordmark, left-aligned with the nav items' icon column. */}
+      <div className="flex items-center justify-between pl-4 pr-3 pt-2">
+        <span className="select-none text-base font-semibold tracking-tight text-ink">Kalo</span>
         <button
           onClick={onToggleCollapsed}
           title="折叠侧边栏"
@@ -176,7 +180,7 @@ export default memo(function Sidebar({
       <div className="mt-2 flex flex-col gap-0.5 px-2">
         <SideButton onClick={onNewChat} icon={<PencilIcon />} label="新对话" />
         <SideButton onClick={notImplemented} icon={<SearchIcon />} label="搜索" />
-        <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" />
+        <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" active={automationActive} />
         <SideButton onClick={onOpenNotes} icon={<BookIcon />} label="知识笔记" active={notesActive} />
         <SideButton onClick={onOpenEra} icon={<EvolveIcon />} label="演化" active={eraActive} />
       </div>
@@ -212,7 +216,6 @@ export default memo(function Sidebar({
                 activeSessionId={activeSessionId}
                 isRunning={isRunning}
                 mustShow={mustShow}
-                onOpen={() => openProject(p.cwd)}
                 onNewSession={() => openProject(p.cwd)}
                 onRemove={() => {
                   removeProject(p.cwd);
@@ -297,7 +300,6 @@ function ProjectRow({
   activeSessionId,
   isRunning,
   mustShow,
-  onOpen,
   onNewSession,
   onRemove,
   onSelectSession,
@@ -309,7 +311,6 @@ function ProjectRow({
   isRunning: (path: string) => boolean;
   /** Rows the pagination must keep visible (active / running / optimistic). */
   mustShow: (row: SessionRow) => boolean;
-  onOpen: () => void;
   /** 「+」— starts a fresh chat in this project without collapsing its list. */
   onNewSession: () => void;
   onRemove: () => void;
@@ -328,10 +329,11 @@ function ProjectRow({
   return (
     <div className="mb-1">
       <div className="group flex w-full items-center gap-1 rounded-md px-1 py-1 hover:bg-card">
+        {/* Clicking the row toggles its session list; 「+」 is what starts a chat. */}
         <button
           onClick={toggleOpen}
-          title={open ? "收起会话" : "展开会话"}
-          className="shrink-0 rounded p-1 text-dim hover:text-ink"
+          title={`${project.cwd}（点击${open ? "收起" : "展开"}会话）`}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left text-sm"
         >
           <svg
             width="12"
@@ -340,16 +342,10 @@ function ProjectRow({
             fill="none"
             stroke="currentColor"
             strokeWidth="1.5"
-            className={`transition-transform ${open ? "rotate-90" : ""}`}
+            className={`shrink-0 text-dim transition-transform ${open ? "rotate-90" : ""}`}
           >
             <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-        </button>
-        <button
-          onClick={onOpen}
-          title={`${project.cwd}（点击在此开新对话）`}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left text-sm"
-        >
           <FolderIcon />
           <span className="truncate">{project.name}</span>
         </button>
