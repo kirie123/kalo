@@ -23,10 +23,6 @@ const DOMAINS: [&str; 4] = ["cards", "training-notes", "investing", "math"];
 
 const INDEX_STUB: &str = "# 知识库索引\n\n<!-- 由 knowledge skill 在存卡时维护：- [标题](路径) — tags（日期） -->\n\n## cards\n\n## training-notes\n\n## investing\n\n## math\n";
 
-/// Starter skill bundled with the app and installed into the user skills
-/// root on first run (`~/.kalo/skills/knowledge/SKILL.md`).
-const KNOWLEDGE_SKILL: &str = include_str!("../resources/knowledge-skill/SKILL.md");
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeCardMeta {
@@ -47,16 +43,10 @@ fn knowledge_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".kalo").join("knowledge"))
 }
 
-fn user_skills_root() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_default();
-    PathBuf::from(home).join(".kalo").join("skills")
-}
-
-/// First-run initialization: knowledge directory tree, INDEX.md stub, and
-/// the bundled `knowledge` starter skill (user scope). Existing files are
-/// never overwritten — user edits survive app upgrades.
+/// First-run initialization: knowledge directory tree and INDEX.md stub.
+/// Existing files are never overwritten — user edits survive app upgrades.
+/// The `knowledge` skill that drives this store ships as a bundled skill
+/// (`internal-skills/knowledge/`, installed by `internal_skills.rs`).
 pub fn ensure_knowledge_base() {
     if let Ok(root) = knowledge_root() {
         for domain in DOMAINS {
@@ -65,14 +55,6 @@ pub fn ensure_knowledge_base() {
         let index = root.join("INDEX.md");
         if !index.exists() {
             let _ = fs::write(&index, INDEX_STUB);
-        }
-    }
-    let skill_file = user_skills_root().join("knowledge").join("SKILL.md");
-    if !skill_file.exists() {
-        if let Some(dir) = skill_file.parent() {
-            if fs::create_dir_all(dir).is_ok() {
-                let _ = fs::write(&skill_file, KNOWLEDGE_SKILL);
-            }
         }
     }
 }

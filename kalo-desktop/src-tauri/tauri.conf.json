@@ -24,16 +24,17 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "resources": [
-      "binaries/pi-x86_64-pc-windows-msvc.exe",
-      "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe",
-      "binaries/photon_rs_bg.wasm",
-      "binaries/package.json",
-      "binaries/theme",
-      "binaries/assets",
-      "binaries/export-html",
-      "binaries/native",
-      "binaries/node_modules"
-    ]
+    "resources": {
+      "binaries/pi-x86_64-pc-windows-msvc.exe": "binaries/pi-x86_64-pc-windows-msvc.exe",
+      "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe": "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe",
+      "binaries/photon_rs_bg.wasm": "binaries/photon_rs_bg.wasm",
+      "binaries/package.json": "binaries/package.json",
+      "binaries/theme": "binaries/theme",
+      "binaries/assets": "binaries/assets",
+      "binaries/export-html": "binaries/export-html",
+      "binaries/native": "binaries/native",
+      "binaries/node_modules": "binaries/node_modules",
+      "../../internal-skills": "internal-skills"
+    }
   }
 }

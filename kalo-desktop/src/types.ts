@@ -281,6 +281,23 @@ export interface ProjectGroup {
   sessions: SessionSummary[];
 }
 
+/**
+ * A session an engine has already started but that `list_sessions` cannot see
+ * yet: pi only writes the `.jsonl` once the first assistant message lands, so
+ * a run that thinks for a minute would otherwise be invisible in the sidebar
+ * for that whole minute. The store publishes these and the sidebar list merges
+ * them in, deduped by path against the on-disk scan.
+ */
+export interface PendingSession {
+  /** Engine-allocated session file, or `pending:<runtime key>` before it is known. */
+  path: string;
+  /** Engine session id, so the active-session highlight matches. */
+  id: string;
+  title: string;
+  cwd: string;
+  modifiedMs: number;
+}
+
 /** One page of a session file, messages ordered old -> new. */
 export interface SessionPage {
   messages: AgentMessage[];
@@ -296,6 +313,17 @@ export interface SkillMeta {
   path: string;
   scope: "user" | "project";
   isDir: boolean;
+}
+
+/**
+ * Outcome of installing the bundled `internal-skills/` into ~/.kalo/skills.
+ * Entries are skill-relative paths (`math/SKILL.md`); `skipped` are the ones
+ * carrying local edits, which a non-forced install leaves alone.
+ */
+export interface SkillInstallReport {
+  installed: string[];
+  updated: string[];
+  skipped: string[];
 }
 
 /** One memory's index metadata (frontmatter + summary, no body). */

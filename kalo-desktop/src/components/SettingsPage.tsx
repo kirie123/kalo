@@ -6,6 +6,7 @@ import {
   listSkills,
   readAuthConfig,
   readModelsConfig,
+  reinstallInternalSkills,
   writeAuthConfig,
   writeModelsConfig,
 } from "../lib/pi-bridge";
@@ -389,6 +390,7 @@ function SkillsSettings() {
   const [newName, setNewName] = useState("");
   const [newScope, setNewScope] = useState<"user" | "project">("project");
   const [creating, setCreating] = useState(false);
+  const [reinstalling, setReinstalling] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -410,6 +412,25 @@ function SkillsSettings() {
       void reload();
     } catch (err) {
       chatStore.pushToast(`删除失败：${errText(err)}`, "error");
+    }
+  };
+
+  /** Restore the skills shipped in `internal-skills/`, discarding local edits to them. */
+  const reinstallBundled = async () => {
+    if (reinstalling) return;
+    if (!window.confirm("重装内置技能？内置技能（knowledge / paper-reading / web-research / experiment-runner / math）的本地修改会被覆盖，自建 Skill 不受影响。")) {
+      return;
+    }
+    setReinstalling(true);
+    try {
+      const r = await reinstallInternalSkills();
+      const changed = r.installed.length + r.updated.length;
+      chatStore.pushToast(changed > 0 ? `已重装 ${changed} 个文件` : "内置技能已是最新", "info");
+      void reload();
+    } catch (err) {
+      chatStore.pushToast(`重装内置技能失败：${errText(err)}`, "error");
+    } finally {
+      setReinstalling(false);
     }
   };
 
@@ -506,15 +527,25 @@ function SkillsSettings() {
           </button>
         </div>
       ) : (
-        <button
-          onClick={() => setShowCreate(true)}
-          className="mt-2 flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-sm text-dim hover:text-ink"
-        >
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-          </svg>
-          新建 Skill
-        </button>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-sm text-dim hover:text-ink"
+          >
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M8 3v10M3 8h10" strokeLinecap="round" />
+            </svg>
+            新建 Skill
+          </button>
+          <button
+            onClick={() => void reinstallBundled()}
+            disabled={reinstalling}
+            title="用安装包内 internal-skills/ 的版本覆盖内置技能"
+            className="rounded-md border border-edge px-3 py-1.5 text-sm text-dim hover:text-ink disabled:opacity-40"
+          >
+            {reinstalling ? "重装中…" : "重装内置技能"}
+          </button>
+        </div>
       )}
 
       {editing && (

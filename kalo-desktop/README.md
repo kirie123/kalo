@@ -8,6 +8,7 @@
 - `src-tauri/` — Rust 后端：每会话 spawn 一个 `pi --mode rpc` 子进程，stdout NDJSON 经 Tauri event 转发前端
 - `gateway/` — IM 网关 sidecar 源码（飞书连接 + 进度推送 + 定时任务调度）
 - `src-tauri/binaries/` — pi 引擎与网关的可执行文件、运行时资源（构建产物，不进 git）
+- `../internal-skills/` — 内置 skill 的 markdown 源（打包进安装包，启动时装到 `~/.kalo/skills/`）
 
 ## 开发
 
@@ -52,9 +53,28 @@ cd gateway && bun install && bun run build   # 产出 ../src-tauri/binaries/kalo
 ## 知识库（Knowledge）
 
 设置 →「知识库」浏览/搜索/编辑 `~/.kalo/knowledge/` 下的 markdown 经验卡
-（cards / training-notes / investing / math 四个域）。首次启动会安装 `knowledge`
-starter skill（`~/.kalo/skills/knowledge/SKILL.md`）：对话中产生可复用结论时 agent 会
-主动建议存卡，用户确认后写入并维护 INDEX.md；任何会话可让其 `search` 检索知识库。
+（cards / training-notes / investing / math 四个域）。目录树与 INDEX.md stub 由
+`knowledge::ensure_knowledge_base` 首启创建；驱动它的 `knowledge` skill 作为内置
+skill 分发（见下一节）：对话中产生可复用结论时 agent 会主动建议存卡，用户确认后
+写入并维护 INDEX.md；任何会话可让其 `search` 检索知识库。
+
+## 内置 Skills（internal-skills）
+
+内置技能的源码是仓库根 [`../internal-skills/`](../internal-skills/) 下的纯 markdown，
+经 `tauri.conf.json` 的 `bundle.resources`（`"../../internal-skills": "internal-skills"`）
+打进安装包，App 启动时由 [`src-tauri/src/internal_skills.rs`](src-tauri/src/internal_skills.rs)
+装到 `~/.kalo/skills/`：
+
+- 只安装 `internal-skills/<name>/**`，顶层文件（README）不装；子目录整体拷贝，
+  所以一个 skill 可以带脚本等附件。
+- `~/.kalo/skills/.internal-skills.json` 存上次写入内容的指纹。缺失→装；指纹一致
+  （用户没改）→更新为新版；指纹不一致→跳过，保留用户版本。老版本装的同名文件若
+  内容与打包版一致会被认领进清单。
+- 设置 → Skills 的「重装内置技能」调 `reinstall_internal_skills`，强制覆盖回打包版本。
+- debug 构建优先读仓库目录（`CARGO_MANIFEST_DIR/../../internal-skills`），所以
+  `tauri dev` 下改完 markdown 重启即生效；release 读 exe 同级的 `internal-skills/`。
+  `KALO_INTERNAL_SKILLS_DIR` 可指向任意目录覆盖两者。
+
 
 ## 重新构建引擎（pi.exe）
 
@@ -81,5 +101,5 @@ npm run tauri build   # 产出 src-tauri/target/release/bundle/nsis/ 安装包
 
 ## IPC 契约
 
-- commands: `create_session{cwd}` / `send_command{sessionId,command}` / `close_session{sessionId}` / `list_sessions{}` / `read_models_config` / `write_models_config` / `read_auth_config` / `write_auth_config` / `read_session_page{path,before?,limit?}` / `list_skills{cwd?}` / `read_skill` / `write_skill` / `create_skill` / `delete_skill` / `list_dir` / `read_file_text` / `read_attachment` / `gateway_pair_start` / `gateway_pair_cancel` / `gateway_status` / `gateway_unbind` / `schedule_upsert{task}` / `schedule_remove{id}` / `schedule_run{id}` / `schedule_list{}` / `list_knowledge_cards{}` / `read_knowledge_card{relPath}` / `write_knowledge_card{relPath?,domain,title,content}` / `delete_knowledge_card{relPath}`
+- commands: `create_session{cwd}` / `send_command{sessionId,command}` / `close_session{sessionId}` / `list_sessions{}` / `read_models_config` / `write_models_config` / `read_auth_config` / `write_auth_config` / `read_session_page{path,before?,limit?}` / `list_skills{cwd?}` / `read_skill` / `write_skill` / `create_skill` / `delete_skill` / `reinstall_internal_skills{}` / `list_dir` / `read_file_text` / `read_attachment` / `gateway_pair_start` / `gateway_pair_cancel` / `gateway_status` / `gateway_unbind` / `schedule_upsert{task}` / `schedule_remove{id}` / `schedule_run{id}` / `schedule_list{}` / `list_knowledge_cards{}` / `read_knowledge_card{relPath}` / `write_knowledge_card{relPath?,domain,title,content}` / `delete_knowledge_card{relPath}`
 - events: `pi-event:{sessionId}`（引擎 stdout JSON）、`pi-stderr:{sessionId}`、`pi-exit:{sessionId}`、`gateway-status`（网关状态/扫码二维码）、`schedule-status`（任务表快照）、`schedule-error`（任务校验错误）

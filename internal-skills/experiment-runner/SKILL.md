@@ -1,4 +1,4 @@
-export default `---
+---
 name: experiment-runner
 description: 按队列自动执行模型训练实验并记录结果。当用户要求跑实验、执行实验队列、监控训练进度时使用。
 ---
@@ -46,4 +46,3 @@ description: 按队列自动执行模型训练实验并记录结果。当用户�
 - 训练脚本模板可选 wandb 埋点；不用 wandb 时必须保证指标每 N step 打印一行到 run.log，否则无法监控。
 - 队列顺序由用户控制：不加塞、不调序、不擅自增删实验。
 - 用户随时可能打断询问进度：根据 queue.md 和 status 如实汇报。
-`;

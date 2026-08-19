@@ -7,6 +7,7 @@
 
 mod files;
 mod gateway;
+mod internal_skills;
 mod knowledge;
 mod mcp;
 mod memory;
@@ -19,6 +20,7 @@ mod skills;
 
 use files::{AttachmentData, DirDiff, DirEntry, FileText, TextSince};
 use gateway::GatewayManager;
+use internal_skills::InstallReport;
 use session::{PiProcess, SessionManager};
 use session_paging::SessionPage;
 use sessions_store::ProjectGroup;
@@ -166,6 +168,13 @@ fn create_skill(name: String, scope: String, cwd: Option<String>) -> Result<Stri
 #[tauri::command(async)]
 fn delete_skill(path: String) -> Result<(), String> {
     skills::delete_skill(&path)
+}
+
+/// Re-install the bundled `internal-skills/` into ~/.kalo/skills, forcing the
+/// bundled version over local edits.
+#[tauri::command(async)]
+fn reinstall_internal_skills() -> Result<InstallReport, String> {
+    internal_skills::install(true)
 }
 
 /// List personal memories from ~/.kalo/memory (frontmatter + summary).
@@ -487,8 +496,22 @@ fn main() {
         .setup(|app| {
             // Auto-start the IM gateway when Feishu credentials already exist.
             gateway::autostart(app.handle());
-            // First-run: knowledge base dirs + starter skill (non-destructive).
+            // First-run: knowledge base directory tree + INDEX.md stub.
             knowledge::ensure_knowledge_base();
+            // Bundled skills → ~/.kalo/skills (keeps locally edited ones).
+            match internal_skills::install(false) {
+                Ok(report) => {
+                    if !report.installed.is_empty() || !report.updated.is_empty() {
+                        eprintln!(
+                            "[internal-skills] installed {} / updated {} / skipped {}",
+                            report.installed.len(),
+                            report.updated.len(),
+                            report.skipped.len()
+                        );
+                    }
+                }
+                Err(err) => eprintln!("[internal-skills] {err}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -507,6 +530,7 @@ fn main() {
             write_skill,
             create_skill,
             delete_skill,
+            reinstall_internal_skills,
             list_memories,
             read_memory,
             write_memory,
