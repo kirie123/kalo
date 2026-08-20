@@ -7,6 +7,7 @@
  *   close_session  { sessionId } -> void
  *   list_sessions  {} -> ProjectGroup[]
  *   delete_session { path } -> void
+ *   rename_session { path, name } -> void
  *   read_session_page { path, before?, limit? } -> SessionPage
  *   list_skills / read_skill / write_skill / create_skill / delete_skill
  *   reinstall_internal_skills {} -> SkillInstallReport
@@ -101,6 +102,14 @@ export function listSessions(): Promise<ProjectGroup[]> {
 /** Delete one historical session file (its .jsonl under the sessions root). */
 export function deleteSession(path: string): Promise<void> {
   return invoke<void>("delete_session", { path });
+}
+
+/**
+ * Rename one historical session by appending a session_info entry (the
+ * engine's set_session_name equivalent, without needing a live engine).
+ */
+export function renameSessionFile(path: string, name: string): Promise<void> {
+  return invoke<void>("rename_session", { path, name });
 }
 
 /**

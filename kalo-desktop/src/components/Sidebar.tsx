@@ -21,6 +21,8 @@ interface SidebarProps {
   onSelectSession: (sessionPath: string, cwd: string) => void;
   /** Delete one session's history file (confirmed in the menu already). */
   onDeleteSession: (session: SessionSummary) => void;
+  /** Rename one session's title (live sessions via the engine, others on disk). */
+  onRenameSession: (session: SessionSummary, name: string) => void;
   /** 「自动化」— takes over the main pane with the 定时任务 table. */
   onOpenAutomation: () => void;
   /** True while the automation page is the current page. */
@@ -92,6 +94,7 @@ export default memo(function Sidebar({
   onNewChat,
   onSelectSession,
   onDeleteSession,
+  onRenameSession,
   onOpenAutomation,
   automationActive,
   onOpenEra,
@@ -106,15 +109,31 @@ export default memo(function Sidebar({
   const [chatsOpen, setChatsOpen] = useState(true);
   // How many rows the flat 聊天 list renders; grows by a page per「显示更多」.
   const [chatLimit, setChatLimit] = useState(SESSION_PAGE_SIZE);
+  // Which session row is showing its inline rename input (path + prefilled title).
+  const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null);
+
+  const startRename = (s: SessionRow) => setRenaming({ path: s.path, value: s.title || "" });
+  const cancelRename = () => setRenaming(null);
+  const commitRename = (s: SessionRow, raw: string) => {
+    const value = raw.trim();
+    setRenaming(null);
+    const current = (s.title || "").trim();
+    if (!value || value === current) return;
+    onRenameSession(s, value);
+  };
 
   const reloadProjects = () => setProjects(listProjects());
 
   const isRunning = (path: string) => runningByFile[normPath(path)] === true;
 
   // Rows that must stay visible even past the limit: the open session and any
-  // session with a run in flight (its spinner is the point).
+  // session with a run in flight (its spinner is the point), plus the row
+  // currently being renamed (its input would otherwise vanish mid-edit).
   const mustShow = (row: SessionRow) =>
-    (activeSessionId !== null && row.id === activeSessionId) || row.pending === true || isRunning(row.path);
+    (activeSessionId !== null && row.id === activeSessionId) ||
+    row.pending === true ||
+    isRunning(row.path) ||
+    renaming?.path === row.path;
 
   // Every row, on-disk and optimistic, newest first.
   const allRows = mergeSessionRows(sessionGroups, pendingSessions);
@@ -223,6 +242,10 @@ export default memo(function Sidebar({
                 }}
                 onSelectSession={onSelectSession}
                 onDeleteSession={onDeleteSession}
+                renaming={renaming}
+                onStartRename={startRename}
+                onCommitRename={commitRename}
+                onCancelRename={cancelRename}
               />
             ))}
           </>
@@ -247,25 +270,19 @@ export default memo(function Sidebar({
           <>
             {looseSessions.length === 0 && <div className="px-2 py-1 text-xs text-dim">暂无历史会话</div>}
             {looseVisible.map((s) => (
-              <div
+              <SessionRowItem
                 key={s.path}
-                className={`group flex w-full items-center gap-1 rounded-md px-2 py-1.5 hover:bg-card ${
-                  activeSessionId && s.id === activeSessionId ? "bg-card" : ""
-                }`}
-              >
-                {isRunning(s.path) && <RunningSpinner />}
-                <button
-                  onClick={() => onSelectSession(s.path, s.cwd)}
-                  title={s.title || "未命名会话"}
-                  className="flex min-w-0 flex-1 flex-col text-left"
-                >
-                  <span className="w-full truncate text-sm">{s.title || "未命名会话"}</span>
-                  <span className="w-full truncate text-xs text-dim">
-                    {cwdBasename(s.cwd)} · {formatRelativeTime(s.modifiedMs)}
-                  </span>
-                </button>
-                <SessionMenu session={s} onDeleteSession={onDeleteSession} disabled={s.pending} />
-              </div>
+                session={s}
+                variant="flat"
+                active={activeSessionId !== null && s.id === activeSessionId}
+                running={isRunning(s.path)}
+                renaming={renaming}
+                onStartRename={startRename}
+                onCommitRename={commitRename}
+                onCancelRename={cancelRename}
+                onSelect={() => onSelectSession(s.path, s.cwd)}
+                onDelete={onDeleteSession}
+              />
             ))}
             {looseSessions.length > chatLimit && (
               <ShowMoreButton
@@ -304,6 +321,10 @@ function ProjectRow({
   onRemove,
   onSelectSession,
   onDeleteSession,
+  renaming,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
 }: {
   project: ProjectEntry;
   sessions: SessionRow[];
@@ -316,6 +337,11 @@ function ProjectRow({
   onRemove: () => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
   onDeleteSession: (session: SessionSummary) => void;
+  /** Inline-rename editor state + handlers, threaded from the sidebar. */
+  renaming: { path: string; value: string } | null;
+  onStartRename: (session: SessionRow) => void;
+  onCommitRename: (session: SessionRow, value: string) => void;
+  onCancelRename: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // Per-project page counter, reset whenever the row is collapsed.
@@ -375,23 +401,19 @@ function ProjectRow({
       {open && sessions.length === 0 && <div className="py-1 pl-9 text-xs text-dim">暂无会话</div>}
       {open &&
         visible.map((s) => (
-          <div
+          <SessionRowItem
             key={s.path}
-            className={`group flex w-full items-center gap-1 rounded-md py-1.5 pl-9 pr-2 hover:bg-card ${
-              activeSessionId && s.id === activeSessionId ? "bg-card" : ""
-            }`}
-          >
-            {isRunning(s.path) && <RunningSpinner />}
-            <button
-              onClick={() => onSelectSession(s.path, project.cwd)}
-              title={s.title || "未命名会话"}
-              className="flex min-w-0 flex-1 items-baseline justify-between gap-2 text-left text-sm"
-            >
-              <span className="truncate">{s.title || "未命名会话"}</span>
-              <span className="shrink-0 text-xs text-dim">{formatRelativeTime(s.modifiedMs)}</span>
-            </button>
-            <SessionMenu session={s} onDeleteSession={onDeleteSession} disabled={s.pending} />
-          </div>
+            session={s}
+            variant="project"
+            active={activeSessionId !== null && s.id === activeSessionId}
+            running={isRunning(s.path)}
+            renaming={renaming}
+            onStartRename={onStartRename}
+            onCommitRename={onCommitRename}
+            onCancelRename={onCancelRename}
+            onSelect={() => onSelectSession(s.path, project.cwd)}
+            onDelete={onDeleteSession}
+          />
         ))}
       {open && sessions.length > limit && (
         <ShowMoreButton
@@ -427,16 +449,92 @@ function ShowMoreButton({
   );
 }
 
-/** Per-session "..." menu: currently 删除, more session actions go here. */
+/**
+ * One sidebar session row. `flat` (聊天 section) stacks the title over the
+ * project·time line; `project` (under a project) puts the title on the left
+ * and the relative time on the right. While `renaming` matches this row,
+ * the title is replaced by an inline input (Enter commits, Esc cancels,
+ * blur commits).
+ */
+function SessionRowItem({
+  session,
+  variant,
+  active,
+  running,
+  renaming,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+  onSelect,
+  onDelete,
+}: {
+  session: SessionRow;
+  variant: "flat" | "project";
+  active: boolean;
+  running: boolean;
+  /** Sidebar-level rename editor state; null when no row is being renamed. */
+  renaming: { path: string; value: string } | null;
+  onStartRename: (session: SessionRow) => void;
+  onCommitRename: (session: SessionRow, value: string) => void;
+  onCancelRename: () => void;
+  onSelect: () => void;
+  onDelete: (session: SessionSummary) => void;
+}) {
+  const editing = renaming?.path === session.path;
+  return (
+    <div
+      className={`group flex w-full items-center gap-1 rounded-md hover:bg-card ${
+        variant === "flat" ? "px-2 py-1.5" : "py-1.5 pl-9 pr-2"
+      } ${active ? "bg-card" : ""}`}
+    >
+      {running && <RunningSpinner />}
+      {editing ? (
+        <input
+          autoFocus
+          defaultValue={renaming?.value ?? ""}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onCommitRename(session, (e.target as HTMLInputElement).value);
+            else if (e.key === "Escape") onCancelRename();
+          }}
+          onBlur={(e) => onCommitRename(session, (e.target as HTMLInputElement).value)}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          className="min-w-0 flex-1 rounded border border-edge bg-base px-1.5 py-0.5 text-sm outline-none focus:border-[var(--accent)]"
+        />
+      ) : (
+        <button
+          onClick={onSelect}
+          title={session.title || "未命名会话"}
+          className={`flex min-w-0 flex-1 text-left text-sm ${
+            variant === "flat" ? "flex-col" : "items-baseline justify-between gap-2"
+          }`}
+        >
+          <span className={variant === "flat" ? "w-full truncate" : "truncate"}>
+            {session.title || "未命名会话"}
+          </span>
+          {variant === "flat" ? (
+            <span className="w-full truncate text-xs text-dim">
+              {cwdBasename(session.cwd)} · {formatRelativeTime(session.modifiedMs)}
+            </span>
+          ) : (
+            <span className="shrink-0 text-xs text-dim">{formatRelativeTime(session.modifiedMs)}</span>
+          )}
+        </button>
+      )}
+      <SessionMenu session={session} onDeleteSession={onDelete} onRename={() => onStartRename(session)} />
+    </div>
+  );
+}
+
+/** Per-session "..." menu: 重命名, then 删除 (hidden for optimistic rows). */
 function SessionMenu({
   session,
   onDeleteSession,
-  disabled,
+  onRename,
 }: {
-  session: SessionSummary;
+  session: SessionRow;
   onDeleteSession: (session: SessionSummary) => void;
-  /** Optimistic rows have no file to delete yet. */
-  disabled?: boolean;
+  onRename: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -460,36 +558,46 @@ function SessionMenu({
 
   return (
     <div ref={ref} className="relative shrink-0">
-      {!disabled && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen((v) => !v);
-          }}
-          title="更多操作"
-          className={`rounded p-1 text-dim hover:text-ink ${open ? "block" : "hidden group-hover:block"}`}
-        >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <circle cx="3" cy="8" r="1.4" />
-            <circle cx="8" cy="8" r="1.4" />
-            <circle cx="13" cy="8" r="1.4" />
-          </svg>
-        </button>
-      )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title="更多操作"
+        className={`rounded p-1 text-dim hover:text-ink ${open ? "block" : "hidden group-hover:block"}`}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="3" cy="8" r="1.4" />
+          <circle cx="8" cy="8" r="1.4" />
+          <circle cx="13" cy="8" r="1.4" />
+        </svg>
+      </button>
       {open && (
         <div className="absolute right-0 top-6 z-20 w-32 overflow-hidden rounded-md border border-edge bg-card py-1 shadow-lg">
           <button
             onClick={(e) => {
               e.stopPropagation();
               setOpen(false);
-              if (window.confirm(`确定删除会话「${session.title || "未命名会话"}」的历史记录？该操作不可恢复。`)) {
-                onDeleteSession(session);
-              }
+              onRename();
             }}
-            className="flex w-full px-3 py-1.5 text-left text-sm text-[var(--danger)] hover:bg-base"
+            className="flex w-full px-3 py-1.5 text-left text-sm hover:bg-base"
           >
-            删除会话
+            重命名
           </button>
+          {!session.pending && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+                if (window.confirm(`确定删除会话「${session.title || "未命名会话"}」的历史记录？该操作不可恢复。`)) {
+                  onDeleteSession(session);
+                }
+              }}
+              className="flex w-full px-3 py-1.5 text-left text-sm text-[var(--danger)] hover:bg-base"
+            >
+              删除会话
+            </button>
+          )}
         </div>
       )}
     </div>

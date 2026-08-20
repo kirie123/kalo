@@ -133,6 +133,21 @@ export default function App() {
     },
     [refreshProjects],
   );
+  const onRenameSession = useCallback(
+    (s: SessionSummary, name: string) => {
+      void (async () => {
+        try {
+          await chatStore.renameSession(s.path, name);
+          // Live sessions' set_session_name persists synchronously, and
+          // historical ones got the entry appended — one scan picks both up.
+          refreshProjects();
+        } catch {
+          // chatStore already surfaced the failure as a toast.
+        }
+      })();
+    },
+    [refreshProjects],
+  );
   const onOpenSettings = useCallback((tab?: SettingsTab) => {
     setSettingsTab(tab);
     setPage("settings");
@@ -285,6 +300,7 @@ export default function App() {
           onNewChat={onNewChat}
           onSelectSession={onSelectSession}
           onDeleteSession={onDeleteSession}
+          onRenameSession={onRenameSession}
           onOpenAutomation={onOpenAutomation}
           automationActive={page === "automation"}
           onOpenEra={onOpenEra}

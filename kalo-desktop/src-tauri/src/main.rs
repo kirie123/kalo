@@ -129,6 +129,13 @@ fn delete_session(path: String) -> Result<(), String> {
     sessions_store::delete_session(&path)
 }
 
+/// Rename one historical session by appending a session_info entry
+/// (equivalent to the engine's set_session_name, without a live engine).
+#[tauri::command(async)]
+fn rename_session(path: String, name: String) -> Result<(), String> {
+    sessions_store::rename_session(&path, &name)
+}
+
 /// Read one page of a session file's active branch for the history viewer.
 /// `before` is the exclusive end offset (default: branch end), `limit` the
 /// window size (default 30); results come oldest-to-newest.
@@ -600,6 +607,7 @@ fn main() {
             close_session,
             list_sessions,
             delete_session,
+            rename_session,
             read_session_page,
             read_models_config,
             write_models_config,

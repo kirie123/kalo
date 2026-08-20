@@ -56,6 +56,7 @@ import {
   readModelsConfig,
   readSessionPage,
   rejectSessionPending,
+  renameSessionFile,
   resolveResponse,
   saveAttachmentBytes,
   sendCommand,
@@ -639,6 +640,50 @@ export class ChatStore {
     if (!rt) return;
     if (rt === this.active) this.newChat();
     await this.killRt(rt);
+  }
+
+  /**
+   * Rename a session. Pooled runtimes (active, parked, or optimistic rows
+   * whose engine is in the pool) go through the engine's set_session_name
+   * RPC — that engine owns the file, so appending from the backend would
+   * race it. Historical sessions get the entry appended directly by the
+   * backend instead (rename_session).
+   */
+  async renameSession(path: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const rt = this.runtimeForFile(path);
+    if (rt?.view.sessionId) {
+      try {
+        const resp = await sendCommand(rt.view.sessionId, { type: "set_session_name", name: trimmed }, 15000);
+        if (!resp.success) throw new Error(resp.error);
+        // session_info_changed arrives on the engine event stream; update
+        // the optimistic row and parked view right away as well, so the
+        // sidebar never shows a stale title for a pending session.
+        if (rt.pending) rt.pending = { ...rt.pending, title: trimmed };
+        this.setRt(rt, { sessionName: trimmed });
+        this.commit();
+        return;
+      } catch {
+        // Engine unreachable (dead / mid-recovery) — fall back to writing
+        // the file directly; a later resume picks the name up.
+        this.pushToast("引擎未响应，标题将直接写入会话文件", "warning");
+      }
+    }
+    try {
+      await renameSessionFile(path, trimmed);
+    } catch (err) {
+      this.pushToast(`重命名失败：${errText(err)}`, "error");
+      throw err;
+    }
+  }
+
+  /** The pooled runtime bound to a session file (or optimistic row), if any. */
+  private runtimeForFile(path: string): SessionRuntime | undefined {
+    if (path.startsWith("pending:")) {
+      return this.runtimes.get(path.slice("pending:".length));
+    }
+    return this.runtimes.get(normPath(path));
   }
 
   private attachSession(rt: SessionRuntime, sessionId: string, cwd: string, opts?: { keepTimeline?: boolean }) {
