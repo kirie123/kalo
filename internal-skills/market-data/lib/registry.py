@@ -29,11 +29,15 @@ class Source:
     call: str | None = None  # akshare 函数名
     encoding: str = "utf-8"
     headers: dict[str, str] = field(default_factory=dict)
+    method: str = "GET"  # GET | POST（巨潮的公告查询只认 POST）
+    body: dict[str, str] = field(default_factory=dict)
     rate: str = "normal"  # strict | normal
     ttl: int = 300
     parse: dict[str, Any] = field(default_factory=dict)
     fields: dict[str, dict] = field(default_factory=dict)
     derive: list[dict] = field(default_factory=list)
+    # group=stock 的源带 {code} 之类的占位符，probe 时用这组参数实测
+    probe_with: dict[str, str] = field(default_factory=dict)
     verified_at: str | None = None
     verified_sample: str | None = None
 
@@ -51,10 +55,17 @@ def find_source(source_id: str, path: Path | None = None) -> Source | None:
     return next((s for s in load_sources(path) if s.id == source_id), None)
 
 
-def render_url(url: str, today: date | None = None) -> str:
-    """只支持 {today} 一个占位符（YYYYMMDD）。刻意不做通用模板引擎。"""
+def render_url(url: str, today: date | None = None, params: dict[str, str] | None = None) -> str:
+    """占位符替换：{today} 恒为 YYYYMMDD，其余由调用方按 params 提供。
+
+    刻意不做通用模板引擎——占位符只是字符串替换，没有表达式、没有默认值
+    逻辑。个股源用到的 {code} / {secid} / {secucode} 由 stock.py 算好传进来。
+    """
     d = today or date.today()
-    return url.replace("{today}", d.strftime("%Y%m%d"))
+    out = url.replace("{today}", d.strftime("%Y%m%d"))
+    for key, value in (params or {}).items():
+        out = out.replace("{" + key + "}", str(value))
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -16,12 +16,13 @@ Skills 里可看、可改、可删）。
 | `web-research/` | 在线调研 → 结构化综述（arXiv / DuckDuckGo + web_fetch） |
 | `experiment-runner/` | 按队列跑训练实验并记录结果 |
 | `math/` | 数学推导 / 证明 / 猜想验证的协作规范 |
-| `market-data/` | 金融取数层：源注册表 + Python CLI（宏观快照 / 历史分位数 / 财报下载） |
+| `market-data/` | 金融取数层：源注册表 + Python CLI（宏观快照 / 历史分位数 / 财报下载 / 个股体检） |
 | `macro-pulse/` | 宏观风向：读 market-data 的历史给出环境刻画 |
 | `filing-digest/` | 财报下载与分析：结构化指标先行，PDF 正文按需检索 |
+| `stock-checkup/` | 个股体检：风险排查 / 健康度 / 催化契机三大类逐项核对 |
 
-`market-data/` 是这三者里唯一带脚本的（`md.py` + `lib/` + `sources.yaml` + `tests/`），
-另两个是纯 markdown，通过绝对路径调它的 CLI。它的 Python 环境刻意放在数据目录
+`market-data/` 是这四者里唯一带脚本的（`md.py` + `lib/` + `sources.yaml` + `tests/`），
+另三个是纯 markdown，通过绝对路径调它的 CLI。它的 Python 环境刻意放在数据目录
 `~/.kalo/market/venv` 而不是 skill 目录里——akshare + pandas 几百 MB，不该跟着
 skill 被复制来复制去，也不该进仓库。
 

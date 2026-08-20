@@ -8,6 +8,7 @@ import {
   scheduleRun,
   scheduleUpsert,
 } from "../lib/pi-bridge";
+import { describeCron } from "../lib/schedule-spec";
 import type { ScheduleTaskInfo, ScheduleTaskResult } from "../types";
 import { Section } from "./SettingsPage";
 import TaskEditModal from "./TaskEditModal";
@@ -110,8 +111,9 @@ export default function TasksSettings() {
                     </span>
                   )}
                 </div>
-                <div className="mono truncate text-xs text-dim">
-                  {t.schedule} · 下次 {t.enabled ? fmtTime(t.nextRunAt) : "已停用"} · 上次 {fmtTime(t.lastRun)}
+                <div className="truncate text-xs text-dim" title={t.schedule}>
+                  {describeCron(t.schedule)} · 下次 {t.enabled ? fmtTime(t.nextRunAt) : "已停用"} · 上次{" "}
+                  {fmtTime(t.lastRun)}
                 </div>
                 <div className="mono truncate text-[10px] text-dim" title={t.cwd}>
                   {t.cwd}

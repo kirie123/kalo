@@ -121,3 +121,99 @@ def test_describe_abs_change_for_yields():
 
 def test_describe_empty():
     assert m.describe([], name="空")["samples"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 形态类：个股体检清单用的四个（合成序列，与手算对照）
+# ---------------------------------------------------------------------------
+
+
+def test_ma_stack_bull_aligned():
+    # 严格单调上涨 → MA5>MA10>MA20>MA60 必然成立，且都在向上
+    rising = list(range(1, 101))
+    s = m.ma_stack(rising)
+    assert s["bull_aligned"] is True
+    assert s["all_rising"] is True
+    assert s["price_above_all"] is True
+    assert s["ma"]["ma5"] == 98.0  # (96+..+100)/5
+
+
+def test_ma_stack_bear():
+    falling = list(range(100, 0, -1))
+    s = m.ma_stack(falling)
+    assert s["bull_aligned"] is False
+    assert s["all_rising"] is False
+    assert s["price_above_all"] is False
+
+
+def test_ma_stack_short_series():
+    # 不够 60 根时 ma60 为 None，多头排列判不出来 → 不能谎报 True
+    s = m.ma_stack(list(range(1, 31)))
+    assert s["ma"]["ma60"] is None
+    assert s["bull_aligned"] is None
+
+
+def test_drawdown_rebound_down_then_up():
+    # 先从 100 跌到 50，再反弹到 75：跌一半、弹一半、修复一半
+    closes = list(range(100, 49, -1)) + list(range(51, 76))
+    d = m.drawdown_rebound(closes, closes, closes, window=100)
+    assert d["shape"] == "down_then_up"
+    assert d["drop_pct"] == -50.0
+    assert d["rebound_pct"] == 50.0
+    assert d["recovery_pct"] == 50.0
+
+
+def test_drawdown_rebound_ignores_trough_before_peak():
+    # 50 → 100 → 75：低点在高点之前，那 50% 的跌幅根本没发生过。
+    # 回撤必须只算高点右侧的 100 → 75。
+    closes = list(range(50, 101)) + list(range(99, 74, -1))
+    d = m.drawdown_rebound(closes, closes, closes, window=100)
+    assert d["shape"] == "down"
+    assert d["drop_pct"] == -25.0
+    assert d["rebound_pct"] == 0.0
+
+
+def test_drawdown_rebound_still_climbing():
+    # 高点就是最后一根 → 没有回撤可言
+    closes = [float(x) for x in range(1, 51)]
+    d = m.drawdown_rebound(closes, closes, closes, window=100)
+    assert d["shape"] == "up"
+    assert d["drop_pct"] == 0.0
+
+
+def test_candle_shapes_counts():
+    # 前 19 根是普通实体阳线，最后一根造一根长上影
+    o = [10.0] * 19 + [10.0]
+    c = [10.5] * 19 + [10.1]
+    h = [10.6] * 19 + [12.0]
+    lo = [9.9] * 19 + [9.95]
+    s = m.candle_shapes(o, h, lo, c, window=20)
+    assert s["counts"]["upper_shadow"] == 1
+    assert s["bars_ago"]["upper_shadow"] == 0  # 就是最后一根
+
+
+def test_candle_shapes_doji():
+    # 开=收、上下影都有 → 十字星
+    o = [10.0] * 5
+    c = [10.0] * 5
+    h = [10.5] * 5
+    lo = [9.5] * 5
+    s = m.candle_shapes(o, h, lo, c, window=5)
+    assert s["counts"]["doji"] == 5
+
+
+def test_stagnation_flat():
+    # 10 天在 100 附近横住：区间涨幅≈0，且没有新高
+    closes = [100.0, 100.5, 99.8, 100.2, 100.1, 99.9, 100.3, 100.0, 100.1, 99.95]
+    highs = [c + 0.3 for c in closes]
+    s = m.stagnation(closes, highs, window=10)
+    assert abs(s["range_pct"]) < 1
+    assert s["new_high_count"] <= 1
+
+
+def test_stagnation_trending():
+    closes = [float(x) for x in range(100, 120)]
+    highs = [c + 0.5 for c in closes]
+    s = m.stagnation(closes, highs, window=10)
+    assert s["range_pct"] > 5
+    assert s["new_high_count"] == 9  # 除首根外每天都创新高，不是滞涨

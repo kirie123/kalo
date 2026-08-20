@@ -252,3 +252,190 @@
     margin_balance: { path: "融资余额" }
   verified_at: "2026-08-20"
   verified_sample: '融资余额 = 801602446146（8016 亿，沪市）'
+
+# ---------------------------------------------------------------------------
+# 五、个股：group=stock
+#
+# 与 macro 组的形状不同——这些源返回的是**表**（K 线、解禁记录、公告清单），
+# 不是标量快照，所以由 fetch_rows() 整段取出交给 stock.py 计算，
+# 不走 fields 抽取器。这里登记的是 URL、请求头、限流等级与实测证据。
+#
+# URL 占位符（由 stock.py 按代码算好传入）：
+#   {code}      6 位代码            600519
+#   {secid}     东财 secid          1.600519（1=沪 0=深）
+#   {secucode}  东财 SECUCODE       600519.SH
+#   {tencent}   腾讯/新浪前缀代码    sh600519
+#   {orgid}     巨潮 orgId          gssh0600519
+# ---------------------------------------------------------------------------
+
+- id: stock_kline
+  name: 个股日线(前复权)
+  group: stock
+  kind: http
+  url: "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={tencent},day,,,{days},qfq"
+  rate: normal
+  ttl: 3600
+  parse:
+    type: json
+    rows: "data.{tencent}.qfqday"
+  probe_with: { code: "600519", days: "10" }
+  # 走腾讯而不是东财：push2his 实测反复整体限流（连代理也拒），腾讯与新浪
+  # 在同一时刻正常。选 qfq(前复权) 是必须的——分红除权会在不复权序列上
+  # 造出假跳空，MA/MACD 全废。新浪那条（CN_MarketData.getKLineData）
+  # 只有不复权，只能当备份。
+  # 每行：[日期, 开, 收, 高, 低, 成交量(手)]
+  verified_at: "2026-08-20"
+  verified_sample: "['2026-08-20','1299.80','1291.50','1306.88','1291.00','25332']"
+
+- id: stock_quote
+  name: 个股实时快照
+  group: stock
+  kind: http
+  url: "https://qt.gtimg.cn/q={tencent}"
+  encoding: gbk
+  rate: normal
+  ttl: 300
+  parse:
+    type: text
+  probe_with: { code: "600519" }
+  # ~ 分隔的 88 段。实测过的段位：1 名称 2 代码 3 现价 4 昨收 5 今开
+  # 6 成交量(手) 31 涨跌额 32 涨跌幅% 37 成交额(万) 38 换手率%
+  # 39 市盈率 44 流通市值(亿) 45 总市值(亿) 46 市净率
+  fields:
+    name: { index: 1, sep: "~" }
+    price: { index: 3, sep: "~", digits: 2 }
+    prev_close: { index: 4, sep: "~", digits: 2 }
+    chg_pct: { index: 32, sep: "~", digits: 2 }
+    turnover_rate: { index: 38, sep: "~", digits: 2 }
+    pe: { index: 39, sep: "~", digits: 2 }
+    float_cap_yi: { index: 44, sep: "~", digits: 2 }
+    total_cap_yi: { index: 45, sep: "~", digits: 2 }
+    pb: { index: 46, sep: "~", digits: 2 }
+  verified_at: "2026-08-20"
+  verified_sample: 'v_sh600519="1~贵州茅台~600519~1291.50~1307.88~1299.80~25332~...";'
+
+- id: stock_boards
+  name: 关联概念板块
+  group: stock
+  kind: http
+  url: "https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_CORETHEME_BOARDTYPE&columns=ALL&filter=(SECUCODE%3D%22{secucode}%22)&pageNumber=1&pageSize=40&source=HSF10&client=PC"
+  rate: normal
+  ttl: 86400
+  parse:
+    type: json
+    rows: "result.data"
+  probe_with: { code: "600519" }
+  # F10「核心题材」。BOARD_NAME 是板块名，BOARD_RANK 是该股在板块内的排名。
+  # 注意 source=HSF10&client=PC 是必需的，用 WEB/WEB 会 9201。
+  verified_at: "2026-08-20"
+  verified_sample: '{"BOARD_NAME":"茅指数","NEW_BOARD_CODE":"BK0999","BOARD_RANK":11}'
+
+- id: stock_lift
+  name: 限售解禁
+  group: stock
+  kind: http
+  url: "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LIFT_STAGE&columns=ALL&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=20&sortColumns=FREE_DATE&sortTypes=-1&source=WEB&client=WEB"
+  rate: normal
+  ttl: 86400
+  parse:
+    type: json
+    rows: "result.data"
+  probe_with: { code: "688981" }
+  # probe 用中芯国际而不是茅台：茅台早已全流通、没有解禁记录，
+  # 接口会返回 code 9201「返回数据为空」，看起来像挂了。
+  # FREE_DATE 解禁日 / CURRENT_FREE_SHARES 本期解禁(万股) /
+  # LIFT_MARKET_CAP 解禁市值(万元) / FREE_RATIO 占流通比
+  verified_at: "2026-08-20"
+  verified_sample: '{"SECURITY_CODE":"688981","FREE_DATE":"2027-06-23 00:00:00","CURRENT_FREE_SHARES":54718.2073,"FREE_RATIO":0.2736}'
+
+- id: stock_block_trade
+  name: 大宗交易
+  group: stock
+  kind: http
+  url: "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_DATA_BLOCKTRADE&columns=ALL&filter=(SECUCODE%3D%22{secucode}%22)&pageNumber=1&pageSize=30&sortColumns=TRADE_DATE&sortTypes=-1&source=WEB&client=WEB"
+  rate: normal
+  ttl: 86400
+  parse:
+    type: json
+    rows: "result.data"
+  probe_with: { code: "600519" }
+  # PREMIUM_RATIO 折溢价率（负数 = 折价，清单里问的正是这个）
+  verified_at: "2026-08-20"
+  verified_sample: '{"TRADE_DATE":"2026-08-03 00:00:00","DEAL_PRICE":1358.98,"PREMIUM_RATIO":0,"DEAL_AMT":20112900}'
+
+- id: stock_pledge
+  name: 股权质押比例
+  group: stock
+  kind: http
+  url: "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_CSDC_LIST&columns=ALL&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=2&sortColumns=TRADE_DATE&sortTypes=-1&source=WEB&client=WEB"
+  rate: normal
+  ttl: 86400
+  parse:
+    type: json
+    rows: "result.data"
+  probe_with: { code: "600519" }
+  # 中登每周更新。PLEDGE_RATIO 质押比例%，PLEDGE_MARKET_CAP 质押市值(万元)。
+  # akshare 的 stock_gpzy_pledge_ratio_em 实测已坏（TypeError），直接打接口。
+  verified_at: "2026-08-20"
+  verified_sample: '{"SECURITY_CODE":"600519","TRADE_DATE":"2026-08-14 00:00:00","PLEDGE_RATIO":0.04,"PLEDGE_MARKET_CAP":68253.61}'
+
+- id: stock_holder_change
+  name: 股东增减持
+  group: stock
+  kind: http
+  url: "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_SHARE_HOLDER_INCREASE&columns=ALL&filter=(SECURITY_CODE%3D%22{code}%22)&pageNumber=1&pageSize=20&sortColumns=NOTICE_DATE&sortTypes=-1&source=WEB&client=WEB"
+  rate: normal
+  ttl: 86400
+  parse:
+    type: json
+    rows: "result.data"
+  probe_with: { code: "300750" }
+  # DIRECTION 增持/减持，CHANGE_NUM 变动股数(万股)，CHANGE_RATE 占总股本%。
+  # 排序列只能用 NOTICE_DATE——CHANGE_END_DATE 会明确报「排序列不存在」。
+  verified_at: "2026-08-20"
+  verified_sample: '{"SECURITY_CODE":"300750","DIRECTION":"减持","NOTICE_DATE":"2020-06-12 00:00:00","CHANGE_NUM":1062.5003}'
+
+- id: stock_announcements
+  name: 巨潮公告清单
+  group: stock
+  kind: http
+  url: "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+  method: POST
+  body:
+    stock: "{code},{orgid}"
+    tabName: "fulltext"
+    pageSize: "30"
+    pageNum: "1"
+    column: "{cninfo_column}"
+    category: ""
+    isHLtitle: "true"
+  headers:
+    Referer: "https://www.cninfo.com.cn/new/commonUrl"
+  rate: normal
+  ttl: 21600
+  parse:
+    type: json
+    rows: "announcements"
+  probe_with: { code: "600519" }
+  # 只取标题与日期。立案/问询函/减持/业绩预告全部以公告形态出现，
+  # 标题本身就是事实，是否构成风险由 SKILL.md 里的模型判断。
+  verified_at: "2026-08-20"
+  verified_sample: '{"announcementTitle":"贵州茅台2026年半年度报告","announcementTime":1755187200000}'
+
+- id: stock_fund_flow
+  name: 个股资金流(日)
+  group: stock
+  kind: http
+  url: "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?secid={secid}&lmt=0&klt=101&fields1=f1,f2,f3,f7&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65"
+  rate: strict
+  ttl: 21600
+  parse:
+    type: json
+    rows: "data.klines"
+  probe_with: { code: "600519" }
+  # ⚠ push2his 会整体限流（空 body，换 UA 与走代理都无效），实测中断续出现
+  # 数小时。**限流时这条源就是取不到**，框架的处理是记进 errors[] 让那一格
+  # 空着——资金流没有可靠的替代源，宁可缺一格也不换个口径凑数。
+  # 每行 15 段：日期,主力净,小单,中单,大单,超大单,主力净占比,...
+  verified_at: "2026-08-20"
+  verified_sample: "2026-08-20,-325398928.0,-179996.0,325578912.0,-205100064.0,-120298864.0,-9.92,..."

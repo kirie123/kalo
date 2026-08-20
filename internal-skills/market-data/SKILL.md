@@ -36,8 +36,12 @@ uv pip install --python ~/.kalo/market/venv/Scripts/python.exe -r $SKILL/require
 | `md.py macro now` | 全部宏观源当前快照 | JSON |
 | `md.py macro append` | 快照追加进 `daily.jsonl` | **正常静默**（cron 用） |
 | `md.py macro analyze [--window 250]` | 读历史算分位数与变化 | 紧凑 JSON（约 1.3 KB） |
+| `md.py filing list <code> [--type 年报]` | 巨潮定期报告清单 | JSON |
+| `md.py filing get <code> [--year --type]` | 下载 PDF 并抽文本 | JSON（落盘路径） |
+| `md.py filing metrics <code> [--periods 12]` | 东财 F10 结构化财务指标 | JSON |
+| `md.py stock checkup <code> [--days 20]` | 个股体检三大类事实 | 紧凑 JSON（约 7 KB） |
 
-`--fresh` 绕过缓存强制重取（`probe` / `get` / `macro now`）。
+`--fresh` 绕过缓存强制重取（`probe` / `get` / `macro now` / `stock checkup`）。
 
 **`macro append` 的静默是契约**：它挂在 scheduler 的 `watch` 任务上，stdout 非空
 即被判定为异常并推飞书。所以只有「多数源失败」才输出；单源失败是常态，已经记进
@@ -75,6 +79,28 @@ uv pip install --python ~/.kalo/market/venv/Scripts/python.exe -r $SKILL/require
 `verified_at` / `verified_sample` 是**必填**：选源的判据是「能不能在这台机器上裸取到」，
 不是「文档上写着有没有」。加完跑 `md.py probe <id>` 确认字段真的抽出来了。
 
+### 个股源（`group: stock`）与宏观源的两点不同
+
+1. **返回的是表不是标量**。K 线、解禁记录、公告清单都是多行，`fields` 那套「一个字段
+   抽一个值」套不上，由 `fetch_rows()` 整段取出交给 `lib/stock.py` 计算。这类源
+   `fields` 留空即可。
+2. **URL 带占位符**，由 `stock.code_params()` 按代码算好传入：
+
+   | 占位符 | 含义 | 示例 |
+   | --- | --- | --- |
+   | `{code}` | 6 位代码 | `600519` |
+   | `{secid}` | 东财 secid（1=沪 0=深） | `1.600519` |
+   | `{secucode}` | 东财 SECUCODE | `600519.SH` |
+   | `{tencent}` | 腾讯/新浪前缀代码 | `sh600519` |
+   | `{orgid}` | 巨潮 orgId | `gssh0600519` |
+   | `{cninfo_column}` | 巨潮 column | `sse` / `szse` |
+
+   因为带占位符，这类源必须写 `probe_with: { code: "..." }`，否则 `md.py probe`
+   打出去的是一条含大括号的废 URL。**样本代码要挑真有数据的那只**——解禁源用茅台会
+   返回「数据为空」，看起来像源坏了，所以那条填的是 688981。
+
+   缓存也按代码分开（`<id>-<code>.json`），否则查完茅台再查平安会读到茅台的 K 线。
+
 ## 已知的坑（实测得来）
 
 - `push2*.eastmoney.com` 连续请求几十次后**整体限流**，换 UA 无效，可持续数小时；
@@ -86,6 +112,13 @@ uv pip install --python ~/.kalo/market/venv/Scripts/python.exe -r $SKILL/require
 - 新浪行情要 `Referer: finance.sina.com.cn` + GBK 解码，否则空返回或乱码。
 - 美元指数只有无前缀的 `DINIW` 这一个代码可用（`hf_DX` / `hf_DXY` / 东财 `100.UDI` 全空）。
 - 东财 F10 财务接口必须 `columns=ALL`，逐个列名会返回「字段不存在」。
+- 东财报表名猜不得，但猜错有明确反馈（`9501 报表配置不存在`）：质押是 `RPT_CSDC_LIST`、
+  解禁是 `RPT_LIFT_STAGE`、增减持是 `RPT_SHARE_HOLDER_INCREASE`、F10 概念板块是
+  `RPT_F10_CORETHEME_BOARDTYPE`（且必须 `source=HSF10&client=PC`）。
+  `9201 返回数据为空` 是另一回事——报表活着，只是这只票没这项记录。
+- 日线走腾讯 `web.ifzq.gtimg.cn` 的 **qfq(前复权)**：push2his 会限流，而不复权序列
+  在分红除权处会造出假跳空，MA/MACD 全废。
+- `akshare.stock_gpzy_pledge_ratio_em` 实测已坏（`TypeError`），质押直接打接口。
 
 ## 边界
 

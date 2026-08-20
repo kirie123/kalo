@@ -1,6 +1,16 @@
 import { useState } from "react";
 import { chatStore } from "../lib/chat-store";
 import { scheduleUpsert } from "../lib/pi-bridge";
+import {
+  buildCron,
+  defaultSpec,
+  describeCron,
+  parseSpec,
+  validateSpec,
+  WEEKDAY_LABELS,
+  type ScheduleFreq,
+  type ScheduleSpec,
+} from "../lib/schedule-spec";
 import type { ScheduleTask, ScheduleTaskInfo, ScheduleTaskKind } from "../types";
 
 interface Props {
@@ -23,12 +33,41 @@ const KIND_HINT: Record<ScheduleTaskKind, string> = {
   agent: "到点唤起一个无头 LLM 会话执行下面的 Prompt。",
 };
 
+const FREQ_LABEL: Record<ScheduleFreq, string> = {
+  daily: "每天",
+  weekdays: "工作日",
+  weekly: "每周",
+  monthly: "每月",
+  hourly: "每小时",
+  minutes: "每隔几分钟",
+  custom: "自定义",
+};
+
+const FREQ_ORDER: ScheduleFreq[] = ["daily", "weekdays", "weekly", "monthly", "hourly", "minutes", "custom"];
+
+/** 每隔 N 分钟的可选间隔。给固定档位而不是任意数字输入：
+ *  这类任务的间隔本来就只有这几种合理取值，选比填快。 */
+const MINUTE_STEPS = [5, 10, 15, 20, 30];
+
+/** 这几种频率要挑一个具体时刻；hourly / minutes / custom 不需要。 */
+const TIMED_FREQS: ScheduleFreq[] = ["daily", "weekdays", "weekly", "monthly"];
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+function clamp(raw: string, lo: number, hi: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return lo;
+  return Math.min(hi, Math.max(lo, Math.trunc(n)));
+}
+
 /** Create/edit form for one scheduled task, saved via schedule_upsert. */
 export default function TaskEditModal({ task, onClose }: Props) {
   const [name, setName] = useState(task?.name ?? "");
   const [id, setId] = useState(task?.id ?? "");
   const [kind, setKind] = useState<ScheduleTaskKind>(task?.kind ?? "watch");
-  const [schedule, setSchedule] = useState(task?.schedule ?? "");
+  const [schedule, setSchedule] = useState<ScheduleSpec>(() =>
+    task?.schedule ? parseSpec(task.schedule) : defaultSpec(),
+  );
   const [cwd, setCwd] = useState(task?.cwd ?? "");
   const [script, setScript] = useState(task?.script ?? "");
   const [cooldownMin, setCooldownMin] = useState(task?.cooldownMin != null ? String(task.cooldownMin) : "");
@@ -48,11 +87,12 @@ export default function TaskEditModal({ task, onClose }: Props) {
       chatStore.pushToast("名称不能为空", "warning");
       return;
     }
-    const trimmedSchedule = schedule.trim();
-    if (trimmedSchedule.split(/\s+/).length !== 5) {
-      chatStore.pushToast("cron 表达式需为 5 个字段（分 时 日 月 周）", "warning");
+    const scheduleErr = validateSpec(schedule);
+    if (scheduleErr) {
+      chatStore.pushToast(scheduleErr, "warning");
       return;
     }
+    const trimmedSchedule = buildCron(schedule);
     if (!cwd.trim()) {
       chatStore.pushToast("工作目录不能为空", "warning");
       return;
@@ -102,6 +142,7 @@ export default function TaskEditModal({ task, onClose }: Props) {
 
   const inputCls =
     "w-full rounded-md border border-edge bg-base px-3 py-1.5 text-sm outline-none focus:border-dim";
+  const selectCls = "rounded-md border border-edge bg-base px-2 py-1 text-sm outline-none focus:border-dim";
   const labelCls = "mb-1 mt-3 text-xs text-dim";
 
   return (
@@ -186,14 +227,122 @@ export default function TaskEditModal({ task, onClose }: Props) {
           </>
         )}
 
-        <div className={labelCls}>cron 表达式（本地时区）</div>
-        <input
-          value={schedule}
-          onChange={(e) => setSchedule(e.target.value)}
-          placeholder="*/10 * * * *"
-          className={`mono ${inputCls}`}
-        />
-        <p className="mt-1 text-[10px] text-dim">5 个字段：分 时 日 月 周，如「*/10 * * * *」表示每 10 分钟。</p>
+        <div className={labelCls}>运行时间（本地时区）</div>
+        <div className="flex flex-wrap gap-1.5">
+          {FREQ_ORDER.map((f) => (
+            <button
+              key={f}
+              onClick={() => setSchedule({ ...schedule, freq: f })}
+              className={`rounded-md border px-2.5 py-1 text-xs ${
+                schedule.freq === f ? "border-dim bg-base text-ink" : "border-edge text-dim hover:text-ink"
+              }`}
+            >
+              {FREQ_LABEL[f]}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {schedule.freq === "minutes" && (
+            <select
+              value={schedule.everyMin}
+              onChange={(e) => setSchedule({ ...schedule, everyMin: Number(e.target.value) })}
+              className={selectCls}
+            >
+              {MINUTE_STEPS.map((n) => (
+                <option key={n} value={n}>
+                  每 {n} 分钟
+                </option>
+              ))}
+            </select>
+          )}
+
+          {schedule.freq === "hourly" && (
+            <>
+              <span className="text-xs text-dim">每小时的第</span>
+              <input
+                type="number"
+                min={0}
+                max={59}
+                value={schedule.minute}
+                onChange={(e) => setSchedule({ ...schedule, minute: clamp(e.target.value, 0, 59) })}
+                className={`mono w-20 ${selectCls}`}
+              />
+              <span className="text-xs text-dim">分</span>
+            </>
+          )}
+
+          {schedule.freq === "monthly" && (
+            <>
+              <span className="text-xs text-dim">每月</span>
+              <input
+                type="number"
+                min={1}
+                max={31}
+                value={schedule.dom}
+                onChange={(e) => setSchedule({ ...schedule, dom: clamp(e.target.value, 1, 31) })}
+                className={`mono w-20 ${selectCls}`}
+              />
+              <span className="text-xs text-dim">日</span>
+            </>
+          )}
+
+          {schedule.freq === "weekly" && (
+            <div className="flex gap-1">
+              {WEEKDAY_LABELS.map((label, d) => {
+                const on = schedule.weekdays.includes(d);
+                return (
+                  <button
+                    key={d}
+                    title={`周${label}`}
+                    onClick={() =>
+                      setSchedule({
+                        ...schedule,
+                        weekdays: on
+                          ? schedule.weekdays.filter((x) => x !== d)
+                          : [...schedule.weekdays, d].sort((a, b) => a - b),
+                      })
+                    }
+                    className={`h-7 w-7 rounded-md border text-xs ${
+                      on ? "border-dim bg-base text-ink" : "border-edge text-dim hover:text-ink"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {TIMED_FREQS.includes(schedule.freq) && (
+            <input
+              type="time"
+              value={`${pad(schedule.hour)}:${pad(schedule.minute)}`}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(":").map(Number);
+                if (Number.isFinite(h) && Number.isFinite(m)) setSchedule({ ...schedule, hour: h, minute: m });
+              }}
+              className={`mono ${selectCls}`}
+            />
+          )}
+
+          {schedule.freq === "custom" && (
+            <input
+              value={schedule.cron}
+              onChange={(e) => setSchedule({ ...schedule, cron: e.target.value })}
+              placeholder="*/10 * * * *"
+              className={`mono ${inputCls}`}
+            />
+          )}
+        </div>
+
+        {/* 预览行：把最终存下去的 cron 也露出来。上面的控件已经够用，
+            但这一行让"我到底设成了什么"无需重新打开确认。 */}
+        <p className="mt-1.5 text-[10px] text-dim">
+          {schedule.freq === "custom"
+            ? "5 个字段：分 时 日 月 周，如「*/10 * * * *」表示每 10 分钟。"
+            : `即 ${describeCron(buildCron(schedule))} 运行 · cron ${buildCron(schedule)}`}
+        </p>
 
         <div className={labelCls}>工作目录（cwd）</div>
         <input

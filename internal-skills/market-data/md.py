@@ -8,6 +8,7 @@
     md.py filing list <code>     巨潮：定期报告清单
     md.py filing get <code>      下载 PDF + 抽文本
     md.py filing metrics <code>  东财 F10 结构化财务指标
+    md.py stock checkup <code>   个股体检事实 JSON（三大类）
 
 设计约束见 SKILL.md：这里只产出事实，判断留给 skill 里的模型。
 """
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lib import fetch as fetch_mod  # noqa: E402
 from lib import filing  # noqa: E402
 from lib import macro as macro_mod  # noqa: E402
+from lib import stock as stock_mod  # noqa: E402
 from lib import store  # noqa: E402
 from lib.registry import load_sources  # noqa: E402
 
@@ -45,19 +47,38 @@ def cmd_probe(args) -> int:
 
     failed = 0
     for src in sources:
-        res = fetch_mod.fetch(src, fresh=args.fresh)
-        got = sum(1 for v in res.values.values() if v is not None)
-        total = len(src.fields) + len(src.derive)
-        mark = "ok " if res.ok else "ERR"
-        cache_tag = " (cache)" if res.from_cache else ""
-        print(f"[{mark}] {src.id:<16} {src.name:<14} {got}/{total} 字段  {res.ms}ms{cache_tag}")
-        if res.ok:
-            for k, v in res.values.items():
-                flag = "" if v is not None else "   ← 抽不到"
-                print(f"        {k:<20} = {v}{flag}")
+        # 个股源的 URL 带 {code} 之类的占位符，必须拿 probe_with 里的样本
+        # 代码实测；否则打出去的是一条含大括号的废 URL，看起来像源坏了。
+        params = stock_mod.code_params(src.probe_with["code"]) if src.probe_with.get("code") else None
+        if params:
+            params.update({k: v for k, v in src.probe_with.items() if k != "code"})
+
+        if src.group == "stock" and not src.fields:
+            # 返回表的源没有 fields 可抽，自检的标准是「拿到几行」
+            rows, err = fetch_mod.fetch_rows(src, params=params, fresh=args.fresh)
+            ok = err is None
+            mark = "ok " if ok else "ERR"
+            n = len(rows or [])
+            print(f"[{mark}] {src.id:<20} {src.name:<14} {n} 行")
+            if ok and rows:
+                print(f"        首行 {str(rows[0])[:150]}")
+            elif not ok:
+                failed += 1
+                print(f"        {err}")
         else:
-            failed += 1
-            print(f"        {res.error}")
+            res = fetch_mod.fetch(src, fresh=args.fresh, params=params)
+            got = sum(1 for v in res.values.values() if v is not None)
+            total = len(src.fields) + len(src.derive)
+            mark = "ok " if res.ok else "ERR"
+            cache_tag = " (cache)" if res.from_cache else ""
+            print(f"[{mark}] {src.id:<20} {src.name:<14} {got}/{total} 字段  {res.ms}ms{cache_tag}")
+            if res.ok:
+                for k, v in res.values.items():
+                    flag = "" if v is not None else "   ← 抽不到"
+                    print(f"        {k:<20} = {v}{flag}")
+            else:
+                failed += 1
+                print(f"        {res.error}")
         if src.verified_at is None:
             print("        ⚠ 未标注 verified_at（尚未实测过）")
     print(f"\n{len(sources) - failed}/{len(sources)} 条源可用")
@@ -129,6 +150,13 @@ def cmd_filing_metrics(args) -> int:
     return 0
 
 
+def cmd_stock_checkup(args) -> int:
+    out = stock_mod.checkup(args.code, fresh=args.fresh, recent_days=args.days)
+    # 与 macro analyze 同一个约束：这份 JSON 是要进上下文的，紧凑输出
+    print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="md.py", description="market-data 取数层")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -180,6 +208,14 @@ def build_parser() -> argparse.ArgumentParser:
     fm.add_argument("code")
     fm.add_argument("--periods", type=int, default=12, help="取近 N 期")
     fm.set_defaults(func=cmd_filing_metrics)
+
+    st = sub.add_parser("stock", help="个股体检")
+    tsub = st.add_subparsers(dest="action", required=True)
+
+    tc = tsub.add_parser("checkup", parents=[common], help="三大类体检事实 JSON")
+    tc.add_argument("code", help="6 位股票代码")
+    tc.add_argument("--days", type=int, default=20, help="「最近」窗口的天数，默认 20")
+    tc.set_defaults(func=cmd_stock_checkup)
 
     return p
 
