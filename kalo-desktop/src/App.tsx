@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView";
 import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
+import FeedsSettings from "./components/FeedsSettings";
 import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
 import NotesPanel from "./features/notes/NotesPanel";
@@ -254,7 +255,7 @@ export default function App() {
   if (page === "settings") {
     return (
       <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
-        <TitleBar title={barTitle} menus={menus} />
+        <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
         <div className="flex min-h-0 flex-1">
           <SettingsPage
             theme={theme}
@@ -271,7 +272,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
-      <TitleBar title={barTitle} menus={menus} />
+      <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
       <div className="flex min-h-0 flex-1">
         <Sidebar
           collapsed={sidebarCollapsed}
@@ -307,7 +308,7 @@ export default function App() {
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
           <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-4">
             <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
-              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : page === "automation" ? "自动化 · 定时任务" : chat.cwd || "未选择目录"}
+              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : page === "automation" ? "自动化 · 定时任务与数据源" : chat.cwd || "未选择目录"}
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
@@ -342,6 +343,7 @@ export default function App() {
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   <div className="mx-auto max-w-2xl px-6 py-6">
                     <TasksSettings />
+                    <FeedsSettings />
                   </div>
                 </div>
               ) : showEmpty ? (

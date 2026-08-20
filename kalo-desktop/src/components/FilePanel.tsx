@@ -1,21 +1,43 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { listDir, openPath, readFileText } from "../lib/pi-bridge";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { gitDiff, gitStatus, listDir, openPath, readFileText } from "../lib/pi-bridge";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
-import type { DirEntry } from "../types";
+import {
+  branchLabel,
+  buildStatusIndex,
+  groupByDir,
+  parseUnifiedDiff,
+  pathKey,
+  relPathOf,
+  statusColor,
+  statusLetter,
+  statusOf,
+  type StatusIndex,
+} from "../lib/git";
+import DiffView, { type DiffLine } from "./DiffView";
+import type { DirEntry, GitEntry, GitStatus } from "../types";
 
 interface Preview {
   name: string;
+  path: string;
+  /** Posix path relative to the repo root; null outside a repository. */
+  relPath: string | null;
   text: string;
   truncated: boolean;
   binary: boolean;
 }
+
+/** Which view the preview column is showing. */
+type PreviewTab = "source" | "diff";
 
 interface MenuState {
   x: number;
   y: number;
   entry: DirEntry;
 }
+
+/** Milliseconds to wait after a turn ends before re-reading git status. */
+const TURN_END_DEBOUNCE = 400;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -32,10 +54,21 @@ function parentDir(path: string): string | null {
   return trimmed.slice(0, i);
 }
 
+function baseName(path: string): string {
+  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return i < 0 ? path : path.slice(i + 1);
+}
+
+/** A git entry, adapted to what the tree's click and menu handlers expect. */
+function asDirEntry(entry: GitEntry): DirEntry {
+  return { name: baseName(entry.relPath), path: entry.path, isDir: entry.isDir, size: 0, modifiedMs: 0 };
+}
+
 /** Right-side file browser with a text preview. The tree root follows the
  * session cwd until the user navigates elsewhere via the path bar. */
 export default function FilePanel() {
   const cwd = useChatSelector((s) => s.cwd);
+  const isStreaming = useChatSelector((s) => s.isStreaming);
   const [rootOverride, setRootOverride] = useState<string | null>(null);
   const root = rootOverride ?? cwd;
   const [pathDraft, setPathDraft] = useState(root ?? "");
@@ -44,13 +77,25 @@ export default function FilePanel() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewFull, setPreviewFull] = useState(false);
+  const [previewTab, setPreviewTab] = useState<PreviewTab>("source");
+  const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // null = not a repository (or git missing): the whole git strip stays hidden.
+  const [git, setGit] = useState<GitStatus | null>(null);
+  // Shown inline in the git strip rather than as a toast: status is re-read
+  // after every turn, and a repeating toast for a persistent problem is noise.
+  const [gitError, setGitError] = useState<string | null>(null);
+  const [changesOnly, setChangesOnly] = useState(false);
   // Back navigation: every root change pushes the previous root.
   const [backStack, setBackStack] = useState<string[]>([]);
   const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 288));
   const [previewW, setPreviewW] = useState(() => loadWidth("kalo.layout.previewW", 416));
-  // Race guard: only the latest file click may populate the preview.
+  // Race guards: only the latest request may populate its slot.
   const previewReq = useRef(0);
+  const diffReq = useRef(0);
+
+  const gitIndex = useMemo<StatusIndex>(() => buildStatusIndex(git), [git]);
 
   const loadDir = useCallback(async (path: string) => {
     try {
@@ -61,15 +106,46 @@ export default function FilePanel() {
     }
   }, []);
 
+  const refreshGit = useCallback(async (path: string | null) => {
+    if (!path) {
+      setGit(null);
+      setGitError(null);
+      return;
+    }
+    try {
+      setGit(await gitStatus(path));
+      setGitError(null);
+    } catch (err) {
+      // A real repository whose status failed — keep the last snapshot out of
+      // the way and say why, once, in place.
+      setGit(null);
+      setGitError(errText(err));
+    }
+  }, []);
+
   // Reset and reload whenever the root changes (cwd switch or path-bar nav).
   useEffect(() => {
     setTree(new Map());
     setExpanded(new Set());
     setPreview(null);
     setPreviewFull(false);
+    setDiffLines(null);
     previewReq.current++;
+    diffReq.current++;
     if (root) void loadDir(root);
-  }, [root, loadDir]);
+    void refreshGit(root);
+  }, [root, loadDir, refreshGit]);
+
+  // Re-read git status when a turn ends: that is exactly when the agent has
+  // finished writing files. Debounced, because a burst of turns is common.
+  const wasStreaming = useRef(isStreaming);
+  useEffect(() => {
+    const ended = wasStreaming.current && !isStreaming;
+    wasStreaming.current = isStreaming;
+    if (!ended || !root) return;
+    const timer = setTimeout(() => void refreshGit(root), TURN_END_DEBOUNCE);
+    return () => clearTimeout(timer);
+  }, [isStreaming, root, refreshGit]);
 
   // Keep the path bar in sync when the root changes from outside.
   useEffect(() => {
@@ -112,12 +188,37 @@ export default function FilePanel() {
     if (!isOpen && !tree.has(path)) void loadDir(path);
   };
 
-  const openFile = async (entry: DirEntry) => {
+  const loadDiff = useCallback(
+    async (relPath: string) => {
+      if (!root) return;
+      const req = ++diffReq.current;
+      setDiffLoading(true);
+      try {
+        const text = await gitDiff(root, relPath);
+        if (req !== diffReq.current) return;
+        setDiffLines(parseUnifiedDiff(text));
+      } catch (err) {
+        if (req !== diffReq.current) return;
+        setDiffLines([]);
+        chatStore.pushToast(`读取 diff 失败：${errText(err)}`, "error");
+      } finally {
+        if (req === diffReq.current) setDiffLoading(false);
+      }
+    },
+    [root],
+  );
+
+  const openFile = async (file: { name: string; path: string }, tab: PreviewTab = "source") => {
     const req = ++previewReq.current;
+    const relPath = relPathOf(git, file.path);
+    setPreviewTab(tab);
+    setDiffLines(null);
+    diffReq.current++;
+    if (tab === "diff" && relPath) void loadDiff(relPath);
     try {
-      const res = await readFileText(entry.path);
+      const res = await readFileText(file.path);
       if (req !== previewReq.current) return;
-      setPreview({ name: entry.name, ...res });
+      setPreview({ name: file.name, path: file.path, relPath, ...res });
       setPreviewFull(false);
     } catch (err) {
       if (req === previewReq.current) {
@@ -126,18 +227,31 @@ export default function FilePanel() {
     }
   };
 
-  const closePreview = () => {
-    previewReq.current++;
-    setPreview(null);
-    setPreviewFull(false);
+  /** Switch the preview between source and diff, fetching the diff on demand. */
+  const selectTab = (tab: PreviewTab) => {
+    setPreviewTab(tab);
+    if (tab === "diff" && !diffLines && !diffLoading && preview?.relPath) {
+      void loadDiff(preview.relPath);
+    }
   };
 
-  // Reload the root and every expanded directory, keeping the expansion.
+  const closePreview = () => {
+    previewReq.current++;
+    diffReq.current++;
+    setPreview(null);
+    setPreviewFull(false);
+    setPreviewTab("source");
+    setDiffLines(null);
+  };
+
+  // Reload the root, every expanded directory, and git status, keeping the
+  // expansion.
   const refresh = () => {
     if (!root) return;
     const paths = [root, ...expanded];
     setTree(new Map());
     for (const p of paths) void loadDir(p);
+    void refreshGit(root);
   };
 
   const renderRows = (path: string, depth: number): ReactNode => {
@@ -171,12 +285,49 @@ export default function FilePanel() {
             <span className="w-2.5 shrink-0" />
           )}
           {e.isDir ? <FolderIcon /> : <FileIcon />}
-          <span className="truncate">{e.name}</span>
+          <span className="min-w-0 flex-1 truncate">{e.name}</span>
+          {e.isDir ? <DirBadge index={gitIndex} path={e.path} /> : <FileBadge entry={statusOf(gitIndex, e.path)} />}
         </button>
         {e.isDir && expanded.has(e.path) && renderRows(e.path, depth + 1)}
       </div>
     ));
   };
+
+  /** Flat, directory-grouped list of everything git reports as changed. */
+  const renderChanges = (status: GitStatus): ReactNode => {
+    if (status.entries.length === 0) {
+      return <div className="px-3 py-2 text-xs text-dim">工作区干净，没有未提交的改动。</div>;
+    }
+    return groupByDir(status).map((group) => (
+      <div key={group.dir || "."}>
+        <div className="mono truncate px-2 py-1 text-[10px] text-dim" title={group.dir}>
+          {group.dir || "（仓库根）"}
+        </div>
+        {group.entries.map((entry) => {
+          const asEntry = asDirEntry(entry);
+          return (
+            <button
+              key={entry.path}
+              onClick={() => void openFile(asEntry, entry.untracked ? "source" : "diff")}
+              onContextMenu={(ev) => {
+                ev.preventDefault();
+                setMenu({ x: ev.clientX, y: ev.clientY, entry: asEntry });
+              }}
+              title={entry.renamedFrom ? `${entry.path}\n（原名 ${entry.renamedFrom}）` : entry.path}
+              className="flex w-full items-center gap-1.5 py-1 pl-4 pr-2 text-left text-xs hover:bg-card"
+            >
+              {entry.isDir ? <FolderIcon /> : <FileIcon />}
+              <span className="min-w-0 flex-1 truncate">{asEntry.name}</span>
+              <FileBadge entry={entry} />
+            </button>
+          );
+        })}
+      </div>
+    ));
+  };
+
+  const changedCount = git?.entries.length ?? 0;
+  const canDiff = preview !== null && preview.relPath !== null && !statusOf(gitIndex, preview.path)?.untracked;
 
   return (
     <aside className="flex shrink-0 border-l border-edge">
@@ -243,8 +394,43 @@ export default function FilePanel() {
           />
         </div>
 
+        {/* Git strip: hidden entirely outside a repository */}
+        {git && (
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-edge px-2 py-1">
+            <BranchIcon />
+            <span
+              className="mono min-w-0 truncate text-[11px] text-dim"
+              title={git.upstream ? `upstream: ${git.upstream}` : "没有 upstream"}
+            >
+              {branchLabel(git)}
+            </span>
+            <span className="flex-1" />
+            {changedCount === 0 ? (
+              <span className="shrink-0 text-[10px] text-dim">干净</span>
+            ) : (
+              <button
+                onClick={() => setChangesOnly((v) => !v)}
+                title={changesOnly ? "显示完整目录树" : "只列出未提交的改动"}
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+                  changesOnly ? "bg-card text-ink" : "text-dim hover:bg-card hover:text-ink"
+                }`}
+              >
+                仅变更 {changedCount}
+                {git.truncated ? "+" : ""}
+              </button>
+            )}
+          </div>
+        )}
+        {gitError && (
+          <div className="shrink-0 truncate border-b border-edge px-2 py-1 text-[10px] text-dim" title={gitError}>
+            git 状态读取失败：{gitError}
+          </div>
+        )}
+
         <div className="min-h-0 flex-1 overflow-auto py-1">
-          {root ? (
+          {changesOnly && git ? (
+            renderChanges(git)
+          ) : root ? (
             renderRows(root, 0) ?? <div className="px-3 py-2 text-xs text-dim">加载中…</div>
           ) : (
             <div className="px-3 py-2 text-xs text-dim">先在输入框下方选择工作目录</div>
@@ -265,10 +451,13 @@ export default function FilePanel() {
           <div className="flex shrink-0 flex-col" style={{ width: previewW }}>
             <PreviewHeader
               name={preview.name}
+              tab={previewTab}
+              canDiff={canDiff}
+              onTab={selectTab}
               onFull={() => setPreviewFull(true)}
               onClose={closePreview}
             />
-            <PreviewBody preview={preview} />
+            <PreviewBody preview={preview} tab={previewTab} diff={diffLines} loading={diffLoading} />
           </div>
         </>
       )}
@@ -278,21 +467,46 @@ export default function FilePanel() {
         <div className="fixed inset-0 z-50 flex flex-col bg-base">
           <PreviewHeader
             name={preview.name}
+            tab={previewTab}
+            canDiff={canDiff}
+            onTab={selectTab}
             full
             onFull={() => setPreviewFull(false)}
             onClose={closePreview}
           />
-          <PreviewBody preview={preview} />
+          <PreviewBody preview={preview} tab={previewTab} diff={diffLines} loading={diffLoading} />
         </div>
       )}
 
       {/* Right-click context menu */}
-      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenu
+          menu={menu}
+          onClose={() => setMenu(null)}
+          onViewDiff={
+            !menu.entry.isDir &&
+            relPathOf(git, menu.entry.path) !== null &&
+            statusOf(gitIndex, menu.entry.path) !== null &&
+            !statusOf(gitIndex, menu.entry.path)?.untracked
+              ? () => void openFile(menu.entry, "diff")
+              : undefined
+          }
+        />
+      )}
     </aside>
   );
 }
 
-function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
+function ContextMenu({
+  menu,
+  onClose,
+  onViewDiff,
+}: {
+  menu: MenuState;
+  onClose: () => void;
+  /** Omitted when the entry has no diff to show (unchanged, untracked, a dir). */
+  onViewDiff?: () => void;
+}) {
   const { entry } = menu;
 
   useEffect(() => {
@@ -312,6 +526,7 @@ function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }
     ...(entry.isDir
       ? []
       : [{ label: "打开文件", action: () => void openPath(entry.path).catch((e) => chatStore.pushToast(`打开失败：${errText(e)}`, "error")) }]),
+    ...(onViewDiff ? [{ label: "查看 diff", action: onViewDiff }] : []),
     {
       label: entry.isDir ? "打开所在位置" : "打开所在路径",
       action: () =>
@@ -365,19 +580,38 @@ function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }
 
 function PreviewHeader({
   name,
+  tab,
+  canDiff,
+  onTab,
   full,
   onFull,
   onClose,
 }: {
   name: string;
+  tab: PreviewTab;
+  canDiff: boolean;
+  onTab: (tab: PreviewTab) => void;
   full?: boolean;
   onFull: () => void;
   onClose: () => void;
 }) {
   return (
     <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-3">
-      <span className="truncate text-xs font-medium">{name}</span>
+      <span className="min-w-0 truncate text-xs font-medium">{name}</span>
       <div className="flex shrink-0 items-center gap-1">
+        {canDiff && (
+          <div className="mr-1 flex items-center overflow-hidden rounded-md border border-edge text-[10px]">
+            {(["source", "diff"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => onTab(t)}
+                className={`px-1.5 py-0.5 ${tab === t ? "bg-card text-ink" : "text-dim hover:text-ink"}`}
+              >
+                {t === "source" ? "源码" : "diff"}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           onClick={onFull}
           title={full ? "退出全屏" : "全屏查看"}
@@ -407,11 +641,82 @@ function PreviewHeader({
   );
 }
 
-function PreviewBody({ preview }: { preview: Preview }) {
+function PreviewBody({
+  preview,
+  tab,
+  diff,
+  loading,
+}: {
+  preview: Preview;
+  tab: PreviewTab;
+  diff: DiffLine[] | null;
+  loading: boolean;
+}) {
+  if (tab === "diff") {
+    if (loading) {
+      return <div className="min-h-0 flex-1 px-3 py-2 text-xs text-dim">读取 diff…</div>;
+    }
+    if (!diff || diff.length === 0) {
+      return (
+        <div className="min-h-0 flex-1 px-3 py-2 text-xs text-dim">
+          与 HEAD 无差异。（未跟踪的新文件没有 diff，切到「源码」看内容。）
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-0 flex-1 overflow-auto p-2">
+        <DiffView lines={diff} />
+      </div>
+    );
+  }
   return (
     <div className="mono min-h-0 flex-1 overflow-auto whitespace-pre px-3 py-2 text-xs leading-relaxed">
       {preview.binary ? "二进制文件不支持预览" : preview.text + (preview.truncated ? "\n（已截断）" : "")}
     </div>
+  );
+}
+
+/** Status letter plus line counts at the end of a file row. */
+function FileBadge({ entry }: { entry: GitEntry | null }) {
+  const letter = statusLetter(entry);
+  if (!letter || !entry) return null;
+  const counts =
+    entry.binary
+      ? "bin"
+      : [entry.added ? `+${entry.added}` : "", entry.removed ? `-${entry.removed}` : ""]
+          .filter(Boolean)
+          .join(" ");
+  return (
+    <span className="mono flex shrink-0 items-center gap-1 text-[10px]">
+      {counts && <span className="text-dim">{counts}</span>}
+      <span className={statusColor(letter)}>{letter}</span>
+    </span>
+  );
+}
+
+/** A dot on a directory that has changes somewhere beneath it. */
+function DirBadge({ index, path }: { index: StatusIndex; path: string }) {
+  const own = statusOf(index, path);
+  if (own?.untracked) {
+    return <span className="mono shrink-0 text-[10px] text-dim">?</span>;
+  }
+  const roll = index.dirs.get(pathKey(path));
+  if (!roll || roll.count === 0) return null;
+  return (
+    <span className="shrink-0 text-[10px] text-amber-500" title={`${roll.count} 处改动`}>
+      ●
+    </span>
+  );
+}
+
+function BranchIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-dim">
+      <circle cx="4.5" cy="3.5" r="1.6" />
+      <circle cx="4.5" cy="12.5" r="1.6" />
+      <circle cx="11.5" cy="6.5" r="1.6" />
+      <path d="M4.5 5.1v5.8M11.5 8.1c0 2-1.7 2.8-3.5 2.8h-2" strokeLinecap="round" />
+    </svg>
   );
 }
 

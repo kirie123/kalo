@@ -380,6 +380,50 @@ export interface FileTextContent {
   binary: boolean;
 }
 
+/**
+ * One changed path from `git_status`. Mirrors `src-tauri/src/git.rs`, which
+ * builds it from `git status --porcelain=v2`.
+ */
+export interface GitEntry {
+  /** Relative to `repoRoot`, posix separators (as git prints it). */
+  relPath: string;
+  /** Absolute path, native separators — matches what `list_dir` returns. */
+  path: string;
+  /** Staged-side status letter; "." when unmodified. */
+  index: string;
+  /** Work-tree-side status letter; "." when unmodified. */
+  worktree: string;
+  untracked: boolean;
+  /** An entirely untracked directory, collapsed by git into one entry. */
+  isDir: boolean;
+  conflicted: boolean;
+  submodule: boolean;
+  renamedFrom?: string;
+  added?: number;
+  removed?: number;
+  binary: boolean;
+}
+
+/**
+ * Working-tree snapshot from `git_status`. The command answers `null` when the
+ * directory is not a repository (or git is missing) — a normal state, not an
+ * error.
+ */
+export interface GitStatus {
+  repoRoot: string;
+  /** Branch name, or a short oid when detached. */
+  branch: string;
+  detached: boolean;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  /** True before the first commit exists. */
+  initial: boolean;
+  entries: GitEntry[];
+  /** True when the entry list was capped and is only a prefix. */
+  truncated: boolean;
+}
+
 /** `app_paths` result: stable locations for building commands. */
 export interface AppPaths {
   home: string;
@@ -535,6 +579,86 @@ export interface ScheduleTask {
  */
 export interface ScheduleTaskInfo extends ScheduleTask {
   nextRunAt: string | null;
+}
+
+// ============================================================================
+// Feeds (gateway sidecar, mirrors ~/.kalo/feeds/<id>.json)
+// ============================================================================
+
+/** Where a feed's values surface. M1 renders `ticker` only. */
+export type FeedSurface = "ticker" | "card" | "alert" | "note";
+
+/**
+ * One field extractor. Exactly one of path/regex/index/const applies; the
+ * remaining keys shape the value (see the gateway's feeds.ts for the rules).
+ */
+export interface FeedField {
+  /** JSON dotted path; numeric segments index arrays. */
+  path?: string;
+  /** Text: first match of this pattern, capture group `group` (default 1). */
+  regex?: string;
+  group?: number;
+  /** Text: split the row by `sep`, take segment `index`. */
+  index?: number;
+  sep?: string;
+  /** Literal text. */
+  const?: string;
+  scale?: number;
+  digits?: number;
+  plus?: boolean;
+  prefix?: string;
+  suffix?: string;
+}
+
+/** One feed spec; `feed_upsert` takes this whole object. */
+export interface FeedSpec {
+  /** [\w-]{1,64}, also the file name. */
+  id: string;
+  name: string;
+  /** Pull interval in seconds (minimum 5). */
+  everySec: number;
+  surface: FeedSurface;
+  enabled: boolean;
+  request: {
+    url: string;
+    /** Response charset; GBK is common on Chinese quote endpoints. */
+    encoding?: "utf-8" | "gbk";
+    headers?: Record<string, string>;
+  };
+  /** Split the response into rows: JSON array path, or text separator. */
+  rows?: { path?: string; split?: string };
+  fields: Record<string, FeedField>;
+  /** Row template; `{field}` placeholders get the extracted values. */
+  template: string;
+  /** Field whose sign drives the up/down color. */
+  trendField?: string;
+}
+
+export type FeedTrend = "up" | "down" | "flat";
+
+export interface FeedItem {
+  text: string;
+  trend: FeedTrend | null;
+}
+
+/** Result of one pull (mirrors ~/.kalo/feeds/state/<id>.json). */
+export interface FeedSnapshot {
+  id: string;
+  at: string;
+  ok: boolean;
+  ms: number;
+  /** On failure these are the last good values — see `stale`. */
+  items: FeedItem[];
+  error?: string;
+  /** True when `items` predate the latest pull. */
+  stale?: boolean;
+}
+
+/** Payload of the `feed-status` event (and the `feed_list` command). */
+export interface FeedInfo extends FeedSpec {
+  snapshot: FeedSnapshot | null;
+  nextPullAt: string | null;
+  consecutiveFailures: number;
 }
 
 // ============================================================================

@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
+import TickerBar from "./TickerBar";
 
 /**
  * Self-drawn title bar (the window runs with `decorations: false`).
  *
  * One full-width strip above the sidebar: the app menus on the left, the
- * current page/session title centered, window buttons on the right. The strip
- * carries `data-tauri-drag-region`, so dragging it moves the window and a
- * double-click toggles maximize — both handled by Tauri, which is why the
- * capability needs `core:window:allow-start-dragging`.
+ * current page/session title centered, the feed ticker and window buttons on
+ * the right. The strip carries `data-tauri-drag-region`, so dragging it moves
+ * the window and a double-click toggles maximize — both handled by Tauri, which
+ * is why the capability needs `core:window:allow-start-dragging`.
  *
  * The menus are declarative on purpose: App owns every action, this file only
  * knows how to render and dismiss a dropdown.
@@ -33,7 +34,16 @@ function tauriWindow(): Window | null {
   }
 }
 
-export default function TitleBar({ title, menus }: { title: string; menus?: TitleMenu[] }) {
+export default function TitleBar({
+  title,
+  menus,
+  onOpenFeeds,
+}: {
+  title: string;
+  menus?: TitleMenu[];
+  /** Clicking the ticker jumps to the page that manages data sources. */
+  onOpenFeeds?: () => void;
+}) {
   const [win] = useState<Window | null>(tauriWindow);
   const [maximized, setMaximized] = useState(false);
 
@@ -66,12 +76,15 @@ export default function TitleBar({ title, menus }: { title: string; menus?: Titl
       {/* Centered title; absolute so it ignores the side clusters' widths. */}
       <div
         data-tauri-drag-region
-        className="pointer-events-none absolute left-1/2 max-w-[46%] -translate-x-1/2 truncate text-xs text-dim"
+        className="pointer-events-none absolute left-1/2 max-w-[36%] -translate-x-1/2 truncate text-xs text-dim"
       >
         {title}
       </div>
 
       <div className="ml-auto flex items-center">
+        {/* Market/data ticker — pointer events must reach it (hover pauses the
+            scroll), so it stays outside every drag region. */}
+        {onOpenFeeds && <TickerBar onOpen={onOpenFeeds} />}
         {win && (
           <>
             <WindowButton label="最小化" onClick={() => void win.minimize()}>

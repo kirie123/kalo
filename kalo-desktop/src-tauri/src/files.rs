@@ -477,25 +477,38 @@ pub fn search_files(root: &str, query: &str, limit: Option<usize>) -> Result<Vec
 /// parent folder, directory → the folder itself is opened).
 /// Spawns detached and returns immediately; std::process only, no new deps.
 pub fn open_path(path: &str, reveal: bool) -> Result<(), String> {
+    // A directory reveals as itself; only files need to be shown inside their
+    // parent. Getting this wrong is invisible on the caller's side: Explorer
+    // just opens *something*.
+    let is_dir = Path::new(path).is_dir();
+
     #[cfg(target_os = "windows")]
     {
-        let mut cmd = if reveal {
+        // Callers build paths with "/" (the frontend's convention), but Explorer
+        // and `start` only understand "\" — handed forward slashes, Explorer
+        // silently opens its default view instead of the requested path.
+        let native = path.replace('/', "\\");
+        let mut cmd = if reveal && !is_dir {
             let mut c = std::process::Command::new("explorer");
             // /select wants the verb and path in one comma-joined argument.
-            c.arg(format!("/select,{path}"));
+            c.arg(format!("/select,{native}"));
+            c
+        } else if reveal {
+            let mut c = std::process::Command::new("explorer");
+            c.arg(&native);
             c
         } else {
             let mut c = std::process::Command::new("cmd");
-            c.args(["/c", "start", "", path]);
+            c.args(["/c", "start", "", native.as_str()]);
             c
         };
         cmd.spawn()
-            .map_err(|e| format!("failed to open {path}: {e}"))?;
+            .map_err(|e| format!("failed to open {native}: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
         let mut cmd = std::process::Command::new("open");
-        if reveal {
+        if reveal && !is_dir {
             cmd.arg("-R");
         }
         cmd.arg(path);
@@ -503,8 +516,9 @@ pub fn open_path(path: &str, reveal: bool) -> Result<(), String> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // No universal "reveal" on Linux: open the parent folder instead.
-        let target = if reveal {
+        // No universal "reveal" on Linux: open the parent folder instead — but
+        // a directory is its own answer, so only files climb one level.
+        let target = if reveal && !is_dir {
             Path::new(path)
                 .parent()
                 .map(|p| p.to_string_lossy().into_owned())

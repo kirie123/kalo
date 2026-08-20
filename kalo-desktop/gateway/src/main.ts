@@ -36,6 +36,7 @@ import { JobsServer } from "./jobs/server";
 import { OPERATOR } from "./jobs/types";
 import { ProgressRenderer } from "./renderer";
 import { Scheduler, type ScheduleTask } from "./scheduler";
+import { FeedEngine } from "./feeds";
 
 // ---------------------------------------------------------------------------
 // Guard the NDJSON stdout channel: everything libraries print via
@@ -79,6 +80,24 @@ const scheduler = new Scheduler({
   },
   onChange: broadcastSchedules,
 });
+
+// ---------------------------------------------------------------------------
+// Feeds: declarative periodic pulls (doc/2026-08-20-feeds-declarative-data-pull.md).
+// Values change several times a minute, so the broadcast is coalesced — the
+// desktop only ever needs the latest table, never every intermediate state.
+// ---------------------------------------------------------------------------
+
+let feedBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function broadcastFeeds(): void {
+  if (feedBroadcastTimer) return;
+  feedBroadcastTimer = setTimeout(() => {
+    feedBroadcastTimer = null;
+    send({ type: "feed_status", feeds: feeds.list() });
+  }, 200);
+}
+
+const feeds = new FeedEngine({ onChange: broadcastFeeds });
 
 // ---------------------------------------------------------------------------
 // Job runtime (P0-1): detached long-running commands living in this sidecar.
@@ -317,6 +336,25 @@ function handleCommand(cmd: InCommand): void {
       handleJobCommand(cmd);
       return;
     }
+    case "feed_upsert": {
+      const err = feeds.upsert(cmd.spec);
+      if (err) send({ type: "feed_error", message: err });
+      return;
+    }
+    case "feed_remove": {
+      feeds.remove(cmd.id);
+      return;
+    }
+    case "feed_run": {
+      void feeds.runNow(cmd.id).then((err) => {
+        if (err) send({ type: "feed_error", message: err });
+      });
+      return;
+    }
+    case "feed_list": {
+      send({ type: "feed_status", feeds: feeds.list() });
+      return;
+    }
   }
 }
 
@@ -365,6 +403,14 @@ function main(): void {
   jobs.load();
   jobs.startTicking();
   send({ type: "job_event", event: "changed" });
+
+  // Feeds: load the specs (each with its last snapshot, so the title bar has
+  // values before the first pull lands), seed the examples on a fresh install.
+  feeds.load();
+  feeds.seedExamples();
+  feeds.start();
+  send({ type: "feed_status", feeds: feeds.list() });
+
   try {
     jobsServer.start();
   } catch (err) {

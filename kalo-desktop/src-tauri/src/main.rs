@@ -7,6 +7,7 @@
 
 mod files;
 mod gateway;
+mod git;
 mod internal_skills;
 mod knowledge;
 mod mcp;
@@ -20,6 +21,7 @@ mod skills;
 
 use files::{AttachmentData, DirDiff, DirEntry, FileText, TextSince};
 use gateway::GatewayManager;
+use git::GitStatus;
 use internal_skills::InstallReport;
 use session::{PiProcess, SessionManager};
 use session_paging::SessionPage;
@@ -243,6 +245,19 @@ fn read_file_text(path: String, max_bytes: Option<usize>) -> Result<FileText, St
     files::read_file_text(&path, max_bytes)
 }
 
+/// Git status of the repository containing `cwd`, for the file panel.
+/// `None` means "not a repository" (or git is missing) — a normal state.
+#[tauri::command(async)]
+fn git_status(cwd: String) -> Result<Option<GitStatus>, String> {
+    git::git_status(&cwd)
+}
+
+/// Working-tree diff of one file against HEAD (staged + unstaged together).
+#[tauri::command(async)]
+fn git_diff(cwd: String, rel_path: String) -> Result<String, String> {
+    git::git_diff(&cwd, &rel_path)
+}
+
 /// Stable paths the frontend needs to build commands: the user's home, the
 /// `~/.kalo` root, and the engine binary this app ships. Generic — nothing
 /// here knows what the caller intends to do with them.
@@ -368,6 +383,38 @@ fn schedule_run(id: String, state: State<GatewayManager>, app: AppHandle) -> Res
 #[tauri::command]
 fn schedule_list(state: State<GatewayManager>) -> Vec<serde_json::Value> {
     state.schedule_list()
+}
+
+// ============================================================================
+// Feeds (declarative periodic pulls; engine lives in the gateway sidecar)
+// ============================================================================
+
+/// Create or replace a feed spec (validation errors arrive as `feed-error`).
+#[tauri::command(async)]
+fn feed_upsert(
+    spec: serde_json::Value,
+    state: State<GatewayManager>,
+    app: AppHandle,
+) -> Result<(), String> {
+    state.feed_upsert(&app, spec)
+}
+
+/// Delete a feed and its cached snapshot.
+#[tauri::command(async)]
+fn feed_remove(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
+    state.feed_remove(&app, &id)
+}
+
+/// Pull one feed right now (ignores enabled and backoff).
+#[tauri::command(async)]
+fn feed_run(id: String, state: State<GatewayManager>, app: AppHandle) -> Result<(), String> {
+    state.feed_run(&app, &id)
+}
+
+/// Cached feed table (fresh data arrives via `feed-status`).
+#[tauri::command]
+fn feed_list(state: State<GatewayManager>) -> Vec<serde_json::Value> {
+    state.feed_list()
 }
 
 // ============================================================================
@@ -553,6 +600,8 @@ fn main() {
             delete_memory,
             list_dir,
             read_file_text,
+            git_status,
+            git_diff,
             app_paths,
             read_text_since,
             dir_diff_names,
@@ -568,6 +617,10 @@ fn main() {
             schedule_remove,
             schedule_run,
             schedule_list,
+            feed_upsert,
+            feed_remove,
+            feed_run,
+            feed_list,
             job_start,
             job_list,
             job_snapshot,

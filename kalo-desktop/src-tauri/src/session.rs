@@ -193,13 +193,7 @@ impl PiProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            // Prevent a console window from flashing for the child process.
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
+        crate::proc::no_window(&mut cmd);
 
         let mut child = cmd
             .spawn()

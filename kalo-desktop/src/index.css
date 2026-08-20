@@ -279,3 +279,23 @@ body {
     transform: translateY(-3px);
   }
 }
+
+/* Title-bar ticker (TickerBar.tsx): the track holds two identical copies of the
+   item list, so shifting it by exactly half its width loops seamlessly.
+   Duration is set inline — it scales with the number of items to keep a
+   constant speed. */
+.ticker-track {
+  animation: kalo-marquee linear infinite;
+}
+
+@keyframes kalo-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none;
+  }
+}

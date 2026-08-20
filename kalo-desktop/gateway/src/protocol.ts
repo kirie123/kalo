@@ -5,6 +5,7 @@
  * gateway → Rust (stdout): one JSON object per line (see OutMessage).
  */
 
+import type { FeedInfo, FeedSpec } from "./feeds";
 import type { JobProbe, JobRule } from "./jobs/store";
 import type { JobSnapshot } from "./jobs/types";
 import type { ScheduleTask, ScheduleTaskInfo } from "./scheduler";
@@ -44,7 +45,12 @@ export type InCommand =
   | { cmd: "job_status"; requestId: string; caller?: string; id?: string }
   | { cmd: "job_logs"; requestId: string; caller?: string; id: string }
   | { cmd: "job_stop"; requestId: string; caller?: string; id: string; reason?: string }
-  | { cmd: "job_metrics"; requestId: string; caller?: string; id: string; tail?: number };
+  | { cmd: "job_metrics"; requestId: string; caller?: string; id: string; tail?: number }
+  // Feeds (declarative periodic pull)
+  | { cmd: "feed_upsert"; spec: FeedSpec }
+  | { cmd: "feed_remove"; id: string }
+  | { cmd: "feed_run"; id: string }
+  | { cmd: "feed_list" };
 
 export type OutMessage =
   | { type: "pair_qr"; qrDataUrl: string; expiresIn: number }
@@ -64,7 +70,10 @@ export type OutMessage =
   | { type: "job_reply"; requestId: string; ok: true; jobs?: JobSnapshot[]; text?: string; metrics?: unknown[]; id?: string; result?: string }
   | { type: "job_reply"; requestId: string; ok: false; error: string }
   /** Unsolicited: a job changed or finished (drives the desktop panel). */
-  | { type: "job_event"; event: "changed" | "done"; owner?: string; job?: JobSnapshot };
+  | { type: "job_event"; event: "changed" | "done"; owner?: string; job?: JobSnapshot }
+  // Feeds: one full table snapshot whenever a spec or a value changed.
+  | { type: "feed_status"; feeds: FeedInfo[] }
+  | { type: "feed_error"; message: string };
 
 /** Emit one message to Rust (stdout NDJSON). Must stay the ONLY stdout writer. */
 export function send(msg: OutMessage): void {

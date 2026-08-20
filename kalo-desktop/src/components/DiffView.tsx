@@ -77,12 +77,19 @@ const COLLAPSED_MAX_H = 240;
 
 export default function DiffView({
   diff,
+  lines: preparsed,
   collapsible = false,
 }: {
-  diff: string;
+  /** Engine display-diff text. Ignored when `lines` is given. */
+  diff?: string;
+  /**
+   * Already-parsed lines, for callers whose source is not the engine's display
+   * format (the file panel's `git diff` output, parsed by `lib/git.ts`).
+   */
+  lines?: DiffLine[];
   collapsible?: boolean;
 }) {
-  const lines = parseDiff(diff);
+  const lines = preparsed ?? parseDiff(diff ?? "");
   const bodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
@@ -98,7 +105,7 @@ export default function DiffView({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [collapsible, diff]);
+  }, [collapsible, diff, preparsed]);
 
   const clamped = collapsible && overflowing && !expanded;
 

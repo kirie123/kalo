@@ -14,6 +14,7 @@
  *   read_models_config / write_models_config / read_auth_config / write_auth_config
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   schedule_list / schedule_upsert / schedule_remove / schedule_run
+ *   feed_list / feed_upsert / feed_remove / feed_run
  *   list_knowledge_cards / list_knowledge_domains / search_knowledge
  *   read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
@@ -26,6 +27,8 @@
  *   read_attachment { path } -> AttachmentDraft (image base64 or text)
  *   read_attachment_bytes { name, dataBase64 } -> AttachmentDraft (pasted file)
  *   open_path { path, reveal } -> void
+ *   git_status { cwd } -> GitStatus | null   (null = not a repo)
+ *   git_diff { cwd, relPath } -> string      (unified diff vs HEAD)
  *
  * events:
  *   pi-event:{sessionId}  — one stdout JSON line (response or event)
@@ -34,6 +37,8 @@
  *   gateway-status        — GatewayStatus (sidecar lifecycle, pairing QR)
  *   schedule-status       — ScheduleTaskInfo[] (full task-table snapshot)
  *   schedule-error        — string (async schedule_upsert validation failure)
+ *   feed-status           — FeedInfo[] (full feed table, values included)
+ *   feed-error            — string (async feed_upsert validation failure)
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -45,9 +50,12 @@ import type {
   BackgroundJob,
   DirDiff,
   DirEntry,
+  FeedInfo,
+  FeedSpec,
   FileMatch,
   FileTextContent,
   GatewayStatus,
+  GitStatus,
   JobsSnapshot,
   JobStartInput,
   KnowledgeCardMeta,
@@ -244,6 +252,30 @@ export function searchFiles(root: string, query: string): Promise<FileMatch[]> {
 }
 
 // ============================================================================
+// Git (read-only)
+// ============================================================================
+
+/**
+ * Working-tree status of the repository containing `cwd`.
+ *
+ * Resolves to `null` when `cwd` is not in a repository, or when git is not
+ * installed — both are ordinary states for a directory the user browsed to, so
+ * callers should render nothing rather than an error.
+ */
+export function gitStatus(cwd: string): Promise<GitStatus | null> {
+  return invoke<GitStatus | null>("git_status", { cwd });
+}
+
+/**
+ * Unified diff of one file against HEAD — staged and unstaged changes together.
+ * `relPath` is the entry's `relPath` (posix, relative to the repo root).
+ * An untracked file has no diff and answers an empty string.
+ */
+export function gitDiff(cwd: string, relPath: string): Promise<string> {
+  return invoke<string>("git_diff", { cwd, relPath });
+}
+
+// ============================================================================
 // IM gateway sidecar (Feishu)
 // ============================================================================
 
@@ -306,6 +338,42 @@ export function onScheduleStatus(cb: (tasks: ScheduleTaskInfo[]) => void) {
 /** Subscribe to `schedule-error` (async validation failures of schedule_upsert). */
 export function onScheduleError(cb: (message: string) => void) {
   return listen<string>("schedule-error", (e) => cb(e.payload));
+}
+
+// ============================================================================
+// Feeds (declarative periodic pulls; engine in the gateway sidecar)
+// ============================================================================
+
+/** Cached feed table; a fresh copy is pushed via `feed-status`. */
+export function feedList(): Promise<FeedInfo[]> {
+  return invoke<FeedInfo[]>("feed_list", {});
+}
+
+/**
+ * Create or replace one feed (whole spec). Invalid input does not reject here
+ * — the gateway reports it asynchronously as a `feed-error` event.
+ */
+export function feedUpsert(spec: FeedSpec): Promise<void> {
+  return invoke<void>("feed_upsert", { spec });
+}
+
+export function feedRemove(id: string): Promise<void> {
+  return invoke<void>("feed_remove", { id });
+}
+
+/** Pull one feed right now, ignoring its enabled flag and backoff. */
+export function feedRun(id: string): Promise<void> {
+  return invoke<void>("feed_run", { id });
+}
+
+/** Subscribe to `feed-status` full feed-table snapshots. */
+export function onFeedStatus(cb: (feeds: FeedInfo[]) => void) {
+  return listen<FeedInfo[]>("feed-status", (e) => cb(e.payload));
+}
+
+/** Subscribe to `feed-error` (async validation failures of feed_upsert). */
+export function onFeedError(cb: (message: string) => void) {
+  return listen<string>("feed-error", (e) => cb(e.payload));
 }
 
 // ============================================================================

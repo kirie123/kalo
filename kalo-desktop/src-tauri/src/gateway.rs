@@ -19,6 +19,10 @@
 //! plus unsolicited {"type":"job_event","event":"changed|done"} notices that
 //! trigger a refresh and the `job-status` / `job-done` Tauri events.
 //!
+//! Feeds (declarative periodic pulls) follow the scheduler's shape: the table
+//! lives in the sidecar, `feed_*` commands are pass-throughs, and every value
+//! change arrives as {"type":"feed_status","feeds":[...]} → `feed-status`.
+//!
 //! Every state change is cached here and pushed to the frontend as the
 //! `gateway-status` Tauri event. Engine events are forwarded best-effort:
 //! with no gateway running the forward is a cheap mutex check and a drop.
@@ -74,6 +78,8 @@ struct GatewayInner {
     stopping: bool,
     /// Latest scheduler task-table snapshot (P0-A), pushed by the gateway.
     schedules: Vec<serde_json::Value>,
+    /// Latest feed table snapshot (declarative periodic pulls).
+    feeds: Vec<serde_json::Value>,
     /// Latest job snapshot (P0-1); refreshed whenever the gateway says so.
     jobs: Vec<serde_json::Value>,
     /// In-flight job requests, keyed by requestId (the gateway echoes it back).
@@ -104,6 +110,7 @@ impl Default for GatewayInner {
             want_running: false,
             stopping: false,
             schedules: Vec::new(),
+            feeds: Vec::new(),
             jobs: Vec::new(),
             job_waiters: HashMap::new(),
             job_seq: 0,
@@ -151,12 +158,7 @@ impl GatewayManager {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
+        crate::proc::no_window(&mut cmd);
 
         let mut child = cmd
             .spawn()
@@ -314,23 +316,23 @@ impl GatewayManager {
     // frontend's commands are simple pass-throughs over the stdin channel.
     // ------------------------------------------------------------------
 
-    /// Forward a scheduler command, spawning the sidecar on demand (the
-    /// scheduler must run even before Feishu is paired).
-    fn send_schedule_cmd(&self, app: &AppHandle, value: serde_json::Value) -> Result<(), String> {
+    /// Forward a scheduler/feed command, spawning the sidecar on demand (both
+    /// must run even before Feishu is paired).
+    fn send_sidecar_cmd(&self, app: &AppHandle, value: serde_json::Value) -> Result<(), String> {
         self.ensure_spawned(app)?;
         self.send(value.to_string())
     }
 
     pub fn schedule_upsert(&self, app: &AppHandle, task: serde_json::Value) -> Result<(), String> {
-        self.send_schedule_cmd(app, serde_json::json!({ "cmd": "schedule_upsert", "task": task }))
+        self.send_sidecar_cmd(app, serde_json::json!({ "cmd": "schedule_upsert", "task": task }))
     }
 
     pub fn schedule_remove(&self, app: &AppHandle, id: &str) -> Result<(), String> {
-        self.send_schedule_cmd(app, serde_json::json!({ "cmd": "schedule_remove", "id": id }))
+        self.send_sidecar_cmd(app, serde_json::json!({ "cmd": "schedule_remove", "id": id }))
     }
 
     pub fn schedule_run(&self, app: &AppHandle, id: &str) -> Result<(), String> {
-        self.send_schedule_cmd(app, serde_json::json!({ "cmd": "schedule_run", "id": id }))
+        self.send_sidecar_cmd(app, serde_json::json!({ "cmd": "schedule_run", "id": id }))
     }
 
     /// Cached task-table snapshot; also asks the gateway for a fresh copy
@@ -341,6 +343,32 @@ impl GatewayManager {
             let _ = self.send(r#"{"cmd":"schedule_list"}"#.to_string());
         }
         self.lock().schedules.clone()
+    }
+
+    // ------------------------------------------------------------------
+    // Feeds: same shape as the scheduler — the table lives in the sidecar,
+    // these are pass-throughs plus a cached snapshot for the first paint.
+    // ------------------------------------------------------------------
+
+    pub fn feed_upsert(&self, app: &AppHandle, spec: serde_json::Value) -> Result<(), String> {
+        self.send_sidecar_cmd(app, serde_json::json!({ "cmd": "feed_upsert", "spec": spec }))
+    }
+
+    pub fn feed_remove(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+        self.send_sidecar_cmd(app, serde_json::json!({ "cmd": "feed_remove", "id": id }))
+    }
+
+    pub fn feed_run(&self, app: &AppHandle, id: &str) -> Result<(), String> {
+        self.send_sidecar_cmd(app, serde_json::json!({ "cmd": "feed_run", "id": id }))
+    }
+
+    /// Cached feed table; also requests a fresh copy (`feed-status` event).
+    pub fn feed_list(&self) -> Vec<serde_json::Value> {
+        let running = self.lock().process.is_some();
+        if running {
+            let _ = self.send(r#"{"cmd":"feed_list"}"#.to_string());
+        }
+        self.lock().feeds.clone()
     }
 
     // ------------------------------------------------------------------
@@ -586,6 +614,23 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
             let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("任务操作失败");
             if let Err(e) = app.emit("schedule-error", message.to_string()) {
                 eprintln!("[kalo] emit schedule-error failed: {e}");
+            }
+        }
+        "feed_status" => {
+            let feeds = value
+                .get("feeds")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            gateway.lock().feeds = feeds.clone();
+            if let Err(e) = app.emit("feed-status", feeds) {
+                eprintln!("[kalo] emit feed-status failed: {e}");
+            }
+        }
+        "feed_error" => {
+            let message = value.get("message").and_then(|v| v.as_str()).unwrap_or("数据源操作失败");
+            if let Err(e) = app.emit("feed-error", message.to_string()) {
+                eprintln!("[kalo] emit feed-error failed: {e}");
             }
         }
         "job_reply" => {

@@ -8,7 +8,7 @@
 //! thing it is trying to kill has died. Closing the window would leave the
 //! process alive with its children attached.
 
-use std::process::Child;
+use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -16,6 +16,22 @@ use std::time::Duration;
 /// How often the watcher checks whether the child has exited. Short enough to
 /// report an exit promptly, long enough to be free.
 const POLL: Duration = Duration::from_millis(100);
+
+/// Keep a child from flashing a console window. No-op off Windows.
+///
+/// Every console subprocess we spawn wants this — the engine, the gateway, the
+/// `taskkill` below, each `git` call — and a GUI app that pops a black box for
+/// 80 ms looks broken. Returns `cmd` so it chains into a builder expression.
+pub fn no_window(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW, from winbase.h.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
 
 /// Block until the child exits, releasing the mutex between polls.
 ///
@@ -53,14 +69,11 @@ pub fn wait_released(child: &Mutex<Child>) -> Option<i32> {
 pub fn kill_tree(child: &mut Child) {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .creation_flags(CREATE_NO_WINDOW)
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .stderr(std::process::Stdio::null());
+        let _ = no_window(&mut cmd).status();
     }
     // Still signal the child directly: taskkill may have missed it (already
     // gone, access denied), and on unix this is the whole of the kill.

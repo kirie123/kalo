@@ -6,7 +6,7 @@
  * NDJSON protocol with Rust. So the registry is also exposed over a loopback
  * HTTP endpoint: one generic transport, no per-caller plumbing.
  *
- * Discovery + auth: the server writes ~/.kalo/agent/jobs-endpoint.json with
+ * Discovery + auth: the server writes ~/.kalo/agent/jobs/endpoint.json with
  * {url, token, pid} at startup and removes it at shutdown. A client reads that
  * file (same-user filesystem permission IS the trust boundary) and presents the
  * token as a bearer. The listener binds 127.0.0.1 only.
