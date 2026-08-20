@@ -12,6 +12,7 @@ import {
 } from "../lib/pi-bridge";
 import type { AuthConfig, ModelsConfig, ProviderConfig, SkillMeta } from "../types";
 import GatewaySettings from "./GatewaySettings";
+import MarketEnvCard from "./MarketEnvCard";
 import McpSettings from "./McpSettings";
 import MemorySettings from "./MemorySettings";
 import ProviderEditModal from "./ProviderEditModal";
@@ -455,6 +456,10 @@ function SkillsSettings() {
 
   return (
     <Section title="Skills">
+      {/* Above the list on purpose: the market skills are the only bundled ones
+          that need something beyond their own files, and a user who sees them
+          listed has no other way to learn the environment is missing. */}
+      <MarketEnvCard />
       {skills === null ? (
         <p className="text-xs text-dim">加载中…</p>
       ) : skills.length === 0 ? (

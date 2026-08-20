@@ -11,7 +11,7 @@ description: 宏观市场风向判断。当用户问"现在市场环境怎么样
 ## 第一步：取数
 
 ```bash
-~/.kalo/market/venv/Scripts/python.exe ~/.kalo/skills/market-data/md.py macro analyze
+~/.kalo/market/py ~/.kalo/skills/market-data/md.py macro analyze
 ```
 
 输出是紧凑表格 JSON：

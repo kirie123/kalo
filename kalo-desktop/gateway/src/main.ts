@@ -395,6 +395,10 @@ function main(): void {
   // Scheduler runs independently of the Feishu connection (alerts are
   // dropped while unpaired, but task bookkeeping still advances).
   scheduler.load();
+  // First run on this machine gets the bundled tasks (the daily macro
+  // snapshot). Guarded on "schedules.json missing", so a deleted task stays
+  // deleted — see Scheduler.seedDefaults.
+  scheduler.seedDefaults();
   scheduler.start();
   broadcastSchedules();
 

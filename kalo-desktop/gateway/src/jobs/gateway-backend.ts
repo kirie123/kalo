@@ -35,6 +35,9 @@ import {
   type JobsChangedListener,
   type JobStatus,
 } from "./types";
+// Same bash for jobs as for watch tasks: on Windows the `bash` on PATH is
+// often WSL's, which cannot see the paths these scripts talk about.
+import { resolveBash } from "../scheduler";
 
 const TICK_MS = 5_000;
 const PROBE_TIMEOUT_MS = 60_000;
@@ -371,7 +374,7 @@ export class GatewayJobBackend implements JobRegistry {
       // The child redirects its own output: the OS owns the file handle, so
       // logs survive this gateway process dying mid-job.
       const redirect = `exec >> ${shq(rec.logPath)} 2>&1\n${rec.cmd}`;
-      const child = spawn("bash", ["-c", redirect], {
+      const child = spawn(resolveBash(), ["-c", redirect], {
         cwd: existsSync(rec.cwd) ? rec.cwd : undefined,
         env: rec.env ? { ...process.env, ...rec.env } : process.env,
         detached: true,
@@ -571,7 +574,7 @@ function runProbe(script: string, cwd: string, done: (ok: boolean) => void): voi
     clearTimeout(timer);
     done(ok);
   };
-  const child = spawn("bash", ["-c", script], {
+  const child = spawn(resolveBash(), ["-c", script], {
     cwd: existsSync(cwd) ? cwd : undefined,
     stdio: "ignore",
     windowsHide: true,

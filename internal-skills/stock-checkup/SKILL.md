@@ -11,7 +11,7 @@ description: 个股体检。当用户问"帮我看看某只股票""XX 这只票�
 ## 第一步：取数
 
 ```bash
-~/.kalo/market/venv/Scripts/python.exe ~/.kalo/skills/market-data/md.py stock checkup <6位代码>
+~/.kalo/market/py ~/.kalo/skills/market-data/md.py stock checkup <6位代码>
 ```
 
 一条命令拿全三大类的事实（约 7 KB JSON），**不要自己去 web_fetch 行情**——

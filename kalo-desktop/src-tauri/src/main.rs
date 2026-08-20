@@ -10,6 +10,7 @@ mod gateway;
 mod git;
 mod internal_skills;
 mod knowledge;
+mod market_env;
 mod mcp;
 mod memory;
 mod session;
@@ -177,6 +178,13 @@ fn delete_skill(path: String) -> Result<(), String> {
 #[tauri::command(async)]
 fn reinstall_internal_skills() -> Result<InstallReport, String> {
     internal_skills::install(true)
+}
+
+/// Which interpreter `~/.kalo/market/py` resolves to, and whether the
+/// market-data dependencies are installed there.
+#[tauri::command(async)]
+fn market_env_status() -> Result<market_env::MarketEnv, String> {
+    market_env::status()
 }
 
 /// List personal memories from ~/.kalo/memory (frontmatter + summary).
@@ -576,6 +584,14 @@ fn main() {
                 }
                 Err(err) => eprintln!("[internal-skills] {err}"),
             }
+            // The `~/.kalo/market/py` entry point the market-data skill, the
+            // daily snapshot task and the user's terminal all go through.
+            // Filesystem-only, so it stays on the startup path; the probe that
+            // actually runs an interpreter is on demand (`market_env_status`).
+            match market_env::ensure_shim() {
+                Ok(state) => eprintln!("[market-env] shim {state:?}"),
+                Err(err) => eprintln!("[market-env] {err}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -595,6 +611,7 @@ fn main() {
             create_skill,
             delete_skill,
             reinstall_internal_skills,
+            market_env_status,
             list_memories,
             read_memory,
             write_memory,

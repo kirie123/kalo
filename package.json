@@ -9,7 +9,7 @@
   "scripts": {
     "setup": "cd kalo-harness && npm ci --ignore-scripts && npm run build && cd ../kalo-desktop && npm install",
     "dev": "bun scripts/ensure-engine.mjs && bun run --cwd kalo-desktop tauri dev",
-    "build": "bun scripts/ensure-engine.mjs && bun run --cwd kalo-desktop tauri build",
+    "build": "bun scripts/clean-bundle.mjs && bun scripts/ensure-engine.mjs && bun run --cwd kalo-desktop tauri build",
     "build:engine": "bash scripts/build-engine.sh",
     "version:show": "bun scripts/version.mjs",
     "version:set": "bun scripts/version.mjs",

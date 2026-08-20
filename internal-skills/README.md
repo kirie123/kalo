@@ -21,10 +21,16 @@ Skills 里可看、可改、可删）。
 | `filing-digest/` | 财报下载与分析：结构化指标先行，PDF 正文按需检索 |
 | `stock-checkup/` | 个股体检：风险排查 / 健康度 / 催化契机三大类逐项核对 |
 
-`market-data/` 是这四者里唯一带脚本的（`md.py` + `lib/` + `sources.yaml` + `tests/`），
-另三个是纯 markdown，通过绝对路径调它的 CLI。它的 Python 环境刻意放在数据目录
-`~/.kalo/market/venv` 而不是 skill 目录里——akshare + pandas 几百 MB，不该跟着
-skill 被复制来复制去，也不该进仓库。
+`market-data/` 是这四者里唯一带脚本的（`md.py` + `lib/` + `sources.yaml` + `tests/`
++ `setup.sh`），另三个是纯 markdown，通过绝对路径调它的 CLI。它的解释器刻意不在
+skill 目录里——akshare + pandas 几百 MB，不该跟着 skill 被复制来复制去，也不该进
+仓库。所有调用方一律走 `~/.kalo/market/py` 这个入口（由
+[`market_env.rs`](../kalo-desktop/src-tauri/src/market_env.rs) 在启动时写出的 bash
+shim），它运行时决定用哪个 Python：专用 venv → uv 管的 → 系统的。这样 SKILL.md
+里不会再出现写死的 `venv/Scripts/python.exe`，装完依赖也不用回头改任何文件。
+
+环境本身由 `market-data/setup.sh` 建（设置页 → Skills → 市场数据运行环境 有按钮），
+自检是 `md.py doctor`。
 
 顶层文件（比如这份 README）**不会**被安装，只有子目录里的内容会。所以一个
 skill 可以是多文件的：`SKILL.md` 之外还能带脚本、模板等，整个子目录一起装过去。

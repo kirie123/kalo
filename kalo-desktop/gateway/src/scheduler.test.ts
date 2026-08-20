@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEFAULT_TASKS,
   nextCronTime,
   parseCron,
   validateCron,
@@ -205,5 +206,70 @@ describe("scheduler", () => {
     reloaded.load();
     expect(reloaded.list().map((t) => t.id)).toContain("persist-me");
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("watch task: stderr-only failure enters the cooldown", async () => {
+    const { scheduler, alerts, nowRef } = makeScheduler();
+    // Fails the same way every run — exactly the shape of a broken
+    // environment, which must not alert on every single tick.
+    scheduler.upsert(
+      makeTask({ kind: "watch", script: "echo boom >&2; exit 1", cooldownMin: 30, prompt: undefined }),
+    );
+    fireOnce(nowRef, scheduler);
+    await waitFor(() => alerts.length > 0);
+    expect(scheduler.list()[0].lastResult).toBe("error");
+
+    fireOnce(nowRef, scheduler);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(alerts).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// First-run seeding
+// ---------------------------------------------------------------------------
+
+describe("seedDefaults", () => {
+  test("writes the bundled tasks when schedules.json does not exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kalo-sched-seed-"));
+    const { scheduler } = makeScheduler(dir);
+    scheduler.load();
+    scheduler.seedDefaults();
+
+    const ids = scheduler.list().map((t) => t.id);
+    expect(ids).toEqual(DEFAULT_TASKS.map((t) => t.id));
+    // Enabled out of the box, and on disk — the next launch must not re-seed.
+    expect(scheduler.list()[0].enabled).toBe(true);
+    const raw = JSON.parse(readFileSync(join(dir, "schedules.json"), "utf-8"));
+    expect(raw.tasks).toHaveLength(DEFAULT_TASKS.length);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a deleted seeded task stays deleted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kalo-sched-seed-"));
+    const first = makeScheduler(dir);
+    first.scheduler.load();
+    first.scheduler.seedDefaults();
+    first.scheduler.remove(DEFAULT_TASKS[0].id);
+    expect(first.scheduler.list()).toHaveLength(0);
+
+    // Next launch: the file exists (with an empty table), so no re-seed.
+    const second = makeScheduler(dir);
+    second.scheduler.load();
+    second.scheduler.seedDefaults();
+    expect(second.scheduler.list()).toHaveLength(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("the seeded task is a valid task by the scheduler's own rules", () => {
+    const { scheduler } = makeScheduler();
+    for (const task of DEFAULT_TASKS) {
+      expect(scheduler.upsert(task)).toBeNull();
+    }
+    // Zero-token contract: it must be a watch task, since an agent task
+    // would spawn a headless session every weekday.
+    expect(DEFAULT_TASKS.every((t) => t.kind === "watch")).toBe(true);
+    // And it must go through the shim, not a hardcoded interpreter path.
+    expect(DEFAULT_TASKS[0].script).toContain("/.kalo/market/py");
   });
 });

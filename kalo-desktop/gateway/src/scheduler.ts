@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { log } from "./protocol";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,82 @@ const MAX_BUFFER = 256 * 1024;
 
 const agentDir = join(homedir(), ".kalo", "agent");
 const storeFile = join(agentDir, "schedules.json");
+
+/**
+ * A bash that can run our snippets.
+ *
+ * Two traps on Windows, both of which this order is shaped around:
+ *
+ * 1. The `bash` on PATH is frequently **WSL's** (`System32\bash.exe`), which
+ *    sees a different filesystem and cannot run a script that talks about
+ *    `C:\Users\...`. `scripts/ensure-engine.mjs` hit this first.
+ * 2. `Git\bin\bash.exe` is a 44KB **wrapper** that launches the real shell
+ *    (`Git\usr\bin\bash.exe`, 1.9MB) as a child. For a build script that
+ *    just waits, the extra layer is harmless — but here children are
+ *    long-lived, detached and killable, and the wrapper means `child.kill()`
+ *    kills the wrapper while the shell keeps running (and keeps holding its
+ *    cwd). So the real shell is preferred over the wrapper.
+ *
+ * Not cached: a user who installs Git for Windows to fix a failing watch task
+ * should not have to restart the gateway.
+ */
+export function resolveBash(): string {
+  for (const v of [process.env.KALO_BASH, process.env.BASH]) {
+    if (v && v.trim() && existsSync(v)) return v;
+  }
+  if (process.platform !== "win32") return "bash";
+  const onPath = pathBash();
+  if (onPath) return onPath;
+  for (const p of [
+    "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+    "C:\\Program Files\\Git\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
+    "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+  ]) {
+    if (existsSync(p)) return p;
+  }
+  return "bash";
+}
+
+/** First `bash.exe` on PATH that is not WSL's launcher. */
+function pathBash(): string | null {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir.trim() || /system32/i.test(dir)) continue;
+    const p = join(dir, "bash.exe");
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Tasks written on first run, so a fresh install is not an empty table.
+ *
+ * Only one entry, and it earns its place: `macro append` is what builds
+ * `~/.kalo/market/daily.jsonl`, and every percentile the macro-pulse skill
+ * reports is computed against that history. A user who has to discover the
+ * task page first loses the first weeks of data permanently — history is the
+ * one thing that cannot be backfilled.
+ *
+ * It costs zero tokens by design: `macro append` is silent on success, and a
+ * watch task only alerts on non-empty stdout.
+ */
+export const DEFAULT_TASKS: ScheduleTask[] = [
+  {
+    id: "market-daily-snapshot",
+    name: "宏观快照每日落盘",
+    kind: "watch",
+    // 收盘之后，且刻意避开整点——整点是所有人的默认值。
+    schedule: "12 17 * * 1-5",
+    cwd: join(homedir(), ".kalo", "market"),
+    // 走 ~/.kalo/market/py 这个 shim，而不是写死某个解释器路径：
+    // 哪个 Python 由 shim 在运行时决定（见 src-tauri/src/market_env.rs）。
+    script: '"$HOME/.kalo/market/py" "$HOME/.kalo/skills/market-data/md.py" macro append',
+    matchMode: "nonEmpty",
+    // 环境没就绪时 shim 走 stderr + exit 1，会告警一次；一天最多一次。
+    cooldownMin: 1440,
+    enabled: true,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Minimal 5-field cron (numeric; "*", "*/n", "a", "a-b", "a-b/n", lists).
@@ -230,6 +306,26 @@ export class Scheduler {
     log(`scheduler loaded ${this.tasks.size} task(s)`);
   }
 
+  /**
+   * Write the bundled default tasks, once, on a machine that has never had a
+   * schedules.json.
+   *
+   * The guard is "the file does not exist", **not** "the table is empty":
+   * a user who deletes the seeded task must not find it back on next launch.
+   * Same reasoning as `feeds.seedExamples()`, which guards on the directory
+   * rather than on the spec count.
+   */
+  seedDefaults(): void {
+    if (existsSync(this.storeFile)) return;
+    for (const task of DEFAULT_TASKS) {
+      this.tasks.set(task.id, { ...task });
+      this.runtime.set(task.id, this.freshRuntime(task));
+    }
+    this.save();
+    log(`scheduler seeded ${DEFAULT_TASKS.length} default task(s)`);
+    this.deps.onChange();
+  }
+
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -348,7 +444,7 @@ export class Scheduler {
     rt.running = true;
     task.lastRun = new Date(this.now()).toISOString();
 
-    const child = spawn("bash", ["-c", task.script ?? ""], {
+    const child = spawn(resolveBash(), ["-c", task.script ?? ""], {
       cwd: existsSync(task.cwd) ? task.cwd : undefined,
       windowsHide: true,
     });
@@ -360,6 +456,10 @@ export class Scheduler {
       settled = true;
       child.kill();
       rt.running = false;
+      // Cooldown applies to failures too, not just to matches: a task whose
+      // environment is broken fails on *every* tick, and without this a
+      // 5-minute task pushes 288 identical alerts a day.
+      rt.lastAlertAt = this.now();
       this.finishRun(task, "error");
       this.deps.sendAlert(task, `⏱️ 脚本执行超过 ${WATCH_TIMEOUT_MS / 1000}s，已强制终止`);
     }, WATCH_TIMEOUT_MS);
@@ -375,6 +475,7 @@ export class Scheduler {
       settled = true;
       clearTimeout(killTimer);
       rt.running = false;
+      rt.lastAlertAt = this.now();
       this.finishRun(task, "error");
       this.deps.sendAlert(task, `❌ 脚本无法启动：${e.message}（需要系统可用 bash）`);
     });
@@ -392,6 +493,7 @@ export class Scheduler {
         const body = output.length > MAX_ALERT_OUTPUT ? output.slice(0, MAX_ALERT_OUTPUT) + "\n…(截断)" : output;
         this.deps.sendAlert(task, body);
       } else if (err.trim() && !out) {
+        rt.lastAlertAt = this.now();
         this.finishRun(task, "error");
         this.deps.sendAlert(task, `❌ 脚本异常（无输出，stderr）：\n${err.trim().slice(0, MAX_ALERT_OUTPUT)}`);
       } else {

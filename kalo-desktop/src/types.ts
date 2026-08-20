@@ -326,6 +326,32 @@ export interface SkillInstallReport {
   skipped: string[];
 }
 
+/**
+ * State of the market-data run environment, as reported by executing the
+ * `~/.kalo/market/py` shim (see `src-tauri/src/market_env.rs`).
+ *
+ * `ready` is the only field the card branches on: an interpreter was resolved
+ * **and** every dependency imports there. Everything else exists to tell the
+ * user which of the shim's routes won, so a wrong answer is diagnosable.
+ */
+export interface MarketEnv {
+  ready: boolean;
+  python: string | null;
+  version: string | null;
+  /** `override` | `venv` | `uv` | `system` | `none` */
+  route: string;
+  venv: string | null;
+  shim: string;
+  shimState: "installed" | "updated" | "unchanged" | "userEdited";
+  /** Module name → importable. */
+  deps: Record<string, boolean>;
+  /** Just the missing ones, most-fundamental-first. */
+  missing: string[];
+  detail: string;
+  /** Why the probe itself failed (no bash, no Python at all, …). */
+  error: string | null;
+}
+
 /** One memory's index metadata (frontmatter + summary, no body). */
 export interface MemoryMeta {
   slug: string;

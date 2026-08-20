@@ -11,26 +11,36 @@ description: 金融数据取数层：宏观指标（美元指数/中美国债/�
 
 ## 运行方式
 
-Python 环境不在这个目录里，在数据目录 `~/.kalo/market/venv`（akshare + pandas 有
-几百 MB，不该跟着 skill 被复制来复制去）：
+解释器不在这个目录里（akshare + pandas 有几百 MB，不该跟着 skill 被复制来复制去），
+也不要写死某个 venv 路径——**用 `~/.kalo/market/py` 这个入口**，它自己会去找该用哪个
+Python（专用 venv → uv 管的 → 系统的），在 Windows 和类 Unix 上都是同一行：
 
 ```bash
-PY=~/.kalo/market/venv/Scripts/python.exe     # Windows；类 Unix 是 bin/python
+PY=~/.kalo/market/py
 SKILL=~/.kalo/skills/market-data
 $PY $SKILL/md.py macro now
 ```
 
-环境不存在时重建（需要 uv，`winget install --id=astral-sh.uv`）：
+跑不起来时第一步是自检，它会说清楚缺什么：
 
 ```bash
-uv venv --python 3.12 ~/.kalo/market/venv
-uv pip install --python ~/.kalo/market/venv/Scripts/python.exe -r $SKILL/requirements.txt
+$PY $SKILL/md.py doctor
 ```
+
+环境没就绪（缺 Python 或缺依赖）时初始化一次，联网、几分钟：
+
+```bash
+bash $SKILL/setup.sh                  # 也可以点：设置 → Skills → 市场数据运行环境
+bash $SKILL/setup.sh --mirror https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+想指定别的解释器：`export KALO_MARKET_PYTHON=/path/to/python`。
 
 ## 命令
 
 | 命令 | 用途 | 输出 |
 | --- | --- | --- |
+| `md.py doctor` | 环境自检：解释器、依赖、已攒的数据 | 人读的表格（不联网） |
 | `md.py probe [--all\|<id>]` | 逐源实测，框架自检 | 人读的表格 |
 | `md.py get <source-id>` | 取单源事实 | JSON |
 | `md.py macro now` | 全部宏观源当前快照 | JSON |
@@ -52,7 +62,8 @@ uv pip install --python ~/.kalo/market/venv/Scripts/python.exe -r $SKILL/require
 ```
 ~/.kalo/market/daily.jsonl     每日宏观快照，一行一天，append-only（同日重跑覆盖）
 ~/.kalo/market/cache/<id>.json 当日取数缓存（按源 ttl）
-~/.kalo/market/venv/           Python 环境
+~/.kalo/market/py              解释器入口（Kalo 生成，改了不会被覆盖）
+~/.kalo/market/venv/           setup.sh 建的专用 Python 环境
 ```
 
 ## 加一条源

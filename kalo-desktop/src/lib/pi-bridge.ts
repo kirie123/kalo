@@ -10,6 +10,7 @@
  *   read_session_page { path, before?, limit? } -> SessionPage
  *   list_skills / read_skill / write_skill / create_skill / delete_skill
  *   reinstall_internal_skills {} -> SkillInstallReport
+ *   market_env_status {} -> MarketEnv
  *   list_memories / read_memory / write_memory / delete_memory
  *   read_models_config / write_models_config / read_auth_config / write_auth_config
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
@@ -61,6 +62,7 @@ import type {
   KnowledgeCardMeta,
   KnowledgeDomain,
   KnowledgeSearchHit,
+  MarketEnv,
   McpConfig,
   McpStatus,
   MemoryEntry,
@@ -147,6 +149,17 @@ export function deleteSkill(path: string): Promise<void> {
  */
 export function reinstallInternalSkills(): Promise<SkillInstallReport> {
   return invoke<SkillInstallReport>("reinstall_internal_skills", {});
+}
+
+/**
+ * Which interpreter `~/.kalo/market/py` resolves to, and whether market-data's
+ * dependencies are installed there.
+ *
+ * Runs the shim rather than re-deriving its search order, so this reports what
+ * the daily snapshot task will actually get — not what the frontend guesses.
+ */
+export function marketEnvStatus(): Promise<MarketEnv> {
+  return invoke<MarketEnv>("market_env_status", {});
 }
 
 // ============================================================================

@@ -98,15 +98,17 @@ function engineStale() {
   return false;
 }
 
-/** Gateway rebuild is cheap: trigger on missing exe or changed sources. */
+/**
+ * Gateway rebuild is cheap: trigger on missing exe or changed sources. The
+ * source scan must recurse — src/jobs/ alone holds most of the gateway, and a
+ * top-level-only check let edits in there ship a stale sidecar to both
+ * `tauri dev` and `tauri build`.
+ */
 function gatewayStale() {
   if (!existsSync(GATEWAY_EXE)) return true;
   const srcDir = join(GATEWAY_DIR, "src");
-  const files = [
-    join(GATEWAY_DIR, "package.json"),
-    join(GATEWAY_DIR, "tsconfig.json"),
-    ...readdirSync(srcDir).map((f) => join(srcDir, f)),
-  ];
+  if (existsSync(srcDir) && newerThanIn(srcDir, statSync(GATEWAY_EXE).mtimeMs)) return true;
+  const files = [join(GATEWAY_DIR, "package.json"), join(GATEWAY_DIR, "tsconfig.json")];
   return files.some((f) => existsSync(f) && newerThan(f, GATEWAY_EXE));
 }
 

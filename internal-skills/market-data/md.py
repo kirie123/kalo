@@ -1,5 +1,6 @@
 """market-data 统一 CLI。
 
+    md.py doctor                 环境自检：解释器/依赖/落盘（不联网）
     md.py probe [--all|<id>]     逐源实测：字段抽出来了没有（框架自检）
     md.py get <source-id>        取单源事实 JSON
     md.py macro now              全部宏观源当前快照
@@ -28,12 +29,82 @@ for stream in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import fetch as fetch_mod  # noqa: E402
-from lib import filing  # noqa: E402
-from lib import macro as macro_mod  # noqa: E402
-from lib import stock as stock_mod  # noqa: E402
+# store 只用标准库，doctor 要靠它算路径，所以单独导入——它不会失败。
 from lib import store  # noqa: E402
-from lib.registry import load_sources  # noqa: E402
+
+# 其余 lib 需要 requests / pyyaml。依赖没装齐时**不要抛 traceback**：
+# doctor 的存在意义正是在这种时候还能跑。所以这里允许导入失败，把原因
+# 留给 doctor 打印，其他命令则在 main() 里给一句可执行的下一步。
+_IMPORT_ERROR: Exception | None = None
+try:
+    from lib import fetch as fetch_mod  # noqa: E402
+    from lib import filing  # noqa: E402
+    from lib import macro as macro_mod  # noqa: E402
+    from lib import stock as stock_mod  # noqa: E402
+    from lib.registry import load_sources  # noqa: E402
+except Exception as exc:  # ImportError，也可能是 yaml 装坏了之类
+    _IMPORT_ERROR = exc
+
+
+def cmd_doctor(args) -> int:
+    """环境自检：解释器、依赖、数据落盘情况。**不联网**（联网自检是 probe）。
+
+    输出给人和模型看，所以是表格不是 JSON。三处用：设置页卡片的详情、
+    setup.sh 收尾、以及"怎么跑不起来"时的第一步。
+    """
+    print("== 解释器")
+    print(f"  {sys.executable}")
+    print(f"  Python {'.'.join(str(x) for x in sys.version_info[:3])}"
+          f"  ({sys.platform})")
+    venv = store.MARKET_DIR / "venv"
+    print(f"  专用 venv  {venv}  {'存在' if venv.exists() else '不存在'}")
+    print(f"  入口 shim  {store.MARKET_DIR / 'py'}"
+          f"  {'存在' if (store.MARKET_DIR / 'py').exists() else '不存在（启动 Kalo 会重建）'}")
+
+    print("\n== 依赖")
+    missing = []
+    for mod, why in (
+        ("requests", "所有 http 源"),
+        ("yaml", "读 sources.yaml"),
+        ("pypdf", "财报 PDF 抽文本"),
+        ("akshare", "两融余额一条源"),
+        ("pandas", "akshare 的依赖"),
+    ):
+        try:
+            __import__(mod)
+            ver = getattr(sys.modules[mod], "__version__", "")
+            print(f"  [ok ] {mod:<10} {ver:<10} {why}")
+        except Exception as exc:
+            missing.append(mod)
+            print(f"  [缺 ] {mod:<10} {'':<10} {why}   ← {type(exc).__name__}")
+
+    print("\n== 数据")
+    daily = store.DAILY_FILE
+    lines = 0
+    if daily.exists():
+        with daily.open(encoding="utf-8") as f:
+            lines = sum(1 for line in f if line.strip())
+    print(f"  daily.jsonl   {lines} 天  {daily}")
+    cache_dir = store.MARKET_DIR / "cache"
+    n_cache = len(list(cache_dir.glob("*.json"))) if cache_dir.exists() else 0
+    print(f"  cache/        {n_cache} 个文件")
+    if _IMPORT_ERROR is None:
+        srcs = load_sources()
+        groups: dict[str, int] = {}
+        for s in srcs:
+            groups[s.group] = groups.get(s.group, 0) + 1
+        detail = " + ".join(f"{k} {v}" for k, v in sorted(groups.items()))
+        print(f"  sources.yaml  {len(srcs)} 条源（{detail}）")
+    else:
+        print(f"  sources.yaml  读不了：{_IMPORT_ERROR}")
+
+    if missing:
+        print(f"\n未就绪：缺 {' / '.join(missing)}")
+        print("  修：Kalo → 设置 → Skills → 市场数据运行环境 → 一键初始化")
+        print(f"  或：bash {Path(__file__).resolve().parent / 'setup.sh'}")
+        return 1
+    print("\n就绪。下一步 md.py probe 逐源实测（这一步会联网）。")
+    return 0
 
 
 def cmd_probe(args) -> int:
@@ -166,6 +237,9 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--fresh", action="store_true", help="绕过缓存强制重取")
 
+    sd = sub.add_parser("doctor", help="环境自检：解释器/依赖/落盘（不联网）")
+    sd.set_defaults(func=cmd_doctor)
+
     sp = sub.add_parser("probe", parents=[common], help="逐源实测（框架自检）")
     sp.add_argument("source", nargs="?", default=None, help="源 id，不给就是全部")
     # --all 是不给 source 的同义词：写出来更像一句话，也照顾手指记忆
@@ -222,6 +296,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    # 依赖缺失时给一句能照着做的话，而不是一屏 traceback。
+    # doctor 例外——它就是用来看缺了什么的。
+    if _IMPORT_ERROR is not None and args.func is not cmd_doctor:
+        print(f"环境未就绪：{type(_IMPORT_ERROR).__name__}: {_IMPORT_ERROR}", file=sys.stderr)
+        print("先跑自检看缺什么：md.py doctor", file=sys.stderr)
+        return 1
     return args.func(args)
 
 

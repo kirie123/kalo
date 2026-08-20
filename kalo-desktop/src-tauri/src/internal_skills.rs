@@ -88,7 +88,7 @@ fn source_dir() -> Option<PathBuf> {
 /// only answers "is this the same text we wrote last time", and unlike
 /// `DefaultHasher` its output is stable across Rust versions, so a toolchain
 /// upgrade cannot make every skill look locally modified.
-fn fingerprint(bytes: &[u8]) -> String {
+pub(crate) fn fingerprint(bytes: &[u8]) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in bytes {
         hash ^= u64::from(*b);
@@ -124,7 +124,12 @@ fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        // Dotfiles are private to the source tree; `__pycache__` is build
+        // output. Both were shipping until the first release build showed
+        // `market-data/lib/__pycache__/*.pyc` in the manifest — bytecode
+        // compiled by whichever interpreter the developer happened to run,
+        // installed onto machines that will never use it.
+        if name.starts_with('.') || name == "__pycache__" || name.ends_with(".pyc") {
             continue;
         }
         let rel = format!("{prefix}/{name}");
@@ -335,10 +340,13 @@ mod tests {
         write(&src.join("math/SKILL.md"), "s");
         write(&src.join("math/scripts/check.py"), "print(1)");
         write(&src.join("math/.draft.md"), "wip");
+        // Bytecode from whoever ran the script last; not ours to ship.
+        write(&src.join("math/scripts/__pycache__/check.cpython-312.pyc"), "\0\0");
 
         let r = install_into(&src, &root, false).unwrap();
         assert_eq!(r.installed, vec!["math/SKILL.md", "math/scripts/check.py"]);
         assert!(!root.join("math/.draft.md").exists());
+        assert!(!root.join("math/scripts/__pycache__").exists());
     }
 
     #[test]

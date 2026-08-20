@@ -10,7 +10,7 @@ description: 上市公司财报下载与分析。当用户要看某只股票的�
 ## 取数
 
 ```bash
-PY=~/.kalo/market/venv/Scripts/python.exe
+PY=~/.kalo/market/py
 MD=~/.kalo/skills/market-data/md.py
 
 $PY $MD filing metrics 600519 --periods 12    # 结构化财务指标，先看这个
