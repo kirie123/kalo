@@ -67,11 +67,18 @@ export default function InputBox() {
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
   }, [text]);
 
-  // Draft pushed by an extension (set_editor_text).
+  // Draft pushed from outside (extension `set_editor_text`, quick-action chip).
+  // Focus with the caret at the end so a prefilled prompt can be edited or
+  // sent right away without reaching for the mouse again.
   useEffect(() => {
     if (chat.inputDraft !== undefined) {
       setText(chat.inputDraft);
       chatStore.clearInputDraft();
+      const el = textareaRef.current;
+      if (el) {
+        el.focus();
+        requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length));
+      }
     }
   }, [chat.inputDraft]);
 

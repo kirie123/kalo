@@ -9,6 +9,8 @@ Thumbs.db
 node_modules/
 dist/
 target/
+__pycache__/
+.pytest_cache/
 
 # Local design docs (kept local, not committed)
 doc/

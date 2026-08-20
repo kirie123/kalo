@@ -14,6 +14,7 @@
 import { appPaths, dirDiffNames, jobList, jobStart, listDir, readFileText } from "../../lib/pi-bridge";
 import type { BackgroundJob, DirEntry } from "../../types";
 import { EraFolder } from "./fold";
+import { resolveEra, runDoctor, withPython } from "./locate";
 import type { EraTree } from "./types";
 import { buildServeCommand, parseSpec, type EraRunSpec } from "./spec";
 
@@ -143,6 +144,16 @@ export interface StartRunResult {
  * The output directory must not exist — era refuses a non-empty one, and
  * silently reusing a directory would interleave two runs' traces into one
  * unfoldable file.
+ *
+ * Two things happen before the job is started, and both exist because the
+ * failure they prevent is invisible: a run that cannot work still produces a
+ * directory, a job that "completed", and an empty trace, leaving the panel to
+ * guess after the fact.
+ *
+ * 1. era is *located* rather than assumed to be on PATH, and the eval command
+ *    is pointed at the same interpreter that was found (see `locate.ts` —
+ *    a bare `python` in `--eval` is resolved by era's child shell, not by us).
+ * 2. `era doctor` runs first. Non-zero means no job is started at all.
  */
 export async function startRun(workspace: string, spec: EraRunSpec): Promise<StartRunResult> {
   const paths = await appPaths();
@@ -154,12 +165,24 @@ export async function startRun(workspace: string, spec: EraRunSpec): Promise<Sta
   if (existing !== null) {
     throw new Error(`${outDir} 已经有一次运行的记录了，换个名字`);
   }
+
+  const resolved = await resolveEra(spec.eraBin);
+  if (!resolved.ok) {
+    throw new Error(`${resolved.reason}。在演化面板里装一个，或在设置里指定 era 的路径。`);
+  }
+  const doctor = await runDoctor(resolved.location, paths.engineBin);
+  if (!doctor.ok) {
+    const detail = (doctor.err || doctor.out).trim().split(/\r?\n/).slice(-8).join("\n");
+    throw new Error(`era 自检没通过（exit ${doctor.code ?? "?"}），没有起运行：\n${detail || doctor.cmd}`);
+  }
+
   const seedDir = spec.seed.match(/^([A-Za-z]:[\\/]|\/)/) ? spec.seed : `${workspace}/${spec.seed}`;
   const cmd = buildServeCommand(spec, {
     outDir,
     seedDir,
     agentBin: paths.engineBin,
-    eraBin: spec.eraBin ?? undefined,
+    eraCmd: resolved.location.cmd,
+    evalCmd: withPython(spec.evalCmd, resolved.location.python),
   });
   const jobId = await jobStart({
     label: `演化 ${spec.name}`,

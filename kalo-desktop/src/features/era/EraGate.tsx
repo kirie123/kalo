@@ -193,6 +193,19 @@ export default function EraGate({ workspace, spec, seedDir, onStart, onAskAgent,
 
       {gate && (
         <>
+          {probe?.pythonNote && (
+            <div
+              className={`rounded-md border px-3 py-2 text-xs leading-relaxed ${
+                probe.pythonWarning ? "border-[var(--warn,#d29922)]" : "border-edge text-dim"
+              }`}
+            >
+              {probe.pythonNote}
+              {probe.effectiveEvalCmd !== spec.evalCmd && (
+                <div className="mono mt-1 break-all text-[10px] text-dim">{probe.effectiveEvalCmd}</div>
+              )}
+            </div>
+          )}
+
           <div className="rounded-lg border border-edge bg-card p-3">
             <div className="text-xs text-dim">基线分数（seed 未改动）</div>
             <div className="mono mt-0.5 text-2xl">

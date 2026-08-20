@@ -4,6 +4,77 @@ AI coding agent 桌面客户端：Tauri v2 + React 界面，Codex 风格 UI（�
 
 > Kalo 基于 [pi](https://github.com/earendil-works/pi) agent 引擎构建——桌面端通过子进程驱动 `pi --mode rpc`，使用其 NDJSON RPC 协议通信。`kalo-harness/` 是 pi 的 vendored 源码（MIT）。
 
+## 跑起来
+
+三步：装工具链 → `bun run setup` → `bun run dev`。
+
+### 1. 工具链
+
+| 需要 | 说明 |
+|---|---|
+| [Bun](https://bun.sh) | 跑仓库脚本 |
+| [Node](https://nodejs.org) ≥ 22 | 构建 pi 引擎（`kalo-harness`） |
+| [Rust](https://rustup.rs) | Tauri 后端 |
+
+Windows 还需要 **MSVC 构建工具**（Rust 的 `x86_64-pc-windows-msvc` 目标要用它的链接器）：装
+[Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 时勾选
+「使用 C++ 的桌面开发」。另外 Windows 上的脚本走 Git Bash，所以需要
+[Git for Windows](https://git-scm.com/download/win)。
+
+```powershell
+# Windows (PowerShell)
+winget install --id Rustlang.Rustup -e
+winget install --id OpenJS.NodeJS -e
+winget install --id Git.Git -e
+powershell -c "irm bun.sh/install.ps1 | iex"
+```
+
+```bash
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+curl -fsSL https://bun.sh/install | bash
+# Linux 另需 Tauri 的系统依赖（webkit2gtk 等），见 https://tauri.app/start/prerequisites/
+```
+
+### 2. 构建与运行
+
+```bash
+git clone https://github.com/kirie123/kalo.git
+cd kalo
+
+bun run setup     # 装依赖并构建 pi 引擎（首次约几分钟）
+bun run dev       # 调试启动（vite + tauri dev）
+```
+
+首次启动后，在**设置 → 模型**里填一个 provider 的 API Key 就可以开始对话了。
+
+其余命令：
+
+```bash
+bun run build              # 构建 Windows 安装包（NSIS，输出在 kalo-desktop/src-tauri/target/release/bundle/）
+bun run build:engine       # 仅重建引擎 exe（kalo-harness → kalo-desktop/src-tauri/binaries/）
+bash scripts/build-gateway.sh   # 仅重建网关 sidecar
+```
+
+各子目录也可用 npm 单独操作，详见 [kalo-desktop/README.md](kalo-desktop/README.md)。
+
+### 3. 试一下「演化」
+
+演化（程序搜索）是 Kalo 比较特别的一块，可以直接试：
+
+1. 侧边栏 →「演化」
+2. 顶部「运行环境」卡片如果说没找到 era，点「安装 era」——它用 [uv](https://docs.astral.sh/uv/) 装
+   [era-evolve](https://github.com/kirie123/era-evolve)，uv 会连自己的 Python 一起下载，
+   所以这台机器上有没有 Python、是哪个版本都不影响（国内网络可以在旁边填一个 PyPI 镜像）
+3. 点「试跑示例」——写出一个完整实验（60 城 TSP），什么都不用填
+4. 在实验卡片上点「验证评测」，看基线分数（≈ -32900），然后「开始演化」
+
+预算是 8 次扩展，每次会真的调一次模型。第一次变异通常就把分数从 -32900 推到 -6900 上下，
+曲线会明显往上走。
+
+> era 是一个独立仓库、独立开源的 Python 程序，**不随 Kalo 打包**，也不参与 `bun run dev` /
+> `bun run build`——没有它，Kalo 的其余功能一切照旧。
+
 ## 为什么做 Kalo
 
 **构建一个属于你自己的桌面端 Agent。**
@@ -66,6 +137,8 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 - **实时可视化与调试**。面板增量读 era 自己的 `trace.jsonl`（append-only、逐条 flush），前端折叠成搜索树：看树怎么长、分数曲线怎么走、点开任一节点看它改了什么、诊断为什么某条分支死了。中途被硬杀也不丢数据，标记为「已中断」照样能重建。
 - **领域词汇被关在一个目录里**。era 的树、`c_puct`、selection gap 这些概念只出现在 [`kalo-desktop/src/features/era/`](kalo-desktop/src/features/era/)，harness / gateway / Rust 侧零 era 词汇——整个目录删掉不影响任何其他功能。
 
+想直接看效果，见上面的[试一下「演化」](#3-试一下演化)。
+
 ## 仓库结构
 
 - [`kalo-desktop/`](kalo-desktop/) — 桌面端（Tauri v2 + React 18 + Tailwind）
@@ -107,27 +180,6 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 - IM 网关（飞书）：扫码配对，会话进度以单条持续编辑的消息推送到手机，可在 IM 侧 `/status`、`/stop` 等指令回控
 - 定时任务：cron 驱动的 `watch`（本地脚本巡检，零 token）与 `agent`（到点起无头会话）两类任务
 - 长跑任务（Jobs）：`job_run` / `job_list` / `job_output` / `job_kill` 工具 + Jobs 中心面板；任务进程脱离网关独立存活，状态落盘，网关重启后自动核对
-
-## 快速开始
-
-```bash
-# 首次：安装依赖并构建引擎
-bun run setup
-
-# 调试启动（vite + tauri dev）
-bun run dev
-
-# 构建 Windows 安装包（NSIS，输出在 kalo-desktop/src-tauri/target/release/bundle/）
-bun run build
-
-# 仅重新构建引擎 exe（kalo-harness → kalo-desktop/src-tauri/binaries/）
-bun run build:engine
-
-# 仅重新构建网关 sidecar（kalo-desktop/gateway → kalo-desktop/src-tauri/binaries/）
-bash scripts/build-gateway.sh
-```
-
-> 需要 [Bun](https://bun.sh)、Node ≥ 22 与 Rust 工具链（MSVC）。各子目录也可用 npm 单独操作，详见 [kalo-desktop/README.md](kalo-desktop/README.md)。
 
 ## 数据落盘
 

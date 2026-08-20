@@ -42,8 +42,15 @@ export interface EraRunSpec {
   /** Display only: one sentence on how to read the score. */
   scoreMeaning: string;
   /**
-   * How to invoke era. Defaults to `era` on PATH; a venv install (the common
-   * case for a Python tool on Windows) needs the full path to the executable.
+   * Legacy: how to invoke era. **Read-only compatibility** — specs written
+   * before the machine-level setting existed still have it, and it is still
+   * honoured, but nothing writes it any more.
+   *
+   * It never belonged here. A spec travels with the experiment: it is shared,
+   * committed, and rewritten by the wizard. Where era lives is a fact about
+   * *this laptop*, so it lives in the machine-level setting (`locate.ts`)
+   * instead — and a spec that omits it, as the wizard's output always did, is
+   * no longer a spec that cannot run.
    */
   eraBin: string | null;
 }
@@ -189,7 +196,7 @@ export function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-/** Where the era binary is invoked from; overridable for a venv install. */
+/** Everything machine-specific that the spec deliberately does not carry. */
 export interface EraLaunchOptions {
   /** Absolute path to the run's output directory (must not exist yet). */
   outDir: string;
@@ -197,8 +204,17 @@ export interface EraLaunchOptions {
   seedDir: string;
   /** Absolute path to kalo's bundled pi executable. */
   agentBin: string;
-  /** Defaults to `era`; a venv install can pass a full path. */
-  eraBin?: string;
+  /**
+   * Ready-to-run command prefix that invokes era, already shell-quoted —
+   * `locate.ts` produces it, and it is not always a single word (running from
+   * a source checkout is `PYTHONPATH=… python -m era`). Defaults to `era`.
+   */
+  eraCmd?: string;
+  /**
+   * Replaces `spec.evalCmd`. The resolver uses this to turn a bare `python`
+   * into an absolute interpreter path; the spec keeps the portable form.
+   */
+  evalCmd?: string;
 }
 
 /**
@@ -213,7 +229,7 @@ export interface EraLaunchOptions {
  *   or the run silently uses a different agent than the user configured.
  */
 export function buildServeCommand(spec: EraRunSpec, opts: EraLaunchOptions): string {
-  const era = opts.eraBin?.trim() || "era";
+  const era = opts.eraCmd?.trim() || "era";
   const args: string[] = [
     era,
     "serve",
@@ -223,7 +239,7 @@ export function buildServeCommand(spec: EraRunSpec, opts: EraLaunchOptions): str
     "--seed",
     shq(opts.seedDir),
     "--eval",
-    shq(spec.evalCmd),
+    shq(opts.evalCmd ?? spec.evalCmd),
     "--metric-goal",
     spec.metricGoal,
     "--budget",
@@ -287,6 +303,7 @@ export function serializeSpec(spec: EraRunSpec): string {
   if (spec.recombineEvery !== SPEC_DEFAULTS.recombineEvery) o.recombineEvery = spec.recombineEvery;
   if (spec.ideas) o.ideas = spec.ideas;
   if (spec.extraInstruction) o.extraInstruction = spec.extraInstruction;
-  if (spec.eraBin) o.eraBin = spec.eraBin;
+  // `eraBin` is intentionally not written back: it is a machine-level fact,
+  // and round-tripping it would re-introduce it into specs that get shared.
   return `${JSON.stringify(o, null, 2)}\n`;
 }

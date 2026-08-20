@@ -1,0 +1,5 @@
+akshare>=1.18
+pandas>=2.2
+requests>=2.32
+pyyaml>=6.0
+pypdf>=6.0

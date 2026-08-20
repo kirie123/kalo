@@ -21,8 +21,10 @@ import { jobStop, openPath, readTextSince } from "../../lib/pi-bridge";
 import type { BackgroundJob } from "../../types";
 import EraGate from "./EraGate";
 import EraNodeDetail from "./EraNodeDetail";
+import EraSetup from "./EraSetup";
 import EraWizard from "./EraWizard";
 import { diagnose } from "./diagnose";
+import { EXAMPLE_BUDGET, createExample } from "./example";
 import { EraFolder, bestNode, bestSoFarSeries, nodeState } from "./fold";
 import {
   TRACE_FILE,
@@ -58,10 +60,30 @@ type View =
 export default function EraPanel({ onLeaveToChat }: { onLeaveToChat: () => void }) {
   const [workspaces, setWorkspaces] = useState<string[]>(() => loadWorkspaces());
   const [view, setView] = useState<View>({ kind: "list" });
+  const [creatingExample, setCreatingExample] = useState(false);
 
   const addWorkspace = useCallback(async () => {
     const picked = await open({ directory: true }).catch(() => null);
     if (typeof picked === "string") setWorkspaces(rememberWorkspace(picked));
+  }, []);
+
+  // The shortest path from "cloned kalo" to "saw the score move". Everything
+  // else in this panel assumes you already have a seed and a scoring script;
+  // this writes a complete, real experiment and opens it.
+  const tryExample = useCallback(async () => {
+    setCreatingExample(true);
+    try {
+      const { workspace, reused } = await createExample();
+      setWorkspaces(rememberWorkspace(workspace));
+      chatStore.pushToast(
+        reused ? `示例已经在 ${workspace}` : `示例已创建：${workspace}`,
+        "info",
+      );
+    } catch (e) {
+      chatStore.pushToast(`创建示例失败：${errText(e)}`, "error");
+    } finally {
+      setCreatingExample(false);
+    }
   }, []);
 
   if (view.kind === "wizard") {
@@ -128,10 +150,17 @@ export default function EraPanel({ onLeaveToChat }: { onLeaveToChat: () => void 
           让一个 agent 反复改写你的代码，每改一次就用你的评测脚本打一次分，然后沿着分数高的方向继续改。
           适合"知道怎么算好、但不知道怎么写得更好"的问题。
         </p>
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            onClick={() => void tryExample()}
+            disabled={creatingExample}
+            className="rounded-md border border-dim px-3 py-1.5 text-sm text-ink hover:bg-base disabled:opacity-50"
+          >
+            {creatingExample ? "正在创建…" : "试跑示例"}
+          </button>
           <button
             onClick={() => setView({ kind: "wizard" })}
-            className="rounded-md border border-dim px-3 py-1.5 text-sm text-ink hover:bg-base"
+            className="rounded-md border border-edge px-3 py-1.5 text-sm text-dim hover:text-ink"
           >
             描述一个新实验
           </button>
@@ -142,7 +171,14 @@ export default function EraPanel({ onLeaveToChat }: { onLeaveToChat: () => void 
             打开已有目录
           </button>
         </div>
+        <p className="mt-2 text-xs leading-relaxed text-dim">
+          「试跑示例」写出一个完整的实验（60 城 TSP，种子程序按给定顺序访问城市，评分是平均路径长度的相反数），
+          预算 {EXAMPLE_BUDGET} 次，什么都不用填。第一次变异通常就能把分数从约 -32900 推到 -6900 上下——
+          曲线会动，这是最快看出这个功能在干什么的办法。
+        </p>
       </div>
+
+      <EraSetup />
 
       {workspaces.length === 0 ? (
         <p className="text-xs text-dim">还没有实验目录。</p>

@@ -14,6 +14,7 @@
 
 import { jobList, jobStart, jobStop, readFileText } from "../../lib/pi-bridge";
 import type { EvalProbe } from "./gate";
+import { formatPython, resolvePython, rewritesPython, withPython } from "./locate";
 import { shq } from "./spec";
 import { isJobTerminal } from "../../types";
 
@@ -38,6 +39,16 @@ export interface ProbeResult {
   second?: EvalProbe;
   /** Absolute path of the scratch dir, so the UI can offer "open folder". */
   probeDir: string;
+  /** The command as actually run, after the interpreter rewrite. */
+  effectiveEvalCmd: string;
+  /**
+   * Set when the probe had to say something about the interpreter — either
+   * that it substituted one, or that it could not and the eval is about to be
+   * scored by whatever `python` means on PATH.
+   */
+  pythonNote?: string;
+  /** True when the note is a problem rather than an explanation. */
+  pythonWarning?: boolean;
 }
 
 /**
@@ -96,14 +107,40 @@ async function readProbe(dir: string, elapsedS: number): Promise<EvalProbe> {
 /**
  * Run the probe and wait for it. Rejects only when the job could not be
  * started at all (no gateway); an eval that fails is a *result*, not an error.
+ *
+ * The command is rewritten through `withPython` first, for one reason: era
+ * spawns `--eval` as a shell command, so a bare `python` in it is resolved
+ * against PATH at scoring time. If the gate probed the raw command and the run
+ * used the rewritten one (or the other way round), the baseline the user
+ * approved would not be the baseline era measures — and the gate's whole claim
+ * is "whatever it reports is what era would have seen".
  */
 export async function runEvalProbe(req: ProbeRequest): Promise<ProbeResult> {
+  const py = await resolvePython().catch(() => null);
+  const evalCmd = withPython(req.evalCmd, py?.path ?? null);
+  const bare = rewritesPython(req.evalCmd);
+
+  let pythonNote: string | undefined;
+  let pythonWarning = false;
+  if (bare && py) {
+    pythonNote = `评测里的 python 已指向 ${py.path}（Python ${formatPython(py)}）——演化时用的也是这一个。`;
+  } else if (bare && !py) {
+    // The 2.x trap. It has already cost one silent zero-node run, era's own
+    // examples, and era's own test suite: an f-string in the eval is a
+    // SyntaxError under 2.7, every candidate scores as a failure, and the run
+    // finishes "successfully" having improved nothing.
+    pythonNote =
+      "没找到 ≥3.10 的 Python，评测会用 PATH 上的 python。" +
+      "如果那是 2.x，脚本里任何 f-string 都会直接 SyntaxError，整轮演化会一个节点都改进不了。";
+    pythonWarning = true;
+  }
+
   const probeDir = `${req.workDir}/${PROBE_DIR}`;
   const startedAt = Date.now();
   const id = await jobStart({
     label: `验证评测 · ${req.evalCmd}`,
     cwd: req.workDir,
-    cmd: probeScript(req, probeDir),
+    cmd: probeScript({ ...req, evalCmd }, probeDir),
     kind: "eragate",
   });
 
@@ -123,7 +160,7 @@ export async function runEvalProbe(req: ProbeRequest): Promise<ProbeResult> {
 
   const elapsedS = (Date.now() - startedAt) / 1000;
   const first = await readProbe(`${probeDir}/run1`, elapsedS);
-  const result: ProbeResult = { first, probeDir };
+  const result: ProbeResult = { first, probeDir, effectiveEvalCmd: evalCmd, pythonNote, pythonWarning };
   if (timedOut && !first.stdout) {
     result.first = {
       ...first,

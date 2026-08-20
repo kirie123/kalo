@@ -1,0 +1,254 @@
+# 数据源注册表
+#
+# 一条源 = 一条记录，不是一段代码。加源只需在这里加一段 YAML。
+#
+# 每条源必须带 verified_at 与 verified_sample：判据是「能不能在本机裸取到」，
+# 而不是「文档上写着有没有」。失效时 `md.py probe` 会立刻指出来。
+#
+# rate 等级（由实测倒逼，见 doc）：
+#   strict — push2*.eastmoney.com。连续几十次请求后会整体拒绝服务数分钟，
+#            换 UA 无效。必须长 TTL 缓存 + 退避重试。
+#   normal — datacenter.eastmoney.com / hq.sinajs.cn / cboe / binance / cninfo。
+#            实测在 push2 被限流的同一时刻全部正常。
+#
+# 字段抽取器四选一（与 gateway/src/feeds.ts 保持同一套心智）：
+#   {path: a.b.0.c}      JSON 点号路径，数字段即数组下标
+#   {regex: ..., group: 1}  文本首个匹配的第 group 个捕获组
+#   {index: 3, sep: ","}    文本按分隔符取第 n 段
+#   {const: "上证"}          固定文本
+# 数值整形（可选，按序）：scale → digits
+
+# ---------------------------------------------------------------------------
+# 一、美元与利率：全球流动性总闸
+# ---------------------------------------------------------------------------
+
+- id: dxy
+  name: 美元指数
+  group: macro
+  kind: http
+  url: "https://hq.sinajs.cn/list=DINIW"
+  encoding: gbk
+  headers:
+    Referer: "https://finance.sina.com.cn"
+  rate: normal
+  ttl: 300
+  parse:
+    type: text
+  fields:
+    dxy: { index: 1, sep: ",", digits: 4 }
+    dxy_prev_close: { index: 5, sep: ",", digits: 4 }
+  # 实测：hf_DX / hf_DXY / fx_sdxy / 东财 100.UDI / 100.DXY 全部返回空，
+  # 只有无前缀的 DINIW 这一个代码可用。
+  verified_at: "2026-08-20"
+  verified_sample: 'var hq_str_DINIW="17:13:15,98.6322,98.6322,98.7955,2668,98.8019,98.8958,98.6290,98.6322,美元指数,2026-08-20";'
+
+- id: treasury_yield
+  name: 中美国债收益率
+  group: macro
+  kind: http
+  url: "https://datacenter.eastmoney.com/api/data/get?type=RPTA_WEB_TREASURYYIELD&sty=ALL&st=SOLAR_DATE&sr=-1&p=1&ps=1"
+  rate: normal
+  ttl: 3600
+  parse:
+    type: json
+    rows: "result.data"
+    row: 0
+  # 字段是东财内部代号，不是可读名。实测对照：
+  #   EMG* = 美国   EMM* = 中国
+  fields:
+    yield_date: { path: "SOLAR_DATE" }
+    us2y: { path: "EMG00001306" }
+    us5y: { path: "EMG00001308" }
+    us10y: { path: "EMG00001310" }
+    us30y: { path: "EMG00001312" }
+    cn2y: { path: "EMM00588704" }
+    cn5y: { path: "EMM00166462" }
+    cn10y: { path: "EMM00166466" }
+    cn30y: { path: "EMM00166469" }
+  verified_at: "2026-08-20"
+  verified_sample: '{"SOLAR_DATE":"2026-08-19 00:00:00","EMM00166466":1.6831,"EMG00001310":4.65,...}'
+
+- id: usdcny
+  name: 在岸人民币
+  group: macro
+  kind: http
+  url: "https://hq.sinajs.cn/list=fx_susdcny"
+  encoding: gbk
+  headers:
+    Referer: "https://finance.sina.com.cn"
+  rate: normal
+  ttl: 300
+  parse:
+    type: text
+  # 字段位与 doc/2026-08-20-feeds-declarative-data-pull.md 里核对过的一致
+  fields:
+    usdcny: { index: 8, sep: ",", digits: 4 }
+    usdcny_chg_pct: { index: 10, sep: ",", digits: 4 }
+  verified_at: "2026-08-20"
+  verified_sample: 'var hq_str_fx_susdcny="17:05:33,6.7236,6.7256,...,在岸人民币,-0.1411,...";'
+
+# ---------------------------------------------------------------------------
+# 二、商品与经济动能
+# ---------------------------------------------------------------------------
+
+- id: commodities
+  name: 纽约金银铜油
+  group: macro
+  kind: http
+  url: "https://hq.sinajs.cn/list=hf_GC,hf_SI,hf_HG,hf_CL"
+  encoding: gbk
+  headers:
+    Referer: "https://finance.sina.com.cn"
+  rate: normal
+  ttl: 300
+  parse:
+    type: text
+  # 一次请求四行，每行 var hq_str_hf_XX="当前价,,买,卖,最高,最低,时间,昨结,开盘,..."
+  fields:
+    gold: { regex: 'hq_str_hf_GC="([\d.]+)', digits: 2 }
+    silver: { regex: 'hq_str_hf_SI="([\d.]+)', digits: 3 }
+    copper: { regex: 'hq_str_hf_HG="([\d.]+)', digits: 2 }
+    oil: { regex: 'hq_str_hf_CL="([\d.]+)', digits: 2 }
+  verified_at: "2026-08-20"
+  verified_sample: 'var hq_str_hf_GC="4545.196,,4546.000,...,纽约黄金,0";'
+
+# ---------------------------------------------------------------------------
+# 三、全球风险偏好
+# ---------------------------------------------------------------------------
+
+- id: vix
+  name: VIX 恐慌指数
+  group: macro
+  kind: http
+  url: "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json"
+  rate: normal
+  ttl: 600
+  parse:
+    type: json
+  fields:
+    vix: { path: "data.current_price" }
+    vix_chg_pct: { path: "data.price_change_percent" }
+  verified_at: "2026-08-20"
+  verified_sample: '{"data":{"symbol":"^VIX","current_price":15.22,"price_change_percent":2.2163,...}}'
+
+- id: btc
+  name: 比特币
+  group: macro
+  kind: http
+  url: "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
+  rate: normal
+  ttl: 300
+  parse:
+    type: json
+  fields:
+    btc: { path: "lastPrice", digits: 2 }
+    btc_chg_pct: { path: "priceChangePercent", digits: 2 }
+  verified_at: "2026-08-20"
+  verified_sample: '{"symbol":"BTCUSDT","lastPrice":"71721.99","priceChangePercent":"11.282",...}'
+
+- id: global_index
+  name: 纳指标普恒生
+  group: macro
+  kind: http
+  url: "https://hq.sinajs.cn/list=int_nasdaq,int_sp500,int_hangseng"
+  encoding: gbk
+  headers:
+    Referer: "https://finance.sina.com.cn"
+  rate: normal
+  ttl: 600
+  parse:
+    type: text
+  # 格式：var hq_str_int_nasdaq="名称,点位,涨跌额,涨跌幅";
+  fields:
+    nasdaq: { regex: 'int_nasdaq="[^,]*,([\d.]+)', digits: 2 }
+    nasdaq_chg_pct: { regex: 'int_nasdaq="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+    sp500: { regex: 'int_sp500="[^,]*,([\d.]+)', digits: 2 }
+    sp500_chg_pct: { regex: 'int_sp500="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+    hsi: { regex: 'int_hangseng="[^,]*,([\d.]+)', digits: 2 }
+    hsi_chg_pct: { regex: 'int_hangseng="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+  verified_at: "2026-08-20"
+  verified_sample: 'var hq_str_int_nasdaq="纳斯达克,22484.07,99.37,0.44";'
+
+# ---------------------------------------------------------------------------
+# 四、A股自身
+#
+# ⚠ 实测教训：A股指数原本用东财 push2.eastmoney.com/api/qt/ulist.np，
+# 开发当天被该域整体限流（连接直接 RemoteDisconnected，curl 与 requests
+# 同样中招，换 UA 无效，持续数小时）。同一时刻 hq.sinajs.cn / push2ex /
+# datacenter 全部正常。
+#
+# 结论：**最关键的指标不要单一依赖 push2**。A股指数改走新浪简版行情，
+# 与 dxy / commodities 同一个 host（已反复验证稳定）。push2 的接口留在
+# 注释里备查，将来做个股体检需要日 K 线时仍会用到，届时必须靠缓存把请求
+# 次数压到每天一次。
+#
+# 备用（限流恢复后可用）：
+#   https://push2.eastmoney.com/api/qt/ulist.np/get?fields=f2,f3,f6,f14&secids=1.000001,0.399001,0.399006
+# ---------------------------------------------------------------------------
+
+- id: cn_index
+  name: A股三大指数
+  group: macro
+  kind: http
+  url: "https://hq.sinajs.cn/list=s_sh000001,s_sz399001,s_sz399006,s_sh000300"
+  encoding: gbk
+  headers:
+    Referer: "https://finance.sina.com.cn"
+  rate: normal
+  ttl: 300
+  parse:
+    type: text
+  # 格式：var hq_str_s_sh000001="名称,点位,涨跌额,涨跌幅%,成交量(手),成交额(万元)";
+  # 成交额单位是**万元**，转成元要 ×10000（analyze 时按万元口径处理，
+  # 这里保持源的原始口径不动，避免两处各转一次）。
+  fields:
+    sh_index: { regex: 's_sh000001="[^,]*,([\d.]+)', digits: 2 }
+    sh_chg_pct: { regex: 's_sh000001="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+    sh_turnover_wan: { regex: 's_sh000001="(?:[^,]*,){5}(-?[\d.]+)', digits: 0 }
+    sz_index: { regex: 's_sz399001="[^,]*,([\d.]+)', digits: 2 }
+    sz_chg_pct: { regex: 's_sz399001="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+    sz_turnover_wan: { regex: 's_sz399001="(?:[^,]*,){5}(-?[\d.]+)', digits: 0 }
+    cyb_index: { regex: 's_sz399006="[^,]*,([\d.]+)', digits: 2 }
+    cyb_chg_pct: { regex: 's_sz399006="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+    hs300_index: { regex: 's_sh000300="[^,]*,([\d.]+)', digits: 2 }
+    hs300_chg_pct: { regex: 's_sh000300="(?:[^,]*,){3}(-?[\d.]+)', digits: 2 }
+  verified_at: "2026-08-20"
+  verified_sample: 'var hq_str_s_sh000001="上证指数,3903.7210,9.2986,0.24,5066339,101856835";'
+
+- id: limit_up_pool
+  name: 涨停池
+  group: macro
+  kind: http
+  url: "https://push2ex.eastmoney.com/getTopicZTPool?ut=7eea3edcaed734bea9cbfc24409ed989&dpt=wz.ztzt&Pageindex=0&pagesize=200&sort=fbt%3Aasc&date={today}"
+  rate: strict
+  ttl: 1800
+  parse:
+    type: json
+  # tc = 涨停总数；zbc(炸板次数)>0 的个股数由 count_where 派生
+  fields:
+    limit_up_count: { path: "data.tc" }
+  derive:
+    - name: broken_board_count
+      type: count_where
+      rows: "data.pool"
+      field: "zbc"
+      op: ">"
+      value: 0
+  verified_at: "2026-08-20"
+  verified_sample: '{"data":{"tc":79,"qdate":20260820,"pool":[{"c":"000931","zdp":9.976,"zbc":0,...}]}}'
+
+- id: margin_balance
+  name: 两融余额(沪市)
+  group: macro
+  kind: akshare
+  call: stock_margin_sse
+  # akshare 内部同样打东财/交易所接口，所以也走缓存层
+  rate: strict
+  ttl: 86400
+  parse:
+    type: dataframe
+    row: 0
+  fields:
+    margin_balance: { path: "融资余额" }
+  verified_at: "2026-08-20"
+  verified_sample: '融资余额 = 801602446146（8016 亿，沪市）'

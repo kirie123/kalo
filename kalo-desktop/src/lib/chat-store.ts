@@ -1350,6 +1350,12 @@ export class ChatStore {
     }
   }
 
+  /** Prefill the composer (quick-action chips, `set_editor_text`). The user
+   *  still presses Enter — a chip fills the box, it does not send for you. */
+  setInputDraft(text: string) {
+    this.set({ inputDraft: text });
+  }
+
   clearInputDraft() {
     this.set({ inputDraft: undefined });
   }
