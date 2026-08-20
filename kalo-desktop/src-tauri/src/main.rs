@@ -297,17 +297,18 @@ fn dir_diff_names(a: String, b: String, ignore: Option<Vec<String>>) -> Result<D
     files::dir_diff_names(&a, &b, &ignore.unwrap_or_default())
 }
 
-/// Read a file as a chat attachment (image base64 or extracted text).
+/// Read a file as a chat attachment: inline base64 for images, a bare path
+/// for everything else (the model reads it itself).
 #[tauri::command(async)]
 fn read_attachment(path: String) -> Result<AttachmentData, String> {
     files::read_attachment(&path)
 }
 
-/// Read a chat attachment from raw bytes — a pasted file, which the webview
-/// hands over as content without a path.
+/// Persist a pasted attachment — the webview hands it over as bytes without a
+/// path — under `~/.kalo/attachments` and return where it landed.
 #[tauri::command(async)]
-fn read_attachment_bytes(name: String, data_base64: String) -> Result<AttachmentData, String> {
-    files::read_attachment_bytes(&name, &data_base64)
+fn save_attachment_bytes(name: String, data_base64: String) -> Result<AttachmentData, String> {
+    files::save_attachment_bytes(&name, &data_base64)
 }
 
 /// Open a path with the system default app, or reveal it in the OS file
@@ -606,7 +607,7 @@ fn main() {
             read_text_since,
             dir_diff_names,
             read_attachment,
-            read_attachment_bytes,
+            save_attachment_bytes,
             open_path,
             search_files,
             gateway_pair_start,

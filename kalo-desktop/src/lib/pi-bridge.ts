@@ -24,8 +24,8 @@
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   read_text_since { path, offset, maxBytes? } -> { text, offset, size, reset }
  *   dir_diff_names { a, b, ignore? } -> { changed, added, removed, truncated }
- *   read_attachment { path } -> AttachmentDraft (image base64 or text)
- *   read_attachment_bytes { name, dataBase64 } -> AttachmentDraft (pasted file)
+ *   read_attachment { path } -> AttachmentDraft (image base64, or a path ref)
+ *   save_attachment_bytes { name, dataBase64 } -> AttachmentDraft (pasted file)
  *   open_path { path, reveal } -> void
  *   git_status { cwd } -> GitStatus | null   (null = not a repo)
  *   git_diff { cwd, relPath } -> string      (unified diff vs HEAD)
@@ -232,13 +232,14 @@ export function appPaths(): Promise<AppPaths> {
   return invoke<AppPaths>("app_paths", {});
 }
 
+/** Image base64 for images, a bare path for every other file. */
 export function readAttachment(path: string): Promise<AttachmentDraft> {
   return invoke<AttachmentDraft>("read_attachment", { path });
 }
 
-/** Same as readAttachment, for a pasted file (bytes without a path). */
-export function readAttachmentBytes(name: string, dataBase64: string): Promise<AttachmentDraft> {
-  return invoke<AttachmentDraft>("read_attachment_bytes", { name, dataBase64 });
+/** Persist a pasted file (bytes without a path) and get back its path. */
+export function saveAttachmentBytes(name: string, dataBase64: string): Promise<AttachmentDraft> {
+  return invoke<AttachmentDraft>("save_attachment_bytes", { name, dataBase64 });
 }
 
 /** Open with the system default app (reveal=false) or show in the OS file manager (reveal=true). */

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { createPortal } from "react-dom";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { chatStore, useChatSelector } from "../lib/chat-store";
@@ -7,6 +6,7 @@ import { listDir, searchFiles } from "../lib/pi-bridge";
 import { cwdBasename } from "../lib/projects";
 import type { FileMatch } from "../types";
 import ContextRing from "./ContextRing";
+import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import ModelPicker from "./ModelPicker";
 
 const MAX_TEXTAREA_HEIGHT = 192; // ~8 lines
@@ -27,7 +27,9 @@ function detectToken(value: string, cursor: number): AcToken | null {
   return { mode: m[1] === "/" ? "slash" : "file", query: m[2], start: before.length - m[2].length - 1 };
 }
 
-/** File types accepted by the attachment picker (images / office / text). */
+/** File types offered by default in the attachment picker. The backend
+ *  accepts any file (it only passes the path along), so an "all files" filter
+ *  sits next to this one for the extensionless / unlisted cases. */
 const ATTACHMENT_EXTENSIONS = [
   "png", "jpg", "jpeg", "gif", "webp", "bmp",
   "pdf", "docx", "xlsx", "pptx", "xls",
@@ -49,7 +51,7 @@ export default function InputBox() {
     steeringMode: s.steeringMode,
   }));
   const [text, setText] = useState("");
-  const [previewImage, setPreviewImage] = useState<{ name: string; mimeType: string; dataBase64: string } | null>(null);
+  const [previewImage, setPreviewImage] = useState<LightboxImage | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Autocomplete state: active token, highlighted row, @ search results.
   const [ac, setAc] = useState<AcToken | null>(null);
@@ -216,7 +218,10 @@ export default function InputBox() {
     try {
       const selected = await open({
         multiple: true,
-        filters: [{ name: "附件", extensions: ATTACHMENT_EXTENSIONS }],
+        filters: [
+          { name: "常用附件", extensions: ATTACHMENT_EXTENSIONS },
+          { name: "所有文件", extensions: ["*"] },
+        ],
       });
       const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
       if (paths.length > 0) void chatStore.addAttachments(paths);
@@ -279,47 +284,42 @@ export default function InputBox() {
             image chips open the lightbox on click. */}
         {chat.attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
-            {chat.attachments.map((a) => {
-              const origin = a.sourcePath ?? `${a.name}（粘贴内容，无路径）`;
-              const tip =
-                a.kind === "image"
-                  ? `${origin}\n点击查看大图`
-                  : a.truncated
-                    ? `${origin}\n（内容过长，已截断）`
-                    : origin;
-              return (
-                <span
-                  key={a.name}
-                  title={tip}
-                  className="flex items-center gap-1.5 rounded-md border border-edge bg-base px-2 py-1 text-xs"
-                >
-                  {a.kind === "image" ? (
-                    <button
-                      onClick={() => setPreviewImage(a)}
-                      className="flex min-w-0 cursor-zoom-in items-center gap-1.5 text-left"
-                    >
-                      <img
-                        src={`data:${a.mimeType};base64,${a.dataBase64}`}
-                        alt={a.name}
-                        className="size-6 shrink-0 rounded object-cover"
-                      />
-                      <span className="max-w-40 truncate">{a.name}</span>
-                    </button>
-                  ) : (
-                    <span className="max-w-40 truncate">{a.name}</span>
-                  )}
+            {chat.attachments.map((a) => (
+              <span
+                key={a.name}
+                title={
+                  a.kind === "image"
+                    ? `${a.sourcePath ?? `${a.name}（粘贴内容，无路径）`}\n点击查看大图`
+                    : a.path
+                }
+                className="flex items-center gap-1.5 rounded-md border border-edge bg-base px-2 py-1 text-xs"
+              >
+                {a.kind === "image" ? (
                   <button
-                    onClick={() => chatStore.removeAttachment(a.name)}
-                    title="移除附件"
-                    className="shrink-0 text-dim hover:text-ink"
+                    onClick={() => setPreviewImage(a)}
+                    className="flex min-w-0 cursor-zoom-in items-center gap-1.5 text-left"
                   >
-                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-                    </svg>
+                    <img
+                      src={`data:${a.mimeType};base64,${a.dataBase64}`}
+                      alt={a.name}
+                      className="size-6 shrink-0 rounded object-cover"
+                    />
+                    <span className="max-w-40 truncate">{a.name}</span>
                   </button>
-                </span>
-              );
-            })}
+                ) : (
+                  <span className="max-w-40 truncate">{a.name}</span>
+                )}
+                <button
+                  onClick={() => chatStore.removeAttachment(a.name)}
+                  title="移除附件"
+                  className="shrink-0 text-dim hover:text-ink"
+                >
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </span>
+            ))}
           </div>
         )}
         <textarea
@@ -408,30 +408,7 @@ export default function InputBox() {
         </button>
       </div>
 
-      {/* Image lightbox — portaled to <body> so the chat-area zoom doesn't
-          scale its viewport-sized overlay past the actual viewport. */}
-      {previewImage &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8"
-            onClick={() => setPreviewImage(null)}
-          >
-            <div className="flex max-h-full max-w-full flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
-              <img
-                src={`data:${previewImage.mimeType};base64,${previewImage.dataBase64}`}
-                alt={previewImage.name}
-                className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
-              />
-              <div className="flex items-center gap-3 text-xs text-white/80">
-                <span>{previewImage.name}</span>
-                <button onClick={() => setPreviewImage(null)} className="rounded border border-white/30 px-2 py-0.5 hover:bg-white/10">
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
+      {previewImage && <ImageLightbox image={previewImage} onClose={() => setPreviewImage(null)} />}
     </div>
   );
 }

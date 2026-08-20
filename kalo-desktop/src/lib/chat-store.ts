@@ -38,6 +38,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "../types";
+import { formatAttachmentTag } from "./attachments";
 import {
   accumulate,
   createAccumulator,
@@ -52,11 +53,11 @@ import {
   onPiExit,
   onPiStderr,
   readAttachment,
-  readAttachmentBytes,
   readModelsConfig,
   readSessionPage,
   rejectSessionPending,
   resolveResponse,
+  saveAttachmentBytes,
   sendCommand,
   sendRawCommand,
 } from "./pi-bridge";
@@ -988,7 +989,9 @@ export class ChatStore {
     for (const path of paths) {
       try {
         const draft = await readAttachment(path);
-        this.pushAttachment({ ...draft, sourcePath: path });
+        // A file draft already carries its path; only images need the origin
+        // recorded separately for the chip tooltip.
+        this.pushAttachment(draft.kind === "image" ? { ...draft, sourcePath: path } : draft);
       } catch (err) {
         this.pushToast(`无法添加附件 ${path}：${errText(err)}`, "warning");
       }
@@ -998,7 +1001,7 @@ export class ChatStore {
   /**
    * Add attachments from webview File objects (clipboard paste). These carry
    * bytes but no path, so images are kept in memory and everything else is
-   * handed to the backend extractor as base64.
+   * written to `~/.kalo/attachments` to get a path the model can read.
    */
   async addFiles(files: File[]) {
     for (const file of files) {
@@ -1012,7 +1015,7 @@ export class ChatStore {
             dataBase64: base64,
           });
         } else {
-          this.pushAttachment(await readAttachmentBytes(file.name, base64));
+          this.pushAttachment(await saveAttachmentBytes(file.name, base64));
         }
       } catch (err) {
         this.pushToast(`无法添加附件 ${file.name}：${errText(err)}`, "warning");
@@ -1024,9 +1027,14 @@ export class ChatStore {
     this.set({ attachments: this.rt.view.attachments.filter((a) => a.name !== name) });
   }
 
-  /** Append one draft, renaming on collision — `name` is the chip's identity. */
+  /** Append one draft, renaming on collision — `name` is the chip's identity.
+   *  The same path twice is a no-op: it would put one file in the
+   *  `<attachments>` tag twice under two chip names. */
   private pushAttachment(draft: AttachmentDraft) {
     const existing = this.rt.view.attachments;
+    if (draft.kind === "file" && existing.some((a) => a.kind === "file" && a.path === draft.path)) {
+      return;
+    }
     const name = uniqueAttachmentName(draft.name, existing);
     this.set({ attachments: [...existing, name === draft.name ? draft : { ...draft, name }] });
   }
@@ -1042,17 +1050,18 @@ export class ChatStore {
   async sendPrompt(text: string) {
     const rt = this.rt;
     // Consume pending attachments: images ride the prompt's images field,
-    // text payloads are appended as labeled blocks.
+    // every other file is listed by path in an <attachments> tag so the model
+    // reads it on demand instead of having its contents inlined here.
     const attachments = rt.view.attachments;
     const images: ImageContent[] = [];
-    let message = text.trim();
+    const paths: string[] = [];
     for (const a of attachments) {
-      if (a.kind === "image") {
-        images.push({ type: "image", data: a.dataBase64, mimeType: a.mimeType });
-      } else {
-        message += `\n\n【附件：${a.name}】\n${a.text}${a.truncated ? "\n…（内容已截断）" : ""}`;
-      }
+      if (a.kind === "image") images.push({ type: "image", data: a.dataBase64, mimeType: a.mimeType });
+      else paths.push(a.path);
     }
+    const typed = text.trim();
+    const tag = formatAttachmentTag(paths);
+    const message = tag ? (typed ? `${typed}\n\n${tag}` : tag) : typed;
     if (!message && images.length === 0) return;
     // Publish the session to the sidebar right now. pi withholds the session
     // file until the first assistant message, so without this the row only
@@ -1060,7 +1069,8 @@ export class ChatStore {
     // model is a long stare at a sidebar that forgot your chat. Resumed
     // sessions (history / file already known) are on disk already.
     if (!rt.pending && !rt.view.sessionFile && !rt.view.history) {
-      rt.pending = { title: promptTitle(message), at: Date.now() };
+      // Title off what the user typed: the tag would otherwise become the row.
+      rt.pending = { title: promptTitle(typed || attachments.map((a) => a.name).join("、")), at: Date.now() };
       this.commit();
     }
     // A resumed session may still be connecting its engine in the background.
