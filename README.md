@@ -102,25 +102,25 @@ Kalo 不是荐股工具，而是一条**能自己攒数据的投研流水线**�
   - `macro-pulse` 宏观风向——读 market-data 攒下的历史算分位数，回答「现在算高还是低、该不该谨慎」；
   - `stock-checkup` 个股体检——风险排查 / 健康度 / 催化契机三大类，逐项给事实和判断；
   - `filing-digest` 财报下载与分析——年报 / 季报，营收、净利、毛利、ROE、现金流，一问即答；
-  - 更重的投研工作流（行业漏斗、财报精读、组合管理、论文追踪……）可以继续往 `~/.kalo/skills/` 里叠，Kalo 只提供机制，不写死能力清单。
-- **环境一键装，状态看得见。** 市场数据环境卡显示真实将要执行的那个 Python（`~/.kalo/market/py`）准备好没有：设置页一键初始化（uv 自装解释器 + 依赖，可指定国内 PyPI 镜像），缺什么卡上直接说，不靠猜。
-- **历史是攒出来的，不是查出来的。** 默认自带一条「宏观快照每日落盘」任务，工作日收盘后把快照追加进 `daily.jsonl`——分位数判断要的就是这个历史，用一天它深一天。
+  - 更重的投研工作流（行业漏斗、财报精读、组合管理、论文追踪……）可以继续叠加新的 skills，Kalo 只提供机制，不写死能力清单。
+- **环境一键装，状态看得见。** 市场数据环境卡把「真正将要运行数据脚本的那个 Python 解释器」就绪没有、缺什么，一屏说清楚：设置页一键初始化（自动安装解释器 + 依赖，可指定国内 PyPI 镜像），不靠猜。
+- **历史是攒出来的，不是查出来的。** 默认自带一条「宏观快照每日落盘」任务，工作日收盘后自动追加一条宏观快照——分位数判断要的就是这个历史，用一天它深一天。
 
 ### 知识沉淀：让 Kalo 自己经营一个知识库
 
-侧边栏「知识笔记」是一个三列工作面（域树 / 列表 / 编辑器），背后就是 `~/.kalo/knowledge/` 下的一堆 markdown。特点不在于"能记笔记"，而在于几条刻意的设计取舍：
+侧边栏「知识笔记」是一个三列工作面（域树 / 列表 / 编辑器），背后就是本地目录里的一堆纯 markdown。特点不在于"能记笔记"，而在于几条刻意的设计取舍：
 
-- **目录就是分类，没有写死的类型表**。域 = 顶层目录，加一个目录就是加一个域；想给它中文名、图标、颜色、排序，就在 `_types/<key>.md` 里写 frontmatter（`_label` / `_icon` / `_color` / `_order`）——**分类体系本身也是一篇笔记**，不是代码里的枚举。而归类以目录为准，frontmatter 写歪了也不会错位。
+- **目录就是分类，没有写死的类型表**。域 = 顶层目录，加一个目录就是加一个域；想给它中文名、图标、颜色、排序，就在 `_types/` 下的域描述文件里写 frontmatter（`_label` / `_icon` / `_color` / `_order`）——**分类体系本身也是一篇笔记**，不是代码里的枚举。而归类以目录为准，frontmatter 写歪了也不会错位。
 - **markdown 就是唯一真相**。编辑器是源码 textarea + 实时预览（KaTeX / GFM），没有富文本层、没有双向序列化。Kalo 写进去的字节和你编辑的字节是同一份，随时可以用别的编辑器打开、可以直接 git 管起来。
 - **Agent 自主写，但写完进「待审阅」**。约定用 frontmatter 表达：Kalo 写的笔记带 `_by: kalo` / `_reviewed: false`，页面左侧有「待审阅」筛选，你逐条通过 / 改 / 删。信任机制不需要额外基础设施，一个字段就够。
-- **覆盖和删除前一定留副本**。旧内容进 `.trash/<rel>.<时间戳>.md`，**备份失败会直接让写入失败**——在 Agent 无人看管时改笔记的场景里，best-effort 的备份等于没有备份。
+- **覆盖和删除前一定留副本**。旧内容进 `.trash/` 兜底目录，**备份失败会直接让写入失败**——在 Agent 无人看管时改笔记的场景里，best-effort 的备份等于没有备份。
 - **中文两字就能搜到正文**。全文搜索不分词、不设最小长度，返回命中行而不只是文件名。
 - **无头会话走 `rg`，不走 IPC**。定时任务里的 Kalo 是独立进程，检索靠 `rg` 直接扫目录，和界面共用同一批文件——不为 Agent 侧再实现第二套检索。
 
 目录布局（全部可以手工建、手工改）：
 
 ```
-~/.kalo/knowledge/
+knowledge/            # 本地知识库根目录
 ├── AGENTS.md          # 这个库的经营规则，Kalo 每次进来先读
 ├── INDEX.md           # 生成物，不手工维护
 ├── _types/<key>.md    # 域的自我描述（label / icon / color / order）
@@ -134,15 +134,15 @@ Kalo 不是荐股工具，而是一条**能自己攒数据的投研流水线**�
 
 #### 长期记忆：常驻上下文的「你」
 
-与笔记平行的另一条线是 `~/.kalo/memory/`：`memory_save` / `memory_search` / `memory_list` 三个工具，让模型把用户的偏好、习惯、做过的重要决定沉淀成可检索的记忆卡片，并在后续对话里主动 recall。与知识笔记的分工是一条硬线——**记忆管「用户与当下」，常驻上下文、自动 recall；笔记管「世界与结论」，按需检索、可 git 管理**。会话本身也以 JSONL 落盘，三样合起来，就是「这个 Agent 越用越懂你」的全部机制。
+与笔记平行的另一条线是**长期记忆**：`memory_save` / `memory_search` / `memory_list` 三个工具，让模型把用户的偏好、习惯、做过的重要决定沉淀成可检索的记忆卡片，并在后续对话里主动 recall。与知识笔记的分工是一条硬线——**记忆管「用户与当下」，常驻上下文、自动 recall；笔记管「世界与结论」，按需检索、可 git 管理**。会话本身也以 JSONL 落盘，三样合起来，就是「这个 Agent 越用越懂你」的全部机制。
 
 ### 数据自动拉取：零 token 的常驻数据面
 
 行情、汇率、仓库 star、CI 队列……这类「每隔一段时间取一段数据、抽出几个字段、显示或提醒」的需求是纯机械的，不该每次烧一次模型。Kalo 为此做了两条机制，都遵循「文件即状态」：
 
-- **Feeds：声明式的周期性拉取**。一个源一个文件（`~/.kalo/feeds/<id>.json`）：URL + 秒级周期 + 四种字段抽取（JSON 路径 / 正则 / 分隔符 / 常量）+ 呈现位置（顶栏跑马灯 / 卡片 / 告警 / 落知识库）。刻意**不含求值器**——配置会由模型生成，一个能 `eval` 的字段等于给模型开了任意代码执行入口，而 90% 的真实数据源用这四种就够。失败是常态：指数退避、连续失败转静默并打 stale 标记，顶栏不会因为一个源挂了变红。默认带 A 股大盘（每 20s）和美元人民币（每 120s）。
+- **Feeds：声明式的周期性拉取**。一个数据源就是一个文件：URL + 秒级周期 + 四种字段抽取（JSON 路径 / 正则 / 分隔符 / 常量）+ 呈现位置（顶栏跑马灯 / 卡片 / 告警 / 落知识库）。刻意**不含求值器**——配置会由模型生成，一个能 `eval` 的字段等于给模型开了任意代码执行入口，而 90% 的真实数据源用这四种就够。失败是常态：指数退避、连续失败转静默并打 stale 标记，顶栏不会因为一个源挂了变红。默认带 A 股大盘（每 20s）和美元人民币（每 120s）。
 - **定时任务：cron 驱动的两类活**。`watch`（跑本地脚本，输出非空才告警，零 token）和 `agent`（到点起无头会话）。默认自带的「宏观快照每日落盘」就是 `watch`：工作日 17:12 追加一条快照，多数源失败（stdout 非空）才推飞书。
-- **结果谁都能读**。拉到的值写进 `~/.kalo/feeds/state/` 快照文件，顶栏、飞书推送、模型读取共用同一份；网关重启后顶栏立刻有值（带 stale 标记）而不是空白。
+- **结果谁都能读**。拉到的值写进本地快照文件，顶栏、飞书推送、模型读取共用同一份；网关重启后顶栏立刻有值（带 stale 标记）而不是空白。
 
 ### 演化：用 Agent 做程序搜索
 
@@ -171,7 +171,7 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 - [`kalo-desktop/`](kalo-desktop/) — 桌面端（Tauri v2 + React 18 + Tailwind）
 - [`kalo-desktop/gateway/`](kalo-desktop/gateway/) — `kalo-gateway` sidecar：IM 网关 + 定时任务调度 + 长跑任务后端
 - [`kalo-harness/`](kalo-harness/) — [pi agent](https://github.com/earendil-works/pi) 引擎源码（含 Kalo 定制内置扩展）
-- [`internal-skills/`](internal-skills/) — 随安装包分发的内置技能（纯 markdown，装到 `~/.kalo/skills/`）
+- [`internal-skills/`](internal-skills/) — 随安装包分发的内置技能（纯 markdown，装进用户技能目录）
 - [`scripts/`](scripts/) — 引擎 / 网关 sidecar 的构建脚本
 
 ## 功能
@@ -194,7 +194,7 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 - 本地 Ollama 预设（原生 `/api/chat` 适配，按 `num_ctx` 控制上下文，避免溢出）
 - MCP 客户端（stdio），设置页管理 server，工具直接进入会话工具集
 - `web_fetch` 抓网页、纯 TS 实现的 grep / glob（不依赖 rg / fd，离线可用）
-- Skills：内置工作流 skills（[`internal-skills/`](internal-skills/)，随安装包分发）+ 用户 skills（`~/.kalo/skills/`）可视化管理
+- Skills：内置工作流 skills（[`internal-skills/`](internal-skills/)，随安装包分发）+ 用户自装 skills 可视化管理
 
 **投资分析**
 
@@ -203,8 +203,8 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 
 **沉淀与演化**
 
-- 知识笔记：`~/.kalo/knowledge/` 的三列工作面，域即目录、markdown 即真相、Agent 写入进待审阅队列、覆盖删除有 `.trash/` 兜底（详见上文）
-- 长期记忆：`memory_save` / `memory_search` / `memory_list`，落盘 `~/.kalo/memory/`，常驻上下文、主动 recall（详见上文）
+- 知识笔记：本地纯 markdown 的三列工作面，域即目录、markdown 即真相、Agent 写入进待审阅队列、覆盖删除有 `.trash/` 兜底（详见上文）
+- 长期记忆：`memory_save` / `memory_search` / `memory_list`，常驻上下文、主动 recall（详见上文）
 - 演化实验（程序搜索）：接 [era-evolve](https://github.com/kirie123/era-evolve) 搜索器 —— 自然语言起实验 + 不可跳过的基线验证闸门 + 搜索树 / 分数曲线实时可视化（详见上文）
 
 **数据与自动化**
@@ -216,24 +216,24 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 
 ## 数据落盘
 
-所有数据都在本地 `~/.kalo/` 下，纯文件，可直接编辑与备份：
+所有数据都在本地 `~/.kalo/` 下（下文路径均相对此目录），纯文件，可直接编辑与备份：
 
 | 路径 | 内容 |
 | --- | --- |
-| `~/.kalo/agent/sessions/` | 会话 JSONL |
-| `~/.kalo/agent/schedules.json` | 定时任务表 |
-| `~/.kalo/skills/` | 用户 skills + 装好的内置 skills |
-| `~/.kalo/skills/.internal-skills.json` | 内置 skill 的安装指纹（判断哪些被本地改过） |
-| `~/.kalo/memory/` | 长期记忆 |
-| `~/.kalo/knowledge/` | 知识笔记：每个目录一个域，`_types/` 描述域本身，`.trash/` 存覆盖与删除的副本 |
-| `~/.kalo/feeds/` | 声明式数据源：`<id>.json` 规格 + `state/` 最新快照 |
-| `~/.kalo/market/` | market-data 攒的历史（`daily.jsonl`）与 Python 环境入口 `py` |
+| `agent/sessions/` | 会话 JSONL |
+| `agent/schedules.json` | 定时任务表 |
+| `skills/` | 用户 skills + 装好的内置 skills |
+| `skills/.internal-skills.json` | 内置 skill 的安装指纹（判断哪些被本地改过） |
+| `memory/` | 长期记忆 |
+| `knowledge/` | 知识笔记：每个目录一个域，`_types/` 描述域本身，`.trash/` 存覆盖与删除的副本 |
+| `feeds/` | 声明式数据源：`<id>.json` 规格 + `state/` 最新快照 |
+| `market/` | market-data 攒的历史（`daily.jsonl`）与 Python 环境入口 `py` |
 
 没有数据库、没有隐藏格式：想搬走就整个目录拷走，想改就用任何编辑器改。
 
 ## 二次开发
 
-- **内置 skill 在 [`internal-skills/<name>/SKILL.md`](internal-skills/)**，纯 markdown：改一句话就行，不用重建引擎、不用重编 Rust。App 启动时装到 `~/.kalo/skills/`，没被本地改过的会跟着更新，改过的保留（设置页 → Skills 的「重装内置技能」可强制覆盖回来）
+- **内置 skill 在 [`internal-skills/<name>/SKILL.md`](internal-skills/)**，纯 markdown：改一句话就行，不用重建引擎、不用重编 Rust。App 启动时自动装好，没被本地改过的会跟着更新，改过的保留（设置页 → Skills 的「重装内置技能」可强制覆盖回来）
 - 引擎内置扩展在 `kalo-harness/packages/coding-agent/src/extensions/<name>/`，写好后注册进同目录 `index.ts` 的 `builtInExtensions`；现有扩展可作模板：`memory`、`mcp`、`subagent`、`webfetch`、`kalo-jobs`、`skill`、`llama`
 - 改完引擎需重建 exe 并同步到 `kalo-desktop/src-tauri/binaries/`（`bun run build:engine` 已包含这步）
 - 前端按功能分目录：一个自成体系的功能放 `kalo-desktop/src/features/<name>/`（如 `era/`、`notes/`），领域词汇不外溢到通用层
