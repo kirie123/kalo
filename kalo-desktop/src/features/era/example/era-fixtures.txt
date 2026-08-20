@@ -1,0 +1,4 @@
+# era fixture manifest: one workspace-relative path per line.
+# Restored from the pristine --seed before every evaluation, so a mutation
+# cannot raise its score by rewriting the scorer or weakening the tour check.
+eval.py
