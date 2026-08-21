@@ -1,7 +1,7 @@
 {
   "name": "kalo",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI coding agent desktop client, built on the pi agent engine (https://github.com/earendil-works/pi)",
   "workspaces": [
     "kalo-desktop"

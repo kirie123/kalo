@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Channel, CONFIRM_TTL_MS, normalize, type ChannelTransport } from "./channel";
+import { Channel, CONFIRM_TTL_MS, chunkText, normalize, type ChannelTransport } from "./channel";
 import type { JobSnapshot } from "./jobs/types";
 import type { ScheduleTaskInfo } from "./scheduler";
 
@@ -10,6 +10,8 @@ interface Harness {
   sent: string[];
   killed: Array<{ id: string; reason?: string }>;
   sessions: Array<{ taskId: string; prompt: string }>;
+  prompts: Array<{ sessionId: string; prompt: string }>;
+  reactions: Array<{ messageId: string; emoji: string }>;
   jobs: JobSnapshot[];
   tasks: ScheduleTaskInfo[];
   nowRef: { value: number };
@@ -34,6 +36,8 @@ function makeChannel(): Harness {
     sent: [],
     killed: [],
     sessions: [],
+    prompts: [],
+    reactions: [],
     jobs: [job()],
     tasks: [],
     nowRef: { value: T0 },
@@ -45,6 +49,9 @@ function makeChannel(): Harness {
       return `m${h.sent.length}`;
     },
     updateText: async () => {},
+    addReaction: async (messageId, emoji) => {
+      h.reactions.push({ messageId, emoji });
+    },
   };
   h.channel = new Channel({
     transport: () => (h.connected.value ? transport : null),
@@ -57,10 +64,20 @@ function makeChannel(): Harness {
     requestSession: (taskId, prompt) => {
       h.sessions.push({ taskId, prompt });
     },
+    sendPrompt: (sessionId, prompt) => {
+      h.prompts.push({ sessionId, prompt });
+    },
     cwd: () => "C:/home",
     now: () => h.nowRef.value,
   });
   return h;
+}
+
+/** Drive one full turn: message in → session started → answer out. */
+async function turn(h: Harness, text: string, sessionId = "s1"): Promise<void> {
+  await h.channel.handleText(text);
+  const task = h.sessions[h.sessions.length - 1];
+  h.channel.handleSessionStarted(task.taskId, sessionId);
 }
 
 const last = (h: Harness) => h.sent[h.sent.length - 1] ?? "";
@@ -212,5 +229,156 @@ describe("Channel ask / transport", () => {
     await h.channel.handleText("/stop gateway-1");
     expect(h.sent).toEqual([]);
     expect(h.killed).toEqual([]);
+  });
+});
+
+describe("Channel conversation", () => {
+  test("the answer is delivered in full as its own message", async () => {
+    // The whole point of the feature: the progress card is truncated, so the
+    // answer must arrive separately and intact.
+    const h = makeChannel();
+    await turn(h, "帮我看看这个 bug");
+
+    const answer = "根因在 feishu.ts：取值取错了一层。" + "细节".repeat(50);
+    await h.channel.handleAnswer("s1", answer);
+
+    expect(h.sent).toContain(answer);
+  });
+
+  test("a follow-up reuses the session instead of opening a new one", async () => {
+    const h = makeChannel();
+    await turn(h, "第一个问题");
+    await h.channel.handleAnswer("s1", "第一个回答");
+
+    await h.channel.handleText("那第二个呢");
+
+    expect(h.prompts).toEqual([{ sessionId: "s1", prompt: "那第二个呢" }]);
+    // Still exactly one session: this is what gives multi-turn context.
+    expect(h.sessions.length).toBe(1);
+  });
+
+  test("/new drops the context so the next message opens a fresh session", async () => {
+    const h = makeChannel();
+    await turn(h, "第一个问题");
+    await h.channel.handleAnswer("s1", "答");
+
+    await h.channel.handleText("/new");
+    expect(last(h)).toContain("新对话");
+
+    await h.channel.handleText("重新开始");
+    expect(h.prompts).toEqual([]);
+    expect(h.sessions.length).toBe(2);
+  });
+
+  test("a message arriving mid-run is queued, then runs on its own", async () => {
+    const h = makeChannel();
+    await turn(h, "慢活");
+
+    await h.channel.handleText("插一句");
+    expect(h.prompts).toEqual([]); // not delivered while busy
+    expect(last(h)).toContain("排在第 1 位");
+
+    await h.channel.handleAnswer("s1", "慢活干完了");
+    expect(h.prompts).toEqual([{ sessionId: "s1", prompt: "插一句" }]);
+  });
+
+  test("the queue is bounded rather than growing without limit", async () => {
+    const h = makeChannel();
+    await turn(h, "慢活");
+
+    for (let i = 0; i < 8; i++) await h.channel.handleText(`第${i}条`);
+
+    expect(last(h)).toContain("没接住");
+  });
+
+  test("a dead session is reopened with the message preserved", async () => {
+    const h = makeChannel();
+    await turn(h, "第一个问题");
+    await h.channel.handleAnswer("s1", "答");
+
+    await h.channel.handleText("跟进问题");
+    h.channel.handleSessionPromptFailed("s1", "会话已不存在");
+
+    // The user's message is retried in a fresh session, not dropped.
+    expect(h.sessions.length).toBe(2);
+    expect(h.sessions[1].prompt).toBe("跟进问题");
+    expect(h.sent.some((s) => s.includes("已失效"))).toBe(true);
+  });
+
+  test("an answer from a stale session is ignored", async () => {
+    const h = makeChannel();
+    await turn(h, "问题", "s1");
+    const before = h.sent.length;
+
+    await h.channel.handleAnswer("s-old", "来自旧会话的回答");
+    expect(h.sent.length).toBe(before);
+  });
+
+  test("inbound messages get an immediate read receipt", async () => {
+    // A run takes minutes; silence is exactly what the original bug looked
+    // like, so the user needs to see the message land.
+    const h = makeChannel();
+    await h.channel.handleText("干活", "om_1");
+    expect(h.reactions).toEqual([{ messageId: "om_1", emoji: "OnIt" }]);
+  });
+
+  test("session exit ends the conversation and frees the channel", async () => {
+    const h = makeChannel();
+    await turn(h, "问题");
+
+    h.channel.handleSessionExit("s1");
+    expect(h.sent.some((s) => s.includes("会话已结束"))).toBe(true);
+
+    // The next message is not stuck behind the dead run.
+    await h.channel.handleText("再来一次");
+    expect(h.sessions.length).toBe(2);
+  });
+
+  test("a failed start frees the channel for the next message", async () => {
+    const h = makeChannel();
+    await h.channel.handleText("第一次");
+    h.channel.handleSessionStartFailed(h.sessions[0].taskId, "spawn 失败");
+
+    await h.channel.handleText("第二次");
+    expect(h.sessions.length).toBe(2);
+    expect(h.sent.some((s) => s.includes("排在第"))).toBe(false);
+  });
+
+  test("commands still work while a run is in flight", async () => {
+    // /status must not queue behind a long run — it is read-only.
+    const h = makeChannel();
+    await turn(h, "慢活");
+
+    await h.channel.handleText("/status");
+    expect(last(h)).toContain("任务：");
+  });
+});
+
+describe("chunkText", () => {
+  test("short text stays one piece", () => {
+    expect(chunkText("hi", 100)).toEqual(["hi"]);
+  });
+
+  test("splits on line boundaries and loses nothing", () => {
+    const text = ["aaaa", "bbbb", "cccc"].join("\n");
+    const chunks = chunkText(text, 10);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("\n")).toBe(text);
+  });
+
+  test("hard-splits a single over-long line", () => {
+    const chunks = chunkText("x".repeat(25), 10);
+    expect(chunks).toEqual(["x".repeat(10), "x".repeat(10), "x".repeat(5)]);
+  });
+
+  test("every chunk respects the limit", () => {
+    const text = Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n");
+    for (const chunk of chunkText(text, 50)) {
+      expect(chunk.length).toBeLessThanOrEqual(50);
+    }
+  });
+
+  test("empty input produces nothing to send", () => {
+    expect(chunkText("   ", 10)).toEqual([]);
   });
 });

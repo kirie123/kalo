@@ -137,6 +137,9 @@ const channel = new Channel({
   requestSession: (taskId, prompt) => {
     send({ type: "session_request", taskId, cwd: channelCwd(), prompt, model: null });
   },
+  sendPrompt: (sessionId, prompt) => {
+    send({ type: "session_prompt", sessionId, prompt });
+  },
   cwd: channelCwd,
 });
 
@@ -201,14 +204,39 @@ function emitError(message: string): void {
 
 async function connect(creds: FeishuCredentials): Promise<void> {
   emitStatus("connecting");
+  // Any previous connection must stop ingesting before a new one starts,
+  // otherwise a re-pair leaves two live WS clients feeding the same channel.
+  connection?.close();
+  renderer?.dispose();
+
   const conn = new FeishuConnection(creds, {
-    onText: (text) => {
-      void channel.handleText(text);
+    onText: (text, messageId) => {
+      void channel.handleText(text, messageId);
     },
   });
-  await conn.start();
+  // Publish the transport BEFORE awaiting start(): the WS client can deliver
+  // its first event while start() is still resolving, and channel.handleText
+  // drops anything that arrives while transport() is null (§3.4).
   connection = conn;
-  renderer = new ProgressRenderer(conn);
+  renderer = new ProgressRenderer(conn, {
+    // The card is a truncated live view; the answer goes out in full, as its
+    // own message, so the user actually receives a reply.
+    onAnswer: (sessionId, answer) => {
+      void channel.handleAnswer(sessionId, answer);
+    },
+  });
+  try {
+    await conn.start();
+  } catch (err) {
+    // Failed to connect — retract the half-published transport.
+    conn.close();
+    if (connection === conn) {
+      connection = null;
+      renderer?.dispose();
+      renderer = null;
+    }
+    throw err;
+  }
   emitStatus("connected", { user: creds.botName ? `${creds.botName} · ${creds.boundOpenId}` : creds.boundOpenId });
 }
 
@@ -284,8 +312,13 @@ function handleCommand(cmd: InCommand): void {
       // Unbind drops the Feishu binding only. The process stays up: it also
       // owns the job runtime, and killing it would take every running job
       // and the model's job tools with it.
+      //
+      // close() is what actually stops ingestion — WSClient has no stop/close
+      // and re-dials itself when autoReconnect is on, so dropping the
+      // reference alone would leave a live socket feeding the channel.
       renderer?.dispose();
       renderer = null;
+      connection?.close();
       connection = null;
       deleteCredentials();
       emitStatus("disconnected");
@@ -298,6 +331,7 @@ function handleCommand(cmd: InCommand): void {
     case "session_exit": {
       renderer?.handleExit(cmd.sessionId, cmd.code);
       scheduler.handleSessionExit(cmd.sessionId, cmd.code);
+      if (channel.ownsSession(cmd.sessionId)) channel.handleSessionExit(cmd.sessionId);
       return;
     }
     case "schedule_upsert": {
@@ -319,13 +353,19 @@ function handleCommand(cmd: InCommand): void {
       return;
     }
     case "session_started": {
-      if (channel.owns(cmd.taskId)) channel.handleSessionStarted(cmd.taskId);
+      // The channel needs the sessionId itself: it is what turns the next
+      // message into a follow-up rather than a fresh, amnesiac session.
+      if (channel.owns(cmd.taskId)) channel.handleSessionStarted(cmd.taskId, cmd.sessionId);
       else scheduler.handleSessionStarted(cmd.taskId, cmd.sessionId);
       return;
     }
     case "session_start_failed": {
       if (channel.owns(cmd.taskId)) channel.handleSessionStartFailed(cmd.taskId, cmd.error);
       else scheduler.handleSessionStartFailed(cmd.taskId, cmd.error);
+      return;
+    }
+    case "session_prompt_failed": {
+      channel.handleSessionPromptFailed(cmd.sessionId, cmd.error);
       return;
     }
     case "job_start":

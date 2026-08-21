@@ -678,6 +678,7 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
             });
         }
         "session_request" => handle_session_request(app, &value),
+        "session_prompt" => handle_session_prompt(app, &value),
         _ => {}
     }
 }
@@ -768,6 +769,58 @@ fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
         });
         let _ = process.send(cmd.to_string());
     });
+}
+
+/// Deliver a follow-up prompt into a session that is already running.
+///
+/// This is the multi-turn path: the engine is past its readiness probe (it
+/// answered an earlier prompt), so this sends directly instead of re-probing.
+/// A missing/dead session is reported back rather than silently dropped —
+/// the channel reacts by opening a fresh session, so the user's message is
+/// never lost, only the conversation history is.
+fn handle_session_prompt(app: &AppHandle, value: &serde_json::Value) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static PROMPT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let session_id = value
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let prompt = value.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let gateway = app.state::<GatewayManager>();
+    let report_failure = |error: String| {
+        let line = serde_json::json!({
+            "cmd": "session_prompt_failed",
+            "sessionId": session_id,
+            "error": error,
+        });
+        let _ = gateway.send(line.to_string());
+    };
+
+    if session_id.is_empty() || prompt.is_empty() {
+        report_failure("session_prompt 缺少 sessionId/prompt".into());
+        return;
+    }
+
+    let sessions = app.state::<SessionManager>();
+    let Ok(map) = sessions.sessions.lock() else {
+        report_failure("session manager lock poisoned".into());
+        return;
+    };
+    let Some(process) = map.get(&session_id) else {
+        report_failure("会话已不存在".into());
+        return;
+    };
+    let cmd = serde_json::json!({
+        "id": format!("chat-prompt-{}", PROMPT_SEQ.fetch_add(1, Ordering::Relaxed)),
+        "type": "prompt",
+        "message": prompt,
+    });
+    if let Err(e) = process.send(cmd.to_string()) {
+        report_failure(format!("会话已断开：{e}"));
+    }
 }
 
 /// Retry `get_state` until the engine answers (exponential backoff +

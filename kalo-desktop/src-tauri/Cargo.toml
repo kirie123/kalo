@@ -1,6 +1,6 @@
 [package]
 name = "kalo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Kalo - AI coding agent desktop"
 edition = "2021"
 

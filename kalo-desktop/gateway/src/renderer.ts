@@ -27,6 +27,16 @@ const TAIL_CHARS = 300;
 const MAX_BODY_CHARS = 3500;
 const FLUSH_TICK_MS = 500;
 
+export interface RendererDeps {
+  /**
+   * The run produced a final answer. The progress card is a *card* — capped
+   * at TAIL_CHARS and overwritten in place — so the answer is delivered
+   * separately, in full, rather than being left truncated inside it.
+   * `answer` is the complete final assistant text.
+   */
+  onAnswer?: (sessionId: string, answer: string) => void;
+}
+
 type SessionState = "creating" | "running" | "done" | "error";
 
 interface SessionProgress {
@@ -39,6 +49,8 @@ interface SessionProgress {
   tail: string;
   lastUserText?: string;
   finalNote?: string;
+  /** Full final assistant text (untruncated), captured at agent_end. */
+  answer?: string;
   /** Set when the create/update call failed hard (e.g. message deleted). */
   broken?: boolean;
   dirty: boolean;
@@ -97,7 +109,7 @@ export class ProgressRenderer {
   private timer: ReturnType<typeof setInterval>;
   private lastGlobalUpdate = 0;
 
-  constructor(private feishu: FeishuConnection) {
+  constructor(private feishu: FeishuConnection, private deps: RendererDeps = {}) {
     this.timer = setInterval(() => this.flushDue(), FLUSH_TICK_MS);
   }
 
@@ -123,6 +135,7 @@ export class ProgressRenderer {
           sp.toolLines = [];
           sp.tail = "";
           sp.finalNote = undefined;
+          sp.answer = undefined;
           sp.dirty = true;
         }
         break;
@@ -176,6 +189,9 @@ export class ProgressRenderer {
         const text = lastAssistant ? textOfContent(lastAssistant.content) : "";
         if (text) {
           sp!.tail = text.slice(-TAIL_CHARS);
+          // Keep the FULL text too: the card shows a tail, the answer message
+          // shows everything. A retry overwrites this with the later attempt.
+          sp!.answer = text;
           sp!.dirty = true;
         }
         if (payload.willRetry) this.pushLine(sp!, "⚠️ 本轮出错，即将重试");
@@ -183,6 +199,14 @@ export class ProgressRenderer {
       }
       case "agent_settled": {
         this.finalize(sp!, "done", `✅ 完成（用时 ${formatDuration(Date.now() - sp!.startedAt)} · 轮次 ${sp!.turns}）`);
+        const answer = sp!.answer?.trim();
+        if (answer) {
+          try {
+            this.deps.onAnswer?.(sessionId, answer);
+          } catch (err) {
+            log("onAnswer handler failed:", err instanceof Error ? err.message : err);
+          }
+        }
         break;
       }
       case "extension_error": {

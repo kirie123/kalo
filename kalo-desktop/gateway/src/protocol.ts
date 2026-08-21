@@ -39,6 +39,12 @@ export type InCommand =
   // Rust bookkeeping replies for scheduler-requested headless sessions
   | { cmd: "session_started"; taskId: string; sessionId: string }
   | { cmd: "session_start_failed"; taskId: string; error: string }
+  /**
+   * A follow-up prompt could not be delivered (session gone / engine dead).
+   * The channel answers by opening a fresh session, so a dead engine costs
+   * the conversation its history, not the user's message.
+   */
+  | { cmd: "session_prompt_failed"; sessionId: string; error: string }
   // Job runtime (P0-1). `requestId` correlates the reply; `caller` is the
   // owner fence (session id, or omitted for desktop-wide callers).
   | { cmd: "job_start"; requestId: string; caller?: string; job: JobStartRequest }
@@ -66,6 +72,12 @@ export type OutMessage =
       prompt: string;
       model: string | null;
     }
+  /**
+   * Deliver a follow-up prompt into an ALREADY RUNNING session, which is what
+   * gives the channel multi-turn context: without this every inbound message
+   * would spawn a fresh engine with no memory of the last one.
+   */
+  | { type: "session_prompt"; sessionId: string; prompt: string }
   // Job runtime (P0-1). One reply per request, echoing `requestId`.
   | { type: "job_reply"; requestId: string; ok: true; jobs?: JobSnapshot[]; text?: string; metrics?: unknown[]; id?: string; result?: string }
   | { type: "job_reply"; requestId: string; ok: false; error: string }
