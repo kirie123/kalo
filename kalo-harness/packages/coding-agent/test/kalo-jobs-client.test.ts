@@ -1,7 +1,7 @@
-import { describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { describe, expect, test } from "vitest";
 import { JobsClient, JobsUnavailable, readEndpoint } from "../src/extensions/kalo-jobs/client.ts";
 
 interface Call {
@@ -78,7 +78,11 @@ describe("kalo-jobs client", () => {
 	});
 
 	test("output sends wait/timeout and kill sends the reason", async () => {
-		const h = harness({ reply: (c) => ({ body: c.url.endsWith("/output") ? { text: "x", job: {} } : { result: "requested", job: {} } }) });
+		const h = harness({
+			reply: (c) => ({
+				body: c.url.endsWith("/output") ? { text: "x", job: {} } : { result: "requested", job: {} },
+			}),
+		});
 		await h.client.output("gateway-1", { wait: true, timeoutMs: 1234 });
 		expect(h.calls[0].method).toBe("POST");
 		expect(h.calls[0].body).toEqual({ wait: true, timeoutMs: 1234 });

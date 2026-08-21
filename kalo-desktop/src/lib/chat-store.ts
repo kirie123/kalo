@@ -133,6 +133,12 @@ export interface ChangesEntry extends ChangeSummary {
 
 export type TimelineEntry = UserEntry | AssistantEntry | ToolGroupEntry | RetryEntry | NoticeEntry | ChangesEntry;
 
+/** One task of the agent's plan, written whole-list by the `todo_write` tool. */
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
 // ============================================================================
 // Other state slices
 // ============================================================================
@@ -160,6 +166,12 @@ export interface ChatState {
   cwd: string;
   sessionName?: string;
   timeline: TimelineEntry[];
+  /**
+   * The agent's current plan: the latest whole-list `todo_write` snapshot,
+   * cleared when the user asks a new question (see sendPrompt). Rendered by
+   * TodoPanel above the composer and by the todo_write tool bubble.
+   */
+  todos: TodoItem[];
   /**
    * Paged-history window of a resumed session: `start` is the index of the
    * oldest loaded message, `hasMore` whether older messages exist on disk.
@@ -212,6 +224,7 @@ type SessionView = Pick<
   | "cwd"
   | "sessionName"
   | "timeline"
+  | "todos"
   | "history"
   | "loadingOlder"
   | "isStreaming"
@@ -236,6 +249,7 @@ const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
   "cwd",
   "sessionName",
   "timeline",
+  "todos",
   "history",
   "loadingOlder",
   "isStreaming",
@@ -290,6 +304,7 @@ function freshView(cwd = ""): SessionView {
     sessionId: null,
     cwd,
     timeline: [],
+    todos: [],
     loadingOlder: false,
     isStreaming: false,
     isCompacting: false,
@@ -790,7 +805,11 @@ export class ChatStore {
     rt.historyMessages = page.messages;
     const timeline = buildTimeline(page.messages);
     rt.historyLiveBase = timeline.length;
-    this.setRt(rt, { timeline, history: { path, start: page.start, hasMore: page.hasMore } });
+    this.setRt(rt, {
+      timeline,
+      todos: latestTodos(page.messages),
+      history: { path, start: page.start, hasMore: page.hasMore },
+    });
   }
 
   /** Spawn with retry: transient failures (busy binary, AV scans) happen. */
@@ -1108,6 +1127,12 @@ export class ChatStore {
     const tag = formatAttachmentTag(paths);
     const message = tag ? (typed ? `${typed}\n\n${tag}` : tag) : typed;
     if (!message && images.length === 0) return;
+    // A genuinely new question retires the previous run's plan. Deliberately
+    // NOT done on agent_start: the session loop re-enters that event on retry,
+    // after a compaction, and for queued messages, so clearing there would
+    // blank the checklist mid-task. Steering (isStreaming) is a nudge inside
+    // the current run, so it keeps the plan.
+    if (!rt.view.isStreaming && rt.view.todos.length > 0) this.setRt(rt, { todos: [] });
     // Publish the session to the sidebar right now. pi withholds the session
     // file until the first assistant message, so without this the row only
     // appears once the whole first run has produced output — which on a slow
@@ -1525,6 +1550,11 @@ export class ChatStore {
           },
           rt,
         );
+        // A todo_write result carries the whole replacement plan.
+        if (ev.toolName === "todo_write" && !ev.isError) {
+          const todos = readTodos(ev.result);
+          if (todos) this.setRt(rt, { todos });
+        }
         break;
 
       case "compaction_start":
@@ -1821,6 +1851,35 @@ export class ChatStore {
 // ============================================================================
 // History reconstruction (get_messages -> timeline)
 // ============================================================================
+
+/**
+ * The whole-list plan snapshot carried by a `todo_write` tool result
+ * (`details.todos`, mirroring the harness extension). Returns null when the
+ * payload isn't the expected shape, so a malformed result leaves the last
+ * good plan on screen instead of blanking it.
+ */
+function readTodos(result: any): TodoItem[] | null {
+  const todos = result?.details?.todos;
+  if (!Array.isArray(todos)) return null;
+  const ok = todos.every(
+    (t: any) =>
+      t &&
+      typeof t.content === "string" &&
+      (t.status === "pending" || t.status === "in_progress" || t.status === "completed"),
+  );
+  return ok ? (todos as TodoItem[]) : null;
+}
+
+/** Replay the plan from a loaded history page: the last todo_write wins. */
+function latestTodos(messages: AgentMessage[]): TodoItem[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "toolResult" || m.toolName !== "todo_write" || m.isError) continue;
+    const todos = readTodos({ details: m.details });
+    if (todos) return todos;
+  }
+  return [];
+}
 
 function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
   const t: TimelineEntry[] = [];

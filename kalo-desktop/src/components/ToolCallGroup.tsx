@@ -3,9 +3,10 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { ToolCallRecord } from "../lib/chat-store";
+import type { TodoItem, ToolCallRecord } from "../lib/chat-store";
 import { CodeRenderer } from "./AssistantMessage";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
+import { TodoStatusIcon } from "./TodoPanel";
 
 /** Verb used in the collapsed group header per tool name. */
 const TOOL_VERBS: Record<string, { verb: string; noun: string }> = {
@@ -17,6 +18,7 @@ const TOOL_VERBS: Record<string, { verb: string; noun: string }> = {
   glob: { verb: "查找", noun: "次" },
   ls: { verb: "查看", noun: "个目录" },
   agent: { verb: "派生", noun: "个子 agent" },
+  todo_write: { verb: "更新", noun: "次任务清单" },
 };
 
 /** Right-side chip label naming the concrete tool, e.g. "Read File". */
@@ -29,6 +31,7 @@ const TOOL_CHIPS: Record<string, string> = {
   glob: "Glob",
   ls: "LS",
   agent: "Sub Agent",
+  todo_write: "Todo",
 };
 
 function groupTitle(toolName: string, count: number): string {
@@ -60,9 +63,34 @@ function rowLabel(rec: ToolCallRecord): string {
       const prompt = String(args.prompt ?? "").trim().split("\n")[0];
       return prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt || "子 agent 任务";
     }
+    case "todo_write": {
+      const todos = callTodos(rec);
+      if (todos.length === 0) return "任务清单";
+      const done = todos.filter((t) => t.status === "completed").length;
+      const head = `${done}/${todos.length} 已完成`;
+      const active = todos.find((t) => t.status === "in_progress");
+      return active ? `${head} · ${active.content}` : head;
+    }
     default:
       return rec.toolName;
   }
+}
+
+/**
+ * The plan a todo_write call wrote. Prefers the result (canonical, trimmed by
+ * the engine) and falls back to the args, so the row reads correctly while the
+ * call is still running.
+ */
+function callTodos(rec: ToolCallRecord): TodoItem[] {
+  const fromResult = rec.result?.details?.todos ?? rec.partialResult?.details?.todos;
+  const raw = Array.isArray(fromResult) ? fromResult : rec.args?.todos;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (t: any): t is TodoItem =>
+      t &&
+      typeof t.content === "string" &&
+      (t.status === "pending" || t.status === "in_progress" || t.status === "completed"),
+  );
 }
 
 /**
@@ -124,8 +152,8 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
       </button>
       {open && (
         <div className="ml-6 flex flex-col border-l border-edge pl-2">
-          {calls.map((rec) => (
-            <ToolCallRow key={rec.toolCallId} rec={rec} />
+          {calls.map((rec, i) => (
+            <ToolCallRow key={rec.toolCallId} rec={rec} isLast={i === calls.length - 1} />
           ))}
         </div>
       )}
@@ -133,10 +161,16 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
   );
 }
 
-function ToolCallRow({ rec }: { rec: ToolCallRecord }) {
-  // Call details start closed, except edits (inline diff) and running subagents
-  // (live activity feed).
-  const [open, setOpen] = useState(rec.toolName === "edit" || (rec.toolName === "agent" && rec.status === "running"));
+function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) {
+  // Call details start closed, except edits (inline diff), running subagents
+  // (live activity feed), and the newest todo_write. Consecutive todo_write
+  // calls collapse into one group, so expanding every row would stack the same
+  // list over and over; only the current plan is worth showing unfolded.
+  const [open, setOpen] = useState(
+    rec.toolName === "edit" ||
+      (rec.toolName === "agent" && rec.status === "running") ||
+      (rec.toolName === "todo_write" && isLast),
+  );
   const diff = extractDiff(rec.result) ?? extractDiff(rec.partialResult);
   const stats = diff ? diffStats(diff) : null;
   const chip = TOOL_CHIPS[rec.toolName] ?? rec.toolName;
@@ -227,6 +261,25 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
     return (
       <div className="mb-1 ml-6 mt-1">
         <DiffView diff={diff} collapsible />
+      </div>
+    );
+  }
+
+  if (rec.toolName === "todo_write") {
+    const todos = callTodos(rec);
+    if (todos.length === 0) {
+      return <div className="mb-1 ml-6 mt-1 text-xs text-dim">（空清单）</div>;
+    }
+    return (
+      <div className="mb-1 ml-6 mt-1 flex flex-col gap-0.5 rounded-md border border-edge bg-card px-2.5 py-2">
+        {todos.map((todo) => (
+          <div key={todo.content} className="flex items-start gap-2 text-xs">
+            <span className="mt-px shrink-0">
+              <TodoStatusIcon status={todo.status} />
+            </span>
+            <span className={todo.status === "completed" ? "text-dim line-through" : "text-ink"}>{todo.content}</span>
+          </div>
+        ))}
       </div>
     );
   }

@@ -318,8 +318,8 @@ fn parse_session_file(path: &Path) -> Option<(String, SessionMeta)> {
 
     let title = name
         .filter(|n| !n.is_empty())
-        .or(first_user_text)
-        .map(|t| truncate(&collapse_whitespace(&t), 80))
+        .or_else(|| first_user_text.as_deref().and_then(fallback_title))
+        .map(|t| truncate(&t, 80))
         .unwrap_or_else(|| "Untitled session".to_string());
 
     Some((
@@ -353,6 +353,39 @@ fn extract_text(content: Option<&serde_json::Value>) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+/// Derive a fallback title from the first user message, matching what the
+/// frontend's optimistic sidebar row shows (`promptTitle` in `chat-store.ts`):
+/// the first non-empty line, minus the attachment tag the composer appends.
+/// Without both steps the row's title visibly changes the moment the session
+/// hits disk — a multi-line prompt would flatten into one long line, and an
+/// attachment-only message would show the `<attachments>` boilerplate.
+/// `None` when nothing is left, so the caller falls back to "Untitled session".
+fn fallback_title(text: &str) -> Option<String> {
+    let body = strip_attachments(text);
+    let line = body
+        .lines()
+        .map(|l| collapse_whitespace(l))
+        .find(|l| !l.is_empty())?;
+    Some(line)
+}
+
+/// Drop the trailing `<attachments>…</attachments>` block that
+/// `formatAttachmentTag` (`src/lib/attachments.ts`) appends to prompts that
+/// carry files. The tag is machine-generated and always last.
+fn strip_attachments(text: &str) -> &str {
+    let Some(open) = text.rfind("<attachments>") else {
+        return text;
+    };
+    let rest = &text[open..];
+    match rest.find("</attachments>") {
+        // Only strip a well-formed block that runs to the end of the message.
+        Some(close) if rest[close + "</attachments>".len()..].trim().is_empty() => {
+            text[..open].trim_end()
+        }
+        _ => text,
     }
 }
 
@@ -412,6 +445,63 @@ mod tests {
         write_session(&path, &[user_msg("m1", "", "第一句用户消息")]);
         assert_eq!(parse_title(&path), "第一句用户消息");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fallback_title_takes_only_the_first_line() {
+        // Matches the frontend's optimistic row (promptTitle), so the title
+        // does not change when the session lands on disk.
+        let (dir, path) = temp_session("first-line");
+        write_session(
+            &path,
+            &[user_msg(
+                "m1",
+                "",
+                "\\n  \\n第一行标题\\n第二行细节\\n第三行",
+            )],
+        );
+        assert_eq!(parse_title(&path), "第一行标题");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn attachment_tag_does_not_leak_into_title() {
+        let (dir, path) = temp_session("attachments");
+        let tag =
+            "<attachments>\\n用户附加了以下文件。\\n<file path=\\\"C:/a.rs\\\" />\\n</attachments>";
+        write_session(
+            &path,
+            &[
+                user_msg("m1", "", &format!("看看这个\\n{tag}")),
+                user_msg("m2", "m1", "无关消息"),
+            ],
+        );
+        assert_eq!(parse_title(&path), "看看这个");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn attachment_only_message_has_no_title() {
+        let (dir, path) = temp_session("attachments-only");
+        let tag =
+            "<attachments>\\n用户附加了以下文件。\\n<file path=\\\"C:/a.rs\\\" />\\n</attachments>";
+        write_session(&path, &[user_msg("m1", "", tag)]);
+        assert_eq!(parse_title(&path), "Untitled session");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unterminated_attachment_tag_is_left_alone() {
+        // A literal "<attachments>" the user typed themselves is not a tag.
+        assert_eq!(
+            strip_attachments("聊聊 <attachments> 这个标签"),
+            "聊聊 <attachments> 这个标签"
+        );
+        // Nor is a closed block with text after it.
+        assert_eq!(
+            strip_attachments("<attachments>\n<file path=\"a\" />\n</attachments> 然后呢"),
+            "<attachments>\n<file path=\"a\" />\n</attachments> 然后呢"
+        );
     }
 
     #[test]

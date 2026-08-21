@@ -23,7 +23,7 @@
 
 import { Type } from "typebox";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
-import { JobsClient, type JobSnapshot } from "./client.ts";
+import { type JobSnapshot, JobsClient } from "./client.ts";
 
 /** How often the drain asks the gateway for unreported completions. */
 const POLL_MS = 5_000;
@@ -86,7 +86,10 @@ export default function kaloJobsExtension(pi: ExtensionAPI): void {
 					details: { count: jobs.length, jobs },
 				};
 			} catch (err) {
-				return { content: [{ type: "text", text: `job_list 失败：${errText(err)}` }], details: { error: errText(err) } };
+				return {
+					content: [{ type: "text", text: `job_list 失败：${errText(err)}` }],
+					details: { error: errText(err) },
+				};
 			}
 		},
 	});
@@ -140,7 +143,10 @@ export default function kaloJobsExtension(pi: ExtensionAPI): void {
 				const text = result === "already-finished" ? `[${job.id}] 已经结束了。` : `[${job.id}] 已请求停止。`;
 				return { content: [{ type: "text", text }], details: { result, job } };
 			} catch (err) {
-				return { content: [{ type: "text", text: `job_kill 失败：${errText(err)}` }], details: { error: errText(err) } };
+				return {
+					content: [{ type: "text", text: `job_kill 失败：${errText(err)}` }],
+					details: { error: errText(err) },
+				};
 			}
 		},
 	});
@@ -159,7 +165,9 @@ export default function kaloJobsExtension(pi: ExtensionAPI): void {
 		try {
 			const jobs = await client.claimCompletions();
 			if (jobs.length === 0) return;
-			const body = ["后台任务结束：", ...jobs.map(describe), "", "需要的话用 job_output 读取它们的输出。"].join("\n");
+			const body = ["后台任务结束：", ...jobs.map(describe), "", "需要的话用 job_output 读取它们的输出。"].join(
+				"\n",
+			);
 			const idle = ctx.isIdle();
 			if (idle && wakes >= MAX_CONSECUTIVE_WAKES) {
 				// Bounded wakes: keep telling the model, but stop driving turns

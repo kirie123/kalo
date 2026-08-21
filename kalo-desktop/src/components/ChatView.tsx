@@ -3,6 +3,7 @@ import { chatStore, useChatSelector, type ExtensionUiPrompt, type Toast } from "
 import { resetChatZoom, stepChatZoom, useChatZoom } from "../lib/chat-zoom";
 import InputBox from "./InputBox";
 import MessageList from "./MessageList";
+import TodoPanel from "./TodoPanel";
 
 export default function ChatView() {
   const zoom = useChatZoom();
@@ -39,6 +40,7 @@ export default function ChatView() {
       <MessageList />
       {/* zoom (not transform) so the composer keeps its normal layout box. */}
       <div className="shrink-0 px-4 pb-4 pt-1" style={{ zoom }}>
+        <TodoPanel />
         <InputBox />
       </div>
 
