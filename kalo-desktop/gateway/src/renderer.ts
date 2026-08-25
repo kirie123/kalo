@@ -3,12 +3,20 @@
  *
  * Mapping (doc/kalo-desktop-im-gateway-plan.md §5.1):
  *   agent_start          → create one progress message per run
- *   tool_execution_*     → append "🔧 <tool> <arg summary>" lines (throttled)
- *   message_update       → throttled tail of the streaming assistant text
+ *   tool_execution_*     → append "· <什么事> <对象>" lines (throttled)
+ *   message_update       → latest complete sentence of the streaming text
  *   auto_retry_start     → "⚠️ 正在重试"
  *   compaction_start     → "🗜️ 正在压缩上下文"
  *   agent_settled        → final "✅ 完成" + reaction
  *   errors / session_exit→ final "❌ 失败" + reaction
+ *
+ * This card is glanced at on a phone while a run is in flight, so it answers
+ * "what is it doing now" in the reader's language — not "which function was
+ * invoked with which flags". Tool names are mapped to plain descriptions,
+ * arguments are reduced to a host/basename, repeated steps collapse to "x3",
+ * and the running commentary is one finished sentence rather than a raw
+ * sliding window. Nothing is lost by this: the complete answer is delivered
+ * as its own message through onAnswer.
  *
  * All updates target the SAME message (im.v1.message.update) and pass a
  * per-session throttle (≥1.2s) plus a global spacing (≥300ms) to respect
@@ -22,10 +30,37 @@ import { log } from "./protocol";
 
 const SESSION_MIN_UPDATE_MS = 1200;
 const GLOBAL_MIN_UPDATE_MS = 300;
-const MAX_TOOL_LINES = 8;
+const MAX_TOOL_LINES = 6;
 const TAIL_CHARS = 300;
+/** The progress card shows one short sentence, not a 300-char raw window. */
+const NOTE_CHARS = 120;
 const MAX_BODY_CHARS = 3500;
 const FLUSH_TICK_MS = 500;
+
+/**
+ * Tool name → what it actually does, in the reader's language.
+ *
+ * The card is read on a phone by someone who wants to know "what is it doing
+ * now", not "which function was invoked". Unknown tools fall back to their
+ * raw name, so a new tool degrades to the old behaviour instead of vanishing.
+ */
+const TOOL_LABELS: Record<string, string> = {
+  bash: "执行命令",
+  read: "读取文件",
+  write: "写入文件",
+  edit: "修改文件",
+  ls: "列目录",
+  find: "查找文件",
+  glob: "查找文件",
+  grep: "搜索内容",
+  web_fetch: "抓取网页",
+  web_search: "搜索网页",
+  use_skill: "加载技能",
+  todo_write: "更新计划",
+  job_list: "查看后台任务",
+  job_output: "读取任务输出",
+  job_kill: "停止任务",
+};
 
 export interface RendererDeps {
   /**
@@ -81,19 +116,79 @@ function firstLine(text: string, max = 60): string {
   return truncate(idx >= 0 ? text.slice(0, idx) : text, max);
 }
 
-/** Human-readable one-liner for a tool call's arguments. */
-function summarizeArgs(args: any): string {
+/**
+ * Human-readable one-liner for a tool call's arguments.
+ *
+ * Optimised for "what is it touching", not for reproducing the call:
+ *   - URLs collapse to their host (the query string is noise on a phone)
+ *   - shell commands keep the leading program plus its first real argument,
+ *     dropping pipelines and flag soup
+ *   - paths keep the basename, since the directory is usually the project
+ * Anything unrecognised falls back to a short first-line excerpt.
+ */
+function summarizeArgs(toolName: string, args: any): string {
   if (!args || typeof args !== "object") return "";
-  const pick =
-    args.command ?? args.cmd ??
-    args.path ?? args.file_path ?? args.filePath ??
-    args.pattern ?? args.url ?? args.query;
-  if (typeof pick === "string" && pick) return firstLine(pick, 70);
+
+  const url = typeof args.url === "string" ? args.url : "";
+  if (url) return hostOf(url);
+
+  if (typeof args.query === "string" && args.query) return firstLine(args.query, 40);
+
+  // use_skill / todo_write carry a name rather than a target.
+  if (toolName === "use_skill" && typeof args.name === "string") return args.name;
+
+  const command = typeof args.command === "string" ? args.command : typeof args.cmd === "string" ? args.cmd : "";
+  if (command) return summarizeCommand(command);
+
+  const path = args.path ?? args.file_path ?? args.filePath;
+  if (typeof path === "string" && path) return basename(path) || path;
+
+  if (typeof args.pattern === "string" && args.pattern) return firstLine(args.pattern, 40);
+
+  return "";
+}
+
+/** `https://api.coingecko.com/api/v3/...?ids=...` → `api.coingecko.com` */
+function hostOf(url: string): string {
   try {
-    return truncate(JSON.stringify(args), 70);
+    return new URL(url).host;
   } catch {
-    return "";
+    return firstLine(url, 40);
   }
+}
+
+/**
+ * Reduce a shell command to "program + what it acts on".
+ * `curl -s --max-time 15 "https://api.binance.com/..."` → `curl api.binance.com`
+ *
+ * A URL anywhere in the command wins, because that IS the subject. Otherwise
+ * take the first bare argument that is not a flag's value — `--max-time 15`
+ * must not be mistaken for the target. If everything is flags, the program
+ * name alone is still a useful line.
+ */
+function summarizeCommand(command: string): string {
+  // Tokenize BEFORE cutting at the pipeline: `python -c "a; b"` must not be
+  // split on the semicolon inside the quotes.
+  const raw = command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+  const stop = raw.findIndex((t) => /^(\||;|&&?|\|\|)$/.test(t));
+  const tokens = (stop >= 0 ? raw.slice(0, stop) : raw).map((t) =>
+    t.replace(/^["']|["']$/g, ""),
+  );
+  if (!tokens.length) return firstLine(command, 40);
+
+  const program = basename(tokens[0]) || tokens[0];
+  const say = (target: string) => truncate(target ? `${program} ${target}` : program, 44);
+
+  const url = tokens.find((t) => /^https?:\/\//i.test(t));
+  if (url) return say(hostOf(url));
+
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token || token.startsWith("-")) continue;
+    if (tokens[i - 1].startsWith("-")) continue; // this is the flag's value
+    return say(basename(token) || token);
+  }
+  return say("");
 }
 
 function formatDuration(ms: number): string {
@@ -102,6 +197,34 @@ function formatDuration(ms: number): string {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m${s % 60}s`;
   return `${Math.floor(m / 60)}h${m % 60}m`;
+}
+
+/**
+ * Pick the last COMPLETE sentence from the streaming tail.
+ *
+ * `tail` is a fixed-size sliding window, so it usually starts mid-word and
+ * ends mid-word. Rendering it verbatim produced the run-on wall of text this
+ * exists to fix. Taking the last finished sentence gives a line that starts
+ * and ends somewhere meaningful; if nothing has finished yet, fall back to
+ * the trailing fragment so the card is not blank early in a run.
+ */
+export function latestSentence(tail: string, max: number): string {
+  const clean = tail.replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+
+  // Split after CJK and ASCII sentence enders, keeping the punctuation.
+  const parts = clean.split(/(?<=[。！？；!?;])\s*/).filter((p) => p.trim());
+  if (!parts.length) return truncate(clean, max);
+
+  const lastComplete = [...parts].reverse().find((p) => /[。！？；!?;]$/.test(p.trim()));
+  // Prefer a finished sentence; otherwise the in-progress fragment, which at
+  // least begins right after the previous sentence ended.
+  const picked = lastComplete ?? parts[parts.length - 1];
+  const text = picked.trim();
+  // A very long "sentence" (no punctuation for ages) still needs a cap, and
+  // its tail is the freshest part.
+  if (text.length > max) return "…" + text.slice(-(max - 1));
+  return text;
 }
 
 export class ProgressRenderer {
@@ -162,12 +285,15 @@ export class ProgressRenderer {
         break;
       }
       case "tool_execution_start": {
-        this.pushLine(sp!, `🔧 ${payload.toolName} · ${summarizeArgs(payload.args)}`);
+        const label = TOOL_LABELS[payload.toolName] ?? payload.toolName;
+        const detail = summarizeArgs(payload.toolName, payload.args);
+        this.pushLine(sp!, detail ? `· ${label} ${detail}` : `· ${label}`);
         break;
       }
       case "tool_execution_end": {
         if (payload.isError) {
-          this.pushLine(sp!, `❌ ${payload.toolName} 执行失败`);
+          const label = TOOL_LABELS[payload.toolName] ?? payload.toolName;
+          this.pushLine(sp!, `· ${label} 失败`);
         }
         break;
       }
@@ -251,6 +377,18 @@ export class ProgressRenderer {
   }
 
   private pushLine(sp: SessionProgress, line: string): void {
+    // Collapse a repeated step ("抓取网页 x3") instead of stacking identical
+    // rows: three consecutive web_fetch lines say nothing three times.
+    const prev = sp.toolLines[sp.toolLines.length - 1];
+    if (prev !== undefined) {
+      const base = prev.replace(/ x\d+$/, "");
+      if (base === line) {
+        const count = Number(prev.match(/ x(\d+)$/)?.[1] ?? 1) + 1;
+        sp.toolLines[sp.toolLines.length - 1] = `${base} x${count}`;
+        sp.dirty = true;
+        return;
+      }
+    }
     sp.toolLines.push(line);
     if (sp.toolLines.length > MAX_TOOL_LINES) {
       sp.toolLines.splice(0, sp.toolLines.length - MAX_TOOL_LINES);
@@ -277,7 +415,14 @@ export class ProgressRenderer {
     }
     if (sp.lastUserText) lines.push(`💬 ${sp.lastUserText}`);
     if (sp.toolLines.length) lines.push("", ...sp.toolLines);
-    if (sp.tail) lines.push("", `📝 ${truncate(sp.tail, TAIL_CHARS)}`);
+    // While running, show only the latest complete sentence rather than a raw
+    // 300-char window: the window starts mid-word and, with newlines collapsed
+    // to spaces, reads as several turns of thinking mashed together. The full
+    // text is not lost — it goes out as its own message via onAnswer.
+    if (sp.state === "creating" || sp.state === "running") {
+      const note = latestSentence(sp.tail, NOTE_CHARS);
+      if (note) lines.push("", `📝 ${note}`);
+    }
     let body = lines.join("\n");
     if (body.length > MAX_BODY_CHARS) body = body.slice(0, MAX_BODY_CHARS - 1) + "…";
     return body;
