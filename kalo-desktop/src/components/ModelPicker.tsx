@@ -46,16 +46,23 @@ export default function ModelPicker() {
       <button
         onClick={() => setOpen((v) => !v)}
         title="选择模型"
-        className="flex max-w-44 items-center gap-1 rounded-md border border-edge px-1.5 py-1 text-xs text-dim hover:text-ink"
+        className="flex max-w-52 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-dim hover:bg-card hover:text-ink"
       >
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
+          <rect x="3" y="3" width="10" height="10" rx="2.5" />
+          <path d="M6.2 6.2h3.6v3.6H6.2z" strokeLinejoin="round" />
+          <path d="M8 1.4V3M8 13v1.6M1.4 8H3M13 8h1.6" strokeLinecap="round" />
+        </svg>
         <span className="truncate">{currentModel?.name ?? "选择模型"}</span>
-        <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
           <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
 
+      {/* Opens upward and left-anchored: the picker sits in the composer's
+          footer, near the bottom-left of the window. */}
       {open && (
-        <div className="absolute bottom-full right-0 z-30 mb-1 max-h-80 w-64 overflow-y-auto rounded-lg border border-edge bg-card py-1 shadow-xl">
+        <div className="absolute bottom-full left-0 z-30 mb-1.5 max-h-80 w-64 overflow-y-auto rounded-lg border border-edge bg-card py-1 shadow-lift">
           {groups.length === 0 && (
             <div className="px-3 py-2 text-xs text-dim">
               {sessionId ? "暂无可用模型" : "暂无模型，请先添加"}

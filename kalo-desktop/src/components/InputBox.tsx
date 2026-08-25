@@ -239,10 +239,10 @@ export default function InputBox() {
 
   return (
     <div className="mx-auto w-full max-w-3xl">
-      <div className="relative rounded-2xl border border-edge bg-card shadow-lg">
+      <div className="relative rounded-2xl border border-edge bg-elevated shadow-soft transition-shadow focus-within:shadow-lift">
         {/* Drop hint while a file is dragged over the window */}
         {dragging && (
-          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-card/90 text-xs text-dim">
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-elevated/90 text-xs text-dim">
             松开以添加附件
           </div>
         )}
@@ -299,7 +299,7 @@ export default function InputBox() {
                     ? `${a.sourcePath ?? `${a.name}（粘贴内容，无路径）`}\n点击查看大图`
                     : a.path
                 }
-                className="flex items-center gap-1.5 rounded-md border border-edge bg-base px-2 py-1 text-xs"
+                className="flex items-center gap-1.5 rounded-md border border-edge bg-card px-2 py-1 text-xs"
               >
                 {a.kind === "image" ? (
                   <button
@@ -341,37 +341,38 @@ export default function InputBox() {
           onPaste={onPaste}
           rows={1}
           placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : chat.connecting ? "正在连接引擎，可先发消息…" : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"}
-          className="max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm outline-none placeholder:text-dim"
+          className="min-h-14 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-dim"
         />
 
-        {/* Toolbar */}
-        <div className="flex items-center gap-1.5 px-3 pb-2.5 pt-1">
+        {/* Toolbar — capability switches on the left, context scope + send on
+            the right. The working directory and the model live in the footer
+            below the card, so this row stays readable. */}
+        <div className="flex items-center gap-2 px-3 pb-3 pt-1">
           <button
             onClick={() => void pickAttachments()}
             title="添加附件"
-            className="rounded-full border border-edge p-1.5 text-dim hover:text-ink"
+            className="rounded-lg p-1.5 text-dim hover:bg-card hover:text-ink"
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M8 3v10M3 8h10" strokeLinecap="round" />
             </svg>
           </button>
 
-          {/* Permission / steering mode */}
-          <select
-            value={chat.steeringMode}
-            onChange={(e) => void chatStore.setSteeringMode(e.target.value as "all" | "one-at-a-time")}
-            title="权限模式"
-            className="cursor-pointer rounded-md border border-edge bg-transparent px-1.5 py-1 text-xs text-dim outline-none hover:text-ink"
-          >
-            <option value="one-at-a-time">默认权限</option>
-            <option value="all">全部放行</option>
-          </select>
+          <PermissionChip mode={chat.steeringMode} onChange={(m) => void chatStore.setSteeringMode(m)} />
 
           <ContextRing />
 
           <div className="flex-1" />
 
-          <ModelPicker />
+          {/* Context scope: which directory the run is anchored to. */}
+          {chat.cwd && (
+            <span
+              title={`本次运行的工作目录：${chat.cwd}`}
+              className="mono max-w-52 truncate text-xs text-dim"
+            >
+              @{cwdBasename(chat.cwd)}
+            </span>
+          )}
 
           {chat.isStreaming ? (
             <button
@@ -398,14 +399,14 @@ export default function InputBox() {
         </div>
       </div>
 
-      {/* Working directory row below the card */}
-      <div className="mt-1.5 flex items-center px-1">
+      {/* Footer below the card: where the run happens, and with what model. */}
+      <div className="mt-2 flex items-center gap-1 px-1.5">
         <button
           onClick={() => void pickCwd()}
           title={chat.cwd ? `工作目录：${chat.cwd}` : "选择工作目录"}
-          className="flex max-w-72 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-dim hover:bg-card hover:text-ink"
+          className="flex max-w-72 items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-dim hover:bg-card hover:text-ink"
         >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
             <path d="M2 4.5A1.5 1.5 0 013.5 3h2l1.5 2h5.5A1.5 1.5 0 0114 6.5v5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" strokeLinejoin="round" />
           </svg>
           <span className="truncate">{chat.cwd ? cwdBasename(chat.cwd) : "选择工作目录"}</span>
@@ -413,9 +414,100 @@ export default function InputBox() {
             <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
+        <ModelPicker />
       </div>
 
       {previewImage && <ImageLightbox image={previewImage} onClose={() => setPreviewImage(null)} />}
+    </div>
+  );
+}
+
+type SteeringMode = "all" | "one-at-a-time";
+
+const PERMISSION_OPTIONS: Array<{ value: SteeringMode; label: string; hint: string }> = [
+  { value: "one-at-a-time", label: "默认权限", hint: "每个敏感操作都问一次" },
+  { value: "all", label: "全部放行", hint: "不再逐个确认，谨慎使用" },
+];
+
+/**
+ * Permission-mode dropdown. Replaces a native `<select>`: on Windows the
+ * system widget can't shed its own chrome, so it was the one control that
+ * refused to match the rest of the composer. Behaviour is unchanged — the same
+ * two options calling the same `setSteeringMode`. 「全部放行」turns the chip
+ * orange, since it is the mode worth noticing at a glance.
+ */
+function PermissionChip({ mode, onChange }: { mode: SteeringMode; onChange: (mode: SteeringMode) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const current = PERMISSION_OPTIONS.find((o) => o.value === mode) ?? PERMISSION_OPTIONS[0];
+  const risky = mode === "all";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="权限模式"
+        className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs hover:bg-card ${
+          risky ? "text-tone-orange" : "text-dim hover:text-ink"
+        }`}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
+          {risky ? (
+            <>
+              <path d="M8 2.2l5.6 10.3a.8.8 0 01-.7 1.2H3.1a.8.8 0 01-.7-1.2L8 2.2z" strokeLinejoin="round" />
+              <path d="M8 6.4v3M8 11.4h.01" strokeLinecap="round" />
+            </>
+          ) : (
+            <>
+              <path d="M8 2l4.5 1.8v4.3c0 2.6-1.8 4.8-4.5 5.7-2.7-.9-4.5-3.1-4.5-5.7V3.8L8 2z" strokeLinejoin="round" />
+              <path d="M6 8l1.6 1.6L10.3 7" strokeLinecap="round" strokeLinejoin="round" />
+            </>
+          )}
+        </svg>
+        <span>{current.label}</span>
+        <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
+          <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-30 mb-1.5 w-56 overflow-hidden rounded-lg border border-edge bg-card py-1 shadow-lift">
+          {PERMISSION_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              onClick={() => {
+                setOpen(false);
+                if (o.value !== mode) onChange(o.value);
+              }}
+              className="flex w-full items-start gap-2 px-3 py-1.5 text-left hover:bg-base"
+            >
+              <span className="w-3 shrink-0 pt-px text-center text-[var(--ok)]">{o.value === mode ? "✓" : ""}</span>
+              <span className="min-w-0">
+                <span className="block text-xs text-ink">{o.label}</span>
+                <span className="block text-[11px] text-dim">{o.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -396,9 +396,12 @@ export default function App() {
             {panelOpen && page === "chat" && <FilePanel />}
           </div>
         </main>
+
+        {/* 必须留在这个 relative 容器里：引导层是 absolute inset-0，挂到外面
+            会锚到视口、从 y=0 铺起，右上角的「跳过 / 关闭」就钻到 TitleBar 底下。 */}
+        {overlay}
       </div>
 
-      {overlay}
       <ToastContainer />
       <ExtensionModal />
     </div>

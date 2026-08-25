@@ -406,6 +406,18 @@ export interface FileTextContent {
   binary: boolean;
 }
 
+/** Whole-file bytes for previews that cannot work on text (`read_file_bytes`). */
+export interface FileBytesContent {
+  /** Empty when `truncated`: an over-cap read returns no data at all. */
+  dataBase64: string;
+  /** Extension-based guess, for `data:` URLs. */
+  mimeType: string;
+  /** Size on disk, even when nothing was read. */
+  size: number;
+  /** File exceeded the cap; nothing was read. */
+  truncated: boolean;
+}
+
 /**
  * One changed path from `git_status`. Mirrors `src-tauri/src/git.rs`, which
  * builds it from `git status --porcelain=v2`.

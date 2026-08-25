@@ -2,6 +2,8 @@
 //!
 //! - `list_dir`: single-level directory listing (frontend lazy-expands).
 //! - `read_file_text`: capped, lossy text preview with binary detection.
+//! - `read_file_bytes`: whole file as base64, for previews that need the raw
+//!   bytes (images, and the zip-based office formats the frontend unpacks).
 //! - `read_attachment`: an attachment reference for a path — images are read
 //!   as base64 (they ride the prompt inline), everything else is just a path
 //!   for the model to `read` itself.
@@ -23,6 +25,10 @@ const BINARY_PROBE_BYTES: usize = 8 * 1024;
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 /// Upper bound on a single pasted payload (bytes, before base64 decoding).
 const MAX_PASTE_BYTES: usize = 32 * 1024 * 1024;
+/// Cap for `read_file_bytes`. Base64 inflates by 4/3 and the payload crosses
+/// the IPC bridge as a JSON string, so this is deliberately far below what the
+/// text preview allows per call.
+const DEFAULT_MAX_BINARY_BYTES: usize = 24 * 1024 * 1024;
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
@@ -42,6 +48,23 @@ pub struct FileText {
     pub text: String,
     pub truncated: bool,
     pub binary: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBytes {
+    pub data_base64: String,
+    /// Guessed from the extension, for `data:` URLs. `application/octet-stream`
+    /// when unknown.
+    pub mime_type: String,
+    /// Size on disk, which is what the caller should report — `dataBase64`
+    /// decodes to less than this when `truncated` is set.
+    pub size: u64,
+    /// The file exceeded the cap and nothing was read: partial bytes are
+    /// useless for every consumer of this call (a zip needs its trailing
+    /// central directory, an image its full stream), so an over-cap read
+    /// answers empty rather than half a file.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +145,63 @@ pub fn read_file_text(path: &str, max_bytes: Option<usize>) -> Result<FileText, 
         text: String::from_utf8_lossy(&buf).into_owned(),
         truncated,
         binary: false,
+    })
+}
+
+/// Extension-based MIME guess, for `data:` URLs in the preview. Only formats
+/// the preview can actually show are listed; everything else is opaque bytes
+/// as far as this function is concerned.
+fn mime_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" | "xlsm" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Read a whole file as base64, for previews that need the bytes themselves:
+/// images (rendered from a `data:` URL) and the zip-based office formats,
+/// which the frontend unpacks itself.
+///
+/// Unlike `read_file_text` this never returns a partial file — see
+/// `FileBytes::truncated`.
+pub fn read_file_bytes(path: &str, max_bytes: Option<usize>) -> Result<FileBytes, String> {
+    let max = max_bytes.unwrap_or(DEFAULT_MAX_BINARY_BYTES) as u64;
+    let p = Path::new(path);
+    let meta = fs::metadata(p).map_err(|e| format!("cannot stat {path}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("not a file: {path}"));
+    }
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mime_type = mime_for_ext(&ext).to_string();
+    let size = meta.len();
+    if size > max {
+        return Ok(FileBytes {
+            data_base64: String::new(),
+            mime_type,
+            size,
+            truncated: true,
+        });
+    }
+    let bytes = fs::read(p).map_err(|e| format!("cannot read {path}: {e}"))?;
+    Ok(FileBytes {
+        data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        mime_type,
+        size,
+        truncated: false,
     })
 }
 
@@ -237,16 +317,9 @@ fn read_image_attachment(
         return Ok(None);
     }
     let bytes = fs::read(p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
-    let mime_type = match ext {
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        _ => "image/png",
-    };
     Ok(Some(AttachmentData::Image {
         name: name.to_string(),
-        mime_type: mime_type.to_string(),
+        mime_type: mime_for_ext(ext).to_string(),
         data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
     }))
 }

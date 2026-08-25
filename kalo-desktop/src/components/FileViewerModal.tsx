@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChangedFile } from "../lib/changed-files";
 import { chatStore } from "../lib/chat-store";
-import { readFileText } from "../lib/pi-bridge";
-import type { FileTextContent } from "../types";
 import DiffView from "./DiffView";
+import FilePreview from "./FilePreview";
 
 type Tab = "diff" | "file";
 
@@ -16,20 +15,6 @@ type Tab = "diff" | "file";
 export default function FileViewerModal({ file, onClose }: { file: ChangedFile; onClose: () => void }) {
   const [full, setFull] = useState(false);
   const [tab, setTab] = useState<Tab>(file.lastDiff ? "diff" : "file");
-  const [content, setContent] = useState<FileTextContent | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Load the file lazily, and only once: the diff tab alone needs no read.
-  useEffect(() => {
-    if (tab !== "file" || content || error) return;
-    let alive = true;
-    readFileText(file.fullPath)
-      .then((res) => alive && setContent(res))
-      .catch((err) => alive && setError(err instanceof Error ? err.message : String(err)));
-    return () => {
-      alive = false;
-    };
-  }, [tab, content, error, file.fullPath]);
 
   // Esc closes; when full screen, it steps back to the windowed size first.
   useEffect(() => {
@@ -104,17 +89,8 @@ export default function FileViewerModal({ file, onClose }: { file: ChangedFile; 
             <div className="p-3">
               <DiffView diff={file.lastDiff} />
             </div>
-          ) : error ? (
-            <div className="p-3 text-xs text-[var(--danger)]">读取文件失败：{error}</div>
-          ) : content === null ? (
-            <div className="p-3 text-xs text-dim">加载中…</div>
-          ) : content.binary ? (
-            <div className="p-3 text-xs text-dim">二进制文件不支持预览</div>
           ) : (
-            <pre className="mono whitespace-pre px-3 py-2 text-xs leading-relaxed">
-              {content.text}
-              {content.truncated && "\n（已截断）"}
-            </pre>
+            <FilePreview path={file.fullPath} name={file.path} />
           )}
         </div>
       </div>

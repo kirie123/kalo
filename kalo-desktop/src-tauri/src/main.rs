@@ -21,7 +21,7 @@ mod pi_config;
 mod proc;
 mod skills;
 
-use files::{AttachmentData, DirDiff, DirEntry, FileText, TextSince};
+use files::{AttachmentData, DirDiff, DirEntry, FileBytes, FileText, TextSince};
 use gateway::GatewayManager;
 use git::GitStatus;
 use internal_skills::InstallReport;
@@ -259,6 +259,13 @@ fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
 #[tauri::command(async)]
 fn read_file_text(path: String, max_bytes: Option<usize>) -> Result<FileText, String> {
     files::read_file_text(&path, max_bytes)
+}
+
+/// Read a whole file as base64, for previews that need raw bytes (images,
+/// docx/xlsx, pdf). Over-cap files answer `truncated` with no data.
+#[tauri::command(async)]
+fn read_file_bytes(path: String, max_bytes: Option<usize>) -> Result<FileBytes, String> {
+    files::read_file_bytes(&path, max_bytes)
 }
 
 /// Git status of the repository containing `cwd`, for the file panel.
@@ -627,6 +634,7 @@ fn main() {
             delete_memory,
             list_dir,
             read_file_text,
+            read_file_bytes,
             git_status,
             git_diff,
             app_paths,

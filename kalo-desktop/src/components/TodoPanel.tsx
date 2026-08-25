@@ -63,7 +63,9 @@ export default function TodoPanel() {
   const active = todos.find((t) => t.status === "in_progress");
 
   return (
-    <div className="mb-1.5 overflow-hidden rounded-lg border border-edge bg-card text-[13px]">
+    // Same mx-auto/max-w-3xl box as the composer in InputBox, so the panel
+    // lines up with the input it is pinned above instead of spanning the column.
+    <div className="mx-auto mb-1.5 w-full max-w-3xl overflow-hidden rounded-lg border border-edge bg-card text-[13px]">
       {/* The list renders ABOVE the header so the panel grows upward. The
           composer is bottom-anchored, so a list below the header would shove
           the header up by its own height on every toggle, sliding the button

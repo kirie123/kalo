@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { gitDiff, gitStatus, listDir, openPath, readFileText } from "../lib/pi-bridge";
+import { gitDiff, gitStatus, listDir, openPath } from "../lib/pi-bridge";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
 import {
@@ -15,6 +15,7 @@ import {
   type StatusIndex,
 } from "../lib/git";
 import DiffView, { type DiffLine } from "./DiffView";
+import FilePreview from "./FilePreview";
 import type { DirEntry, GitEntry, GitStatus } from "../types";
 
 interface Preview {
@@ -22,9 +23,6 @@ interface Preview {
   path: string;
   /** Posix path relative to the repo root; null outside a repository. */
   relPath: string | null;
-  text: string;
-  truncated: boolean;
-  binary: boolean;
 }
 
 /** Which view the preview column is showing. */
@@ -91,8 +89,7 @@ export default function FilePanel() {
   const [backStack, setBackStack] = useState<string[]>([]);
   const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 288));
   const [previewW, setPreviewW] = useState(() => loadWidth("kalo.layout.previewW", 416));
-  // Race guards: only the latest request may populate its slot.
-  const previewReq = useRef(0);
+  // Race guard: only the latest diff request may populate its slot.
   const diffReq = useRef(0);
 
   const gitIndex = useMemo<StatusIndex>(() => buildStatusIndex(git), [git]);
@@ -130,7 +127,6 @@ export default function FilePanel() {
     setPreview(null);
     setPreviewFull(false);
     setDiffLines(null);
-    previewReq.current++;
     diffReq.current++;
     if (root) void loadDir(root);
     void refreshGit(root);
@@ -208,23 +204,16 @@ export default function FilePanel() {
     [root],
   );
 
-  const openFile = async (file: { name: string; path: string }, tab: PreviewTab = "source") => {
-    const req = ++previewReq.current;
+  const openFile = (file: { name: string; path: string }, tab: PreviewTab = "source") => {
     const relPath = relPathOf(git, file.path);
     setPreviewTab(tab);
     setDiffLines(null);
     diffReq.current++;
     if (tab === "diff" && relPath) void loadDiff(relPath);
-    try {
-      const res = await readFileText(file.path);
-      if (req !== previewReq.current) return;
-      setPreview({ name: file.name, path: file.path, relPath, ...res });
-      setPreviewFull(false);
-    } catch (err) {
-      if (req === previewReq.current) {
-        chatStore.pushToast(`读取文件失败：${errText(err)}`, "error");
-      }
-    }
+    // No read here: FilePreview owns loading (and its own error state), which
+    // is what lets one path serve markdown, images and office files alike.
+    setPreview({ name: file.name, path: file.path, relPath });
+    setPreviewFull(false);
   };
 
   /** Switch the preview between source and diff, fetching the diff on demand. */
@@ -236,7 +225,6 @@ export default function FilePanel() {
   };
 
   const closePreview = () => {
-    previewReq.current++;
     diffReq.current++;
     setPreview(null);
     setPreviewFull(false);
@@ -260,7 +248,7 @@ export default function FilePanel() {
     return entries.map((e) => (
       <div key={e.path}>
         <button
-          onClick={() => (e.isDir ? toggleDir(e.path) : void openFile(e))}
+          onClick={() => (e.isDir ? toggleDir(e.path) : openFile(e))}
           onContextMenu={(ev) => {
             ev.preventDefault();
             setMenu({ x: ev.clientX, y: ev.clientY, entry: e });
@@ -308,7 +296,7 @@ export default function FilePanel() {
           return (
             <button
               key={entry.path}
-              onClick={() => void openFile(asEntry, entry.untracked ? "source" : "diff")}
+              onClick={() => openFile(asEntry, entry.untracked ? "source" : "diff")}
               onContextMenu={(ev) => {
                 ev.preventDefault();
                 setMenu({ x: ev.clientX, y: ev.clientY, entry: asEntry });
@@ -488,7 +476,7 @@ export default function FilePanel() {
             relPathOf(git, menu.entry.path) !== null &&
             statusOf(gitIndex, menu.entry.path) !== null &&
             !statusOf(gitIndex, menu.entry.path)?.untracked
-              ? () => void openFile(menu.entry, "diff")
+              ? () => openFile(menu.entry, "diff")
               : undefined
           }
         />
@@ -670,8 +658,8 @@ function PreviewBody({
     );
   }
   return (
-    <div className="mono min-h-0 flex-1 overflow-auto whitespace-pre px-3 py-2 text-xs leading-relaxed">
-      {preview.binary ? "二进制文件不支持预览" : preview.text + (preview.truncated ? "\n（已截断）" : "")}
+    <div className="min-h-0 flex-1 overflow-auto">
+      <FilePreview path={preview.path} name={preview.name} />
     </div>
   );
 }

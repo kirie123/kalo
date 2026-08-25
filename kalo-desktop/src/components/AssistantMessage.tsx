@@ -69,8 +69,11 @@ export function CodeRenderer({ className, children }: { className?: string; chil
  * One markdown text block, memoized on its source text: while the last block
  * of a streaming message grows, the earlier (finished) blocks skip remark/
  * rehype parsing entirely.
+ *
+ * Exported because the file preview renders markdown files through the same
+ * pipeline — a `.md` file and the agent's prose should look identical.
  */
-const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+export const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
   return (
     <div className="markdown">
       <ReactMarkdown

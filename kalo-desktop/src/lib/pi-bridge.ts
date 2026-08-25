@@ -57,6 +57,7 @@ import type {
   FeedInfo,
   FeedSpec,
   FileMatch,
+  FileBytesContent,
   FileTextContent,
   GatewayStatus,
   GitStatus,
@@ -230,6 +231,13 @@ export function readFileText(path: string, maxBytes?: number): Promise<FileTextC
   const args: Record<string, unknown> = { path };
   if (maxBytes !== undefined) args.maxBytes = maxBytes;
   return invoke<FileTextContent>("read_file_text", args);
+}
+
+/** Whole file as base64, for image / office / pdf previews. */
+export function readFileBytes(path: string, maxBytes?: number): Promise<FileBytesContent> {
+  const args: Record<string, unknown> = { path };
+  if (maxBytes !== undefined) args.maxBytes = maxBytes;
+  return invoke<FileBytesContent>("read_file_bytes", args);
 }
 
 /**

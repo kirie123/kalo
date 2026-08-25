@@ -10,8 +10,23 @@
   --bg: #ffffff;
   --bg-sidebar: #f7f7f5;
   --bg-card: #f7f7f5;
+  /* One step *above* --bg: the composer card and the first-screen entry cards.
+     White on white in light mode — border + shadow are what hold it apart. */
+  --bg-elevated: #ffffff;
   --bubble: #f0f0ed;
-  --border: rgba(0, 0, 0, 0.08);
+  --border: rgba(0, 0, 0, 0.07);
+  /* Accent hues. Icons only (see tailwind.config.js `tone`) — --accent stays
+     achromatic so primary buttons and selection remain black/white. */
+  --tone-blue: #2f6fed;
+  --tone-blue-soft: #eaf1fe;
+  --tone-green: #12a150;
+  --tone-green-soft: #e7f7ee;
+  --tone-orange: #e07b1a;
+  --tone-orange-soft: #fdf1e3;
+  --tone-violet: #7a5af8;
+  --tone-violet-soft: #f0ecfe;
+  --tone-pink: #e0489b;
+  --tone-pink-soft: #fdecf5;
   --text: #1a1a1a;
   --text-dim: #6b6b6b;
   --accent: #1a1a1a;
@@ -32,8 +47,23 @@
   --bg: #171717;
   --bg-sidebar: #1e1e1e;
   --bg-card: #212121;
+  /* Brighter than --bg-card so the composer still reads as lifted here, where
+     a shadow can't do the work. */
+  --bg-elevated: #262626;
   --bubble: #2b2b2b;
-  --border: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.09);
+  /* Strokes lightened for contrast on dark; the soft backplates become
+     low-opacity washes of the same hue rather than pale tints. */
+  --tone-blue: #6f9dff;
+  --tone-blue-soft: rgba(111, 157, 255, 0.14);
+  --tone-green: #4ac26b;
+  --tone-green-soft: rgba(74, 194, 107, 0.14);
+  --tone-orange: #f0a859;
+  --tone-orange-soft: rgba(240, 168, 89, 0.14);
+  --tone-violet: #a794ff;
+  --tone-violet-soft: rgba(167, 148, 255, 0.14);
+  --tone-pink: #f07ab8;
+  --tone-pink-soft: rgba(240, 122, 184, 0.14);
   --text: #ececec;
   --text-dim: #9b9b9b;
   --accent: #ececec;
