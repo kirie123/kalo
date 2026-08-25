@@ -302,7 +302,7 @@ function ModelSettings() {
 }
 
 /** Common built-in providers that authenticate with a plain API key. */
-const BUILTIN_KEY_PROVIDERS: Array<{ id: string; label: string }> = [
+export const BUILTIN_KEY_PROVIDERS: Array<{ id: string; label: string }> = [
   { id: "deepseek", label: "DeepSeek" },
   { id: "anthropic", label: "Anthropic" },
   { id: "openai", label: "OpenAI" },

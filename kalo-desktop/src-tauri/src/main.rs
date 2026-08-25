@@ -13,6 +13,7 @@ mod knowledge;
 mod market_env;
 mod mcp;
 mod memory;
+mod onboarding;
 mod session;
 mod session_paging;
 mod sessions_store;
@@ -662,6 +663,8 @@ fn main() {
             mcp::read_mcp_config,
             mcp::write_mcp_config,
             mcp::read_mcp_status,
+            onboarding::read_onboarding_state,
+            onboarding::write_onboarding_state,
             jobs_list,
         ])
         .build(tauri::generate_context!())

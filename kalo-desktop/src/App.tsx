@@ -8,6 +8,8 @@ import FeedsSettings from "./components/FeedsSettings";
 import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
 import NotesPanel from "./features/notes/NotesPanel";
+import OnboardingOverlay from "./features/onboarding/OnboardingOverlay";
+import { markOnboardingDone, shouldShowOnboarding } from "./features/onboarding/state";
 import SettingsPage, {
   applyTheme,
   loadTheme,
@@ -45,6 +47,21 @@ export default function App() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectGroup[]>([]);
   const [theme, setTheme] = useState<ThemePref>(() => loadTheme());
+  // null = 还没问过 ~/.kalo/onboarding.json；"first" 首次自动弹，
+  // "review" 是从帮助菜单点开的（关闭时不写标记）。
+  const [onboarding, setOnboarding] = useState<null | "first" | "review">(null);
+
+  // 首启判定只做一次。读失败当作已完成——见 features/onboarding/state.ts。
+  useEffect(() => {
+    void shouldShowOnboarding().then((show) => {
+      if (show) setOnboarding("first");
+    });
+  }, []);
+
+  const closeOnboarding = useCallback((completed: boolean) => {
+    setOnboarding(null);
+    if (completed) void markOnboardingDone();
+  }, []);
 
   // Apply theme to <html>; in "system" mode also follow OS changes.
   useEffect(() => {
@@ -231,6 +248,7 @@ export default function App() {
       {
         label: "帮助",
         entries: [
+          { kind: "item", label: "使用引导", onClick: () => setOnboarding("review") },
           { kind: "item", label: "技能与内置技能", onClick: () => onOpenSettings("skills") },
           { kind: "item", label: "关于 Kalo", onClick: () => onOpenSettings("about") },
         ],
@@ -266,18 +284,25 @@ export default function App() {
             ? "自动化"
             : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
 
+  // 引导层。放在 TitleBar 之下、内容区之上：无边框窗口的拖动与关闭都靠那条
+  // 标题栏，盖住它等于把人关在引导里。
+  const overlay = onboarding && (
+    <OnboardingOverlay onClose={closeOnboarding} reviewing={onboarding === "review"} />
+  );
+
   // Settings takes over the whole window — no session sidebar next to it.
   if (page === "settings") {
     return (
       <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
         <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
-        <div className="flex min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1">
           <SettingsPage
             theme={theme}
             onThemeChange={setTheme}
             onBack={() => setPage("chat")}
             initialTab={settingsTab}
           />
+          {overlay}
         </div>
         <ToastContainer />
         <ExtensionModal />
@@ -288,7 +313,7 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
       <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <Sidebar
           collapsed={sidebarCollapsed}
           width={sidebarW}
@@ -373,6 +398,7 @@ export default function App() {
         </main>
       </div>
 
+      {overlay}
       <ToastContainer />
       <ExtensionModal />
     </div>

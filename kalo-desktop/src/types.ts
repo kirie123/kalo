@@ -543,6 +543,20 @@ export interface AuthCredential {
 /** Contents of ~/.kalo/agent/auth.json. */
 export type AuthConfig = Record<string, AuthCredential>;
 
+/**
+ * Contents of ~/.kalo/onboarding.json — the first-run tour's marker.
+ *
+ * A file rather than localStorage so clearing the webview's storage does not
+ * re-show the tour, and so deleting it by hand is how you ask to see it again.
+ * `version` is written but not read yet: it is there so a future release that
+ * adds steps can decide whether an old marker still counts.
+ */
+export interface OnboardingState {
+  completed?: boolean;
+  completedAt?: number;
+  version?: number;
+}
+
 // ============================================================================
 // IM gateway (Feishu sidecar)
 // ============================================================================

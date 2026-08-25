@@ -20,6 +20,8 @@
  *   list_knowledge_cards / list_knowledge_domains / search_knowledge
  *   read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
+ *   read_onboarding_state {} -> OnboardingState  ({} when never completed)
+ *   write_onboarding_state { state } -> void
  *   jobs_list {} -> JobsSnapshot
  *   job_start / job_list / job_snapshot / job_logs / job_stop / job_metrics
  *   list_dir { path } -> DirEntry[]
@@ -69,6 +71,7 @@ import type {
   MemoryEntry,
   MemoryMeta,
   ModelsConfig,
+  OnboardingState,
   PiEventPayload,
   PiExitInfo,
   ProjectGroup,
@@ -414,6 +417,19 @@ export function writeMcpConfig(config: McpConfig): Promise<void> {
 /** Engine handshake mirror; empty servers until a session has run. */
 export function readMcpStatus(): Promise<McpStatus> {
   return invoke<McpStatus>("read_mcp_status", {});
+}
+
+// ============================================================================
+// First-run onboarding marker (~/.kalo/onboarding.json)
+// ============================================================================
+
+/** The marker; `{}` when the file is absent (i.e. never completed). */
+export function readOnboardingState(): Promise<OnboardingState> {
+  return invoke<OnboardingState>("read_onboarding_state", {});
+}
+
+export function writeOnboardingState(state: OnboardingState): Promise<void> {
+  return invoke<void>("write_onboarding_state", { state });
 }
 
 // ============================================================================
