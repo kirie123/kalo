@@ -64,6 +64,46 @@ export function fileKind(path: string): FileKind {
   return "text";
 }
 
+/**
+ * highlight.js language id for a text file, or undefined for genuine plain
+ * text (logs, .txt, unknown extensions — where auto-detect would paint prose
+ * in random colors). Only candidates: callers check `hljs.getLanguage` and
+ * fall back to plain text for ids outside the bundled common set.
+ */
+export function codeLanguage(path: string): string | undefined {
+  const name = (path.replace(/\\/g, "/").split("/").pop() ?? "").toLowerCase();
+  const byName = CODE_NAME_LANGS[name];
+  if (byName) return byName;
+  const ext = extensionOf(path);
+  return CODE_EXT_LANGS[ext];
+}
+
+const CODE_EXT_LANGS: Record<string, string> = {
+  ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
+  js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
+  py: "python", pyi: "python", pyw: "python",
+  rs: "rust", go: "go", java: "java", kt: "kotlin", kts: "kotlin",
+  c: "c", h: "c", cc: "cpp", cpp: "cpp", cxx: "cpp", hpp: "cpp", hxx: "cpp",
+  cs: "csharp", rb: "ruby", php: "php", swift: "swift", r: "r", lua: "lua",
+  pl: "perl", pm: "perl",
+  sh: "bash", bash: "bash", zsh: "bash",
+  json: "json", jsonc: "json", json5: "json",
+  yaml: "yaml", yml: "yaml", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",
+  properties: "properties",
+  xml: "xml", html: "xml", htm: "xml", xsl: "xml", xslt: "xml",
+  css: "css", scss: "scss", less: "less",
+  sql: "sql", graphql: "graphql", gql: "graphql",
+  md: "markdown", markdown: "markdown", mdx: "markdown",
+  diff: "diff", patch: "diff",
+  dockerfile: "dockerfile", nginx: "nginx",
+};
+
+/** Files whose language is carried by the whole name, not an extension. */
+const CODE_NAME_LANGS: Record<string, string> = {
+  makefile: "makefile", gnumakefile: "makefile",
+  dockerfile: "dockerfile", "cmakelists.txt": "cmake",
+};
+
 /** True when the kind is loaded through `read_file_bytes` rather than as text. */
 export function needsBytes(kind: FileKind): boolean {
   return kind === "image" || kind === "docx" || kind === "xlsx" || kind === "pdf";

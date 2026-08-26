@@ -245,6 +245,22 @@ body {
   color: #c9d1d9;
 }
 
+/* Whole-file code view (FilePreview): same github-dark hljs palette as
+   .md-codeblock, but edge-to-edge without the chat bubble's card chrome. */
+.file-code {
+  margin: 0;
+  padding: 8px 12px;
+  overflow-x: auto;
+  background: #0d1117;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.file-code code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: transparent;
+  color: #c9d1d9;
+}
+
 /* ==========================================================================
    Small helpers
    ========================================================================== */

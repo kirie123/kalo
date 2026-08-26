@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import hljs from "highlight.js";
 import { docxToMarkdown } from "../lib/docx";
-import { fileKind, formatBytes, needsBytes, type FileKind } from "../lib/file-kind";
+import { codeLanguage, fileKind, formatBytes, needsBytes, type FileKind } from "../lib/file-kind";
 import { chatStore } from "../lib/chat-store";
 import { openPath, readFileBytes, readFileText } from "../lib/pi-bridge";
 import { MAX_COLS, MAX_ROWS, readXlsx, type XlsxWorkbook } from "../lib/xlsx";
 import { openZip } from "../lib/zip";
-import { MarkdownBlock } from "./AssistantMessage";
+import { highlight, MarkdownBlock } from "./AssistantMessage";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 
 /**
@@ -77,6 +78,8 @@ async function load(path: string, kind: FileKind): Promise<Loaded> {
 
 export default function FilePreview({ path, name }: { path: string; name?: string }) {
   const kind = useMemo(() => fileKind(path), [path]);
+  /** highlight.js language for source views; undefined for genuine plain text. */
+  const srcLang = useMemo(() => codeLanguage(path), [path]);
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Markdown and docx render by default; this shows the source instead. */
@@ -125,7 +128,7 @@ export default function FilePreview({ path, name }: { path: string; name?: strin
         <div className="relative">
           <SourceToggle source={source} onToggle={() => setSource((v) => !v)} />
           {source ? (
-            <PlainText text={data.text} truncated={data.truncated} />
+            <CodeText text={data.text} lang="markdown" truncated={data.truncated} />
           ) : (
             <div className="px-3 py-2 text-sm">
               <MarkdownBlock text={data.text} />
@@ -136,7 +139,7 @@ export default function FilePreview({ path, name }: { path: string; name?: strin
       );
 
     case "text":
-      return <PlainText text={data.text} truncated={data.truncated} />;
+      return <CodeText text={data.text} lang={srcLang} truncated={data.truncated} />;
 
     case "image":
       return <ImagePreview image={data} />;
@@ -146,7 +149,7 @@ export default function FilePreview({ path, name }: { path: string; name?: strin
         <div className="relative">
           <SourceToggle source={source} onToggle={() => setSource((v) => !v)} label="Markdown" />
           {source ? (
-            <PlainText text={data.markdown} truncated={false} />
+            <CodeText text={data.markdown} lang="markdown" truncated={false} />
           ) : (
             <div className="px-3 py-2 text-sm">
               {data.markdown ? (
@@ -189,6 +192,27 @@ function PlainText({ text, truncated }: { text: string; truncated: boolean }) {
       {text}
       {truncated && "\n（已截断）"}
     </pre>
+  );
+}
+
+/**
+ * Whole-file code view: syntax-highlighted when the extension maps to a
+ * language highlight.js actually bundles, plain monospace otherwise —
+ * highlightAuto on prose paints random words in keyword colors.
+ */
+function CodeText({ text, lang, truncated }: { text: string; lang?: string; truncated: boolean }) {
+  const html = useMemo(
+    () => (lang && hljs.getLanguage(lang) ? highlight(text, lang) : null),
+    [text, lang],
+  );
+  if (html === null) return <PlainText text={text} truncated={truncated} />;
+  return (
+    <div>
+      <pre className="file-code">
+        <code dangerouslySetInnerHTML={{ __html: html }} />
+      </pre>
+      {truncated && <div className="px-3 py-1 text-xs text-dim">（文件过长，已截断）</div>}
+    </div>
   );
 }
 

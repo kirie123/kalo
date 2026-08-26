@@ -19,12 +19,13 @@ function escapeHtml(s: string): string {
  * Highlight cache. A streaming message re-renders ~20 times a second, and
  * `highlightAuto` (used for fenced blocks without a language) is by far the
  * most expensive step in that path — without a cache it runs on every frame
- * for every code block already on screen.
+ * for every code block already on screen. Exported for the file preview,
+ * which highlights whole source files through the same pipeline.
  */
 const HL_CACHE = new Map<string, string>();
 const HL_CACHE_MAX = 200;
 
-function highlight(code: string, lang?: string): string {
+export function highlight(code: string, lang?: string): string {
   const key = `${lang ?? ""}${code}`;
   const cached = HL_CACHE.get(key);
   if (cached !== undefined) return cached;

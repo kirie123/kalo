@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fileKind, extensionOf, formatBytes, needsBytes } from "./file-kind";
+import { codeLanguage, fileKind, extensionOf, formatBytes, needsBytes } from "./file-kind";
 import { buildZip } from "./zip-fixture";
 import { openZip } from "./zip";
 
@@ -43,6 +43,26 @@ describe("needsBytes", () => {
   it("marks exactly the kinds that cannot be read as text", () => {
     expect(["image", "docx", "xlsx", "pdf"].every((k) => needsBytes(k as never))).toBe(true);
     expect(["markdown", "text", "opaque"].some((k) => needsBytes(k as never))).toBe(false);
+  });
+});
+
+describe("codeLanguage", () => {
+  it("maps common source extensions to highlight.js ids", () => {
+    expect(codeLanguage("a/b/reward.py")).toBe("python");
+    expect(codeLanguage("App.TSX")).toBe("typescript");
+    expect(codeLanguage("src/main.rs")).toBe("rust");
+    expect(codeLanguage("C:\\repo\\config.yaml")).toBe("yaml");
+  });
+
+  it("resolves extensionless names by basename", () => {
+    expect(codeLanguage("Makefile")).toBe("makefile");
+    expect(codeLanguage("dir/Dockerfile")).toBe("dockerfile");
+  });
+
+  it("returns undefined for prose and unknown extensions", () => {
+    expect(codeLanguage("notes.txt")).toBeUndefined();
+    expect(codeLanguage("run.log")).toBeUndefined();
+    expect(codeLanguage(".gitignore")).toBeUndefined();
   });
 });
 

@@ -232,6 +232,21 @@ export default function FilePanel() {
     setDiffLines(null);
   };
 
+  // Esc exits the fullscreen preview. Registered only while fullscreen so a
+  // plain Esc elsewhere in the panel is untouched; mirrors FileViewerModal,
+  // where Esc likewise steps back before closing anything.
+  useEffect(() => {
+    if (!previewFull) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setPreviewFull(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewFull]);
+
   // Reload the root, every expanded directory, and git status, keeping the
   // expansion.
   const refresh = () => {
@@ -600,21 +615,31 @@ function PreviewHeader({
             ))}
           </div>
         )}
-        <button
-          onClick={onFull}
-          title={full ? "退出全屏" : "全屏查看"}
-          className="rounded p-1 text-dim hover:bg-card hover:text-ink"
-        >
-          {full ? (
+        {full ? (
+          // Fullscreen traps the user when the only exit is a bare icon: make
+          // it a labelled button with the shortcut spelled out.
+          <button
+            onClick={onFull}
+            title="退出全屏（Esc）"
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-card px-2 py-1 text-xs text-ink hover:bg-base"
+          >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M6 2.5v3h-3M10 13.5v-3h3M13.5 10h-3v3M2.5 6h3v-3" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-          ) : (
+            退出全屏
+            <kbd className="rounded border border-edge bg-base px-1 text-[10px] text-dim">Esc</kbd>
+          </button>
+        ) : (
+          <button
+            onClick={onFull}
+            title="全屏查看"
+            className="rounded p-1 text-dim hover:bg-card hover:text-ink"
+          >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-          )}
-        </button>
+          </button>
+        )}
         <button
           onClick={onClose}
           title="关闭预览"
