@@ -1,8 +1,9 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
 import { mergeSessionRows, SESSION_PAGE_SIZE, visibleRows, type SessionRow } from "../lib/session-rows";
 import type { PendingSession, ProjectGroup, SessionSummary } from "../types";
+import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import NewProjectModal from "./NewProjectModal";
 
 interface SidebarProps {
@@ -455,6 +456,8 @@ function ShowMoreButton({
  * and the relative time on the right. While `renaming` matches this row,
  * the title is replaced by an inline input (Enter commits, Esc cancels,
  * blur commits).
+ *
+ * Right-clicking the row and clicking the「...」button open the same menu.
  */
 function SessionRowItem({
   session,
@@ -481,8 +484,34 @@ function SessionRowItem({
   onDelete: (session: SessionSummary) => void;
 }) {
   const editing = renaming?.path === session.path;
+  const menu = useContextMenu();
+
+  // One list for both entry points, so they can't drift apart.
+  const items: MenuItem[] = [
+    { label: "重命名", action: () => onStartRename(session) },
+    openPathItem("打开项目文件夹", session.cwd, true),
+    copyPathItem(session.cwd, "复制项目路径"),
+    // Optimistic rows have no file on disk to delete yet.
+    ...(session.pending
+      ? []
+      : [
+          {
+            label: "删除会话",
+            danger: true,
+            action: () => {
+              if (window.confirm(`确定删除会话「${session.title || "未命名会话"}」的历史记录？该操作不可恢复。`)) {
+                onDelete(session);
+              }
+            },
+          },
+        ]),
+  ];
+
   return (
     <div
+      // While the inline input is open, leave right-click to the browser so the
+      // menu can't steal the blur that commits the rename.
+      onContextMenu={editing ? undefined : menu.onContextMenu}
       className={`group flex w-full items-center gap-1 rounded-md hover:bg-card ${
         variant === "flat" ? "px-2 py-1.5" : "py-1.5 pl-9 pr-2"
       } ${active ? "bg-card" : ""}`}
@@ -521,50 +550,15 @@ function SessionRowItem({
           )}
         </button>
       )}
-      <SessionMenu session={session} onDeleteSession={onDelete} onRename={() => onStartRename(session)} />
-    </div>
-  );
-}
-
-/** Per-session "..." menu: 重命名, then 删除 (hidden for optimistic rows). */
-function SessionMenu({
-  session,
-  onDeleteSession,
-  onRename,
-}: {
-  session: SessionRow;
-  onDeleteSession: (session: SessionSummary) => void;
-  onRename: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  // Close on outside click / Escape.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative shrink-0">
       <button
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((v) => !v);
+          menu.openAtRect(e.currentTarget);
         }}
-        title="更多操作"
-        className={`rounded p-1 text-dim hover:text-ink ${open ? "block" : "hidden group-hover:block"}`}
+        title="更多操作（也可右键该会话）"
+        className={`shrink-0 rounded p-1 text-dim hover:text-ink ${
+          menu.at ? "block" : "hidden group-hover:block"
+        }`}
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
           <circle cx="3" cy="8" r="1.4" />
@@ -572,34 +566,7 @@ function SessionMenu({
           <circle cx="13" cy="8" r="1.4" />
         </svg>
       </button>
-      {open && (
-        <div className="absolute right-0 top-6 z-20 w-32 overflow-hidden rounded-md border border-edge bg-card py-1 shadow-lg">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onRename();
-            }}
-            className="flex w-full px-3 py-1.5 text-left text-sm hover:bg-base"
-          >
-            重命名
-          </button>
-          {!session.pending && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                if (window.confirm(`确定删除会话「${session.title || "未命名会话"}」的历史记录？该操作不可恢复。`)) {
-                  onDeleteSession(session);
-                }
-              }}
-              className="flex w-full px-3 py-1.5 text-left text-sm text-[var(--danger)] hover:bg-base"
-            >
-              删除会话
-            </button>
-          )}
-        </div>
-      )}
+      {menu.at && <ContextMenu at={menu.at} items={items} onClose={menu.close} />}
     </div>
   );
 }

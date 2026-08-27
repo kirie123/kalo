@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ChangedFile } from "../lib/changed-files";
+import { chatStore } from "../lib/chat-store";
+import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import FileViewerModal from "./FileViewerModal";
 
 /** "+134 -13", with the dash omitted when the count is unknown. */
@@ -22,12 +24,20 @@ function shortenPath(path: string, max = 60): string {
   return `${head}/…/${tail}`.length <= max ? `${head}/…/${tail}` : `…/${tail}`;
 }
 
-function FileRow({ file, onOpen }: { file: ChangedFile; onOpen: () => void }) {
+function FileRow({
+  file,
+  onOpen,
+  onContextMenu,
+}: {
+  file: ChangedFile;
+  onOpen: () => void;
+  onContextMenu: (e: ReactMouseEvent) => void;
+}) {
   const title = [
     file.fullPath,
     file.created ? "本轮新建" : null,
     file.edits > 1 ? `本轮改动 ${file.edits} 次` : null,
-    "点击查看",
+    "点击查看，右键更多",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -35,6 +45,7 @@ function FileRow({ file, onOpen }: { file: ChangedFile; onOpen: () => void }) {
   return (
     <button
       onClick={onOpen}
+      onContextMenu={onContextMenu}
       title={title}
       className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-base"
     >
@@ -60,6 +71,18 @@ export default function ChangedFilesCard({
 }) {
   const [open, setOpen] = useState(true);
   const [viewing, setViewing] = useState<ChangedFile | null>(null);
+  // Right-click target; the menu itself is anchored by useContextMenu.
+  const [menuFile, setMenuFile] = useState<ChangedFile | null>(null);
+  const menu = useContextMenu();
+
+  const menuItems = (file: ChangedFile): MenuItem[] => [
+    { label: file.lastDiff ? "查看改动" : "查看全文", action: () => setViewing(file) },
+    openPathItem("用默认程序打开", file.fullPath),
+    openPathItem("打开所在文件夹", file.fullPath, true),
+    copyPathItem(file.fullPath),
+    { label: "添加到对话区", action: () => void chatStore.addAttachments([file.fullPath]) },
+  ];
+
   return (
     <div className="my-1 rounded-lg border border-edge bg-card text-[13px]">
       <button
@@ -88,10 +111,19 @@ export default function ChangedFilesCard({
       {open && (
         <div className="border-t border-edge px-0.5 py-1">
           {files.map((f) => (
-            <FileRow key={f.path} file={f} onOpen={() => setViewing(f)} />
+            <FileRow
+              key={f.path}
+              file={f}
+              onOpen={() => setViewing(f)}
+              onContextMenu={(e) => {
+                setMenuFile(f);
+                menu.onContextMenu(e);
+              }}
+            />
           ))}
         </div>
       )}
+      {menu.at && menuFile && <ContextMenu at={menu.at} items={menuItems(menuFile)} onClose={menu.close} />}
       {viewing && <FileViewerModal file={viewing} onClose={() => setViewing(null)} />}
     </div>
   );

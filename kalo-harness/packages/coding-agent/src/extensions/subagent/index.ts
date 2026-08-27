@@ -3,7 +3,7 @@
  *
  * Design: doc/kalo-subagent-design.md. One `agent` tool call spawns an
  * independent AgentSession in-process (in-memory history, trimmed toolset,
- * no nested extensions) and returns its final answer to the parent run.
+ * only the webfetch extension) and returns its final answer to the parent run.
  * Parallelism comes from the model issuing several `agent` tool calls in one
  * assistant turn; a process-wide semaphore caps concurrent children.
  */
@@ -23,9 +23,16 @@ import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { createAgentSession } from "../../core/sdk.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+// Imported directly rather than via ../index.ts: that module also pulls in this
+// one, and going through it would be a circular import.
+import webFetchExtension from "../webfetch/index.ts";
 
-/** Read-only exploration tools a child may use unless the call opts out. */
-const DEFAULT_TOOLS = ["read", "grep", "glob", "ls"];
+/**
+ * Read-only exploration tools a child may use unless the call opts out.
+ * `web_fetch` comes from the one extension children load (see getChildResources)
+ * and is in the default set because research tasks are the common delegation.
+ */
+const DEFAULT_TOOLS = ["read", "grep", "glob", "ls", "web_fetch"];
 /** Hard ceiling on the child's final text handed back to the parent model. */
 const MAX_RESULT_CHARS = 16_000;
 /** Watchdog so a wedged child cannot pin a parent tool call forever. */
@@ -105,13 +112,16 @@ function getChildResources(cwd: string, agentDir: string): Promise<ChildResource
 	if (!entry) {
 		entry = (async () => {
 			const settingsManager = SettingsManager.create(cwd, agentDir);
-			// noExtensions keeps the child clean: no subagent (no recursion), no MCP,
-			// no memory — just the trimmed builtin toolset.
+			// noExtensions skips every disk-discovered extension, keeping the child
+			// clean: no subagent (no recursion), no MCP, no memory. Inline factories
+			// are loaded regardless of that flag, so webfetch is injected explicitly
+			// — without it `web_fetch` is unregistered and children cannot go online.
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
 				settingsManager,
 				noExtensions: true,
+				extensionFactories: [{ name: "webfetch", factory: webFetchExtension, hidden: true }],
 			});
 			await loader.reload();
 			const modelRuntime = await ModelRuntime.create({});
@@ -150,6 +160,8 @@ function childToolLabel(name: string, args: any): string {
 			return String(args?.pattern ?? "");
 		case "bash":
 			return String(args?.command ?? "");
+		case "web_fetch":
+			return String(args?.url ?? "");
 		default:
 			return name;
 	}
@@ -304,7 +316,7 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 			"派生一个独立的子 agent 执行一项自包含的任务，并把它的最终答复带回来。" +
 			"子 agent 看不到当前对话，prompt 必须完整自包含（含目标、路径、输出要求）。" +
 			"适合独立的调研、多文件探索、批量验证等可以并行的工作：在一条消息里发起多个 agent 调用即可并行执行。" +
-			"默认只读工具集（read/grep/find/ls），结果文本超长会截断。",
+			"默认工具集为只读探索 + 联网抓取（read/grep/glob/ls/web_fetch），结果文本超长会截断。",
 		promptSnippet: "agent(prompt, description?, tools?) — 派生子 agent 执行独立任务并回传结果；可并行",
 		parameters: Type.Object({
 			prompt: Type.String({
@@ -313,7 +325,9 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 			description: Type.Optional(Type.String({ description: "3-5 个词的任务摘要，用于展示。" })),
 			tools: Type.Optional(
 				Type.Array(Type.String(), {
-					description: `子 agent 可用的工具名列表，默认 ${DEFAULT_TOOLS.join("/")}（只读）。`,
+					description:
+						`子 agent 可用的工具名列表，默认 ${DEFAULT_TOOLS.join("/")}。` +
+						"可选值：read/grep/glob/find/ls/bash/edit/write/web_fetch。",
 				}),
 			),
 		}),

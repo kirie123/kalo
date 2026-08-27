@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { gitDiff, gitStatus, listDir, openPath } from "../lib/pi-bridge";
+import { gitDiff, gitStatus, listDir } from "../lib/pi-bridge";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
 import {
@@ -14,6 +14,7 @@ import {
   statusOf,
   type StatusIndex,
 } from "../lib/git";
+import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import DiffView, { type DiffLine } from "./DiffView";
 import FilePreview from "./FilePreview";
 import type { DirEntry, GitEntry, GitStatus } from "../types";
@@ -27,12 +28,6 @@ interface Preview {
 
 /** Which view the preview column is showing. */
 type PreviewTab = "source" | "diff";
-
-interface MenuState {
-  x: number;
-  y: number;
-  entry: DirEntry;
-}
 
 /** Milliseconds to wait after a turn ends before re-reading git status. */
 const TURN_END_DEBOUNCE = 400;
@@ -78,7 +73,9 @@ export default function FilePanel() {
   const [previewTab, setPreviewTab] = useState<PreviewTab>("source");
   const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
-  const [menu, setMenu] = useState<MenuState | null>(null);
+  // Right-click target for the shared context menu (its anchor lives in `menu`).
+  const [menuEntry, setMenuEntry] = useState<DirEntry | null>(null);
+  const menu = useContextMenu();
   // null = not a repository (or git missing): the whole git strip stays hidden.
   const [git, setGit] = useState<GitStatus | null>(null);
   // Shown inline in the git strip rather than as a toast: status is re-read
@@ -257,6 +254,22 @@ export default function FilePanel() {
     void refreshGit(root);
   };
 
+  /** Right-click menu for one tree / changes row. */
+  const entryMenuItems = (entry: DirEntry): MenuItem[] => {
+    const status = statusOf(gitIndex, entry.path);
+    // "查看 diff" only makes sense for a tracked file with recorded changes.
+    const canDiff = !entry.isDir && relPathOf(git, entry.path) !== null && status !== null && !status.untracked;
+    return [
+      ...(entry.isDir ? [] : [openPathItem("打开文件", entry.path)]),
+      ...(canDiff ? [{ label: "查看 diff", action: () => openFile(entry, "diff") }] : []),
+      openPathItem(entry.isDir ? "打开所在位置" : "打开所在路径", entry.path, !entry.isDir),
+      ...(entry.isDir
+        ? []
+        : [{ label: "添加到对话区", action: () => void chatStore.addAttachments([entry.path]) }]),
+      copyPathItem(entry.path),
+    ];
+  };
+
   const renderRows = (path: string, depth: number): ReactNode => {
     const entries = tree.get(path);
     if (!entries) return null;
@@ -265,8 +278,8 @@ export default function FilePanel() {
         <button
           onClick={() => (e.isDir ? toggleDir(e.path) : openFile(e))}
           onContextMenu={(ev) => {
-            ev.preventDefault();
-            setMenu({ x: ev.clientX, y: ev.clientY, entry: e });
+            setMenuEntry(e);
+            menu.onContextMenu(ev);
           }}
           title={e.path}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
@@ -313,8 +326,8 @@ export default function FilePanel() {
               key={entry.path}
               onClick={() => openFile(asEntry, entry.untracked ? "source" : "diff")}
               onContextMenu={(ev) => {
-                ev.preventDefault();
-                setMenu({ x: ev.clientX, y: ev.clientY, entry: asEntry });
+                setMenuEntry(asEntry);
+                menu.onContextMenu(ev);
               }}
               title={entry.renamedFrom ? `${entry.path}\n（原名 ${entry.renamedFrom}）` : entry.path}
               className="flex w-full items-center gap-1.5 py-1 pl-4 pr-2 text-left text-xs hover:bg-card"
@@ -482,102 +495,8 @@ export default function FilePanel() {
       )}
 
       {/* Right-click context menu */}
-      {menu && (
-        <ContextMenu
-          menu={menu}
-          onClose={() => setMenu(null)}
-          onViewDiff={
-            !menu.entry.isDir &&
-            relPathOf(git, menu.entry.path) !== null &&
-            statusOf(gitIndex, menu.entry.path) !== null &&
-            !statusOf(gitIndex, menu.entry.path)?.untracked
-              ? () => openFile(menu.entry, "diff")
-              : undefined
-          }
-        />
-      )}
+      {menu.at && menuEntry && <ContextMenu at={menu.at} items={entryMenuItems(menuEntry)} onClose={menu.close} />}
     </aside>
-  );
-}
-
-function ContextMenu({
-  menu,
-  onClose,
-  onViewDiff,
-}: {
-  menu: MenuState;
-  onClose: () => void;
-  /** Omitted when the entry has no diff to show (unchanged, untracked, a dir). */
-  onViewDiff?: () => void;
-}) {
-  const { entry } = menu;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const run = (fn: () => void) => () => {
-    fn();
-    onClose();
-  };
-
-  const items: Array<{ label: string; action: () => void }> = [
-    ...(entry.isDir
-      ? []
-      : [{ label: "打开文件", action: () => void openPath(entry.path).catch((e) => chatStore.pushToast(`打开失败：${errText(e)}`, "error")) }]),
-    ...(onViewDiff ? [{ label: "查看 diff", action: onViewDiff }] : []),
-    {
-      label: entry.isDir ? "打开所在位置" : "打开所在路径",
-      action: () =>
-        void openPath(entry.path, !entry.isDir).catch((e) => chatStore.pushToast(`打开失败：${errText(e)}`, "error")),
-    },
-    ...(entry.isDir
-      ? []
-      : [
-          {
-            label: "添加到对话区",
-            action: () => {
-              void chatStore.addAttachments([entry.path]);
-            },
-          },
-        ]),
-    {
-      label: "复制路径",
-      action: () => {
-        void navigator.clipboard.writeText(entry.path).then(
-          () => chatStore.pushToast("路径已复制", "info"),
-          () => chatStore.pushToast("复制失败", "warning"),
-        );
-      },
-    },
-  ];
-
-  // Keep the menu inside the window.
-  const x = Math.min(menu.x, window.innerWidth - 180);
-  const y = Math.min(menu.y, window.innerHeight - items.length * 34 - 16);
-
-  return (
-    <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(e) => e.preventDefault()}>
-      <div
-        className="absolute min-w-40 rounded-lg border border-edge bg-card py-1 shadow-2xl"
-        style={{ left: x, top: y }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {items.map((item) => (
-          <button
-            key={item.label}
-            onClick={run(item.action)}
-            className="flex w-full items-center px-3 py-1.5 text-left text-xs text-ink hover:bg-base"
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 
