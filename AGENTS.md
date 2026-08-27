@@ -3,7 +3,7 @@
 ## 文档先行
 
 - 所有新功能/重要改动，**先把设计文档写进 `doc/` 再动手实现**；改动涉及既有设计时同步更新对应文档。
-- `doc/` 是本地知识沉淀目录，**不提交 git**（已在 .gitignore 中忽略）。
+- `doc/` 下的设计文档（`YYYY-MM-DD-<主题>.md`）是本地知识沉淀，**不入库**；`doc/README.md` 索引与 `doc/troubleshooting/` 调试剧本随仓库分发。
 - 文档用中文，文件名格式：`doc/YYYY-MM-DD-<主题>.md`。
 
 ## 结构
@@ -12,7 +12,7 @@
 - `kalo-harness/`：vendored pi 引擎（改动需遵守 `kalo-harness/AGENTS.md`，如 `npm run check`、erasable TS、不擅自跑全量测试）
 - `internal-skills/`：随安装包分发的内置 skill（纯 markdown，入库）
 - `scripts/build-engine.sh`：重建引擎 sidecar exe
-- `doc/`：本地设计文档（不入库）
+- `doc/`：设计文档（不入库）+ `README.md` 索引与 `troubleshooting/` 剧本库（入库）
 
 ## 引擎定制点
 
@@ -74,7 +74,7 @@
 - 改了 `src-tauri/*.rs` → cargo check（`--with-tests` 加跑 cargo test）
 - 改了 `scripts/`、AGENTS.md → 机器检查（file-length + bridge-contract）
 - 改了 `kalo-harness/*` → 提示按 `kalo-harness/AGENTS.md` 走 `npm run check`（由人决定）
-- 只改 `doc/` 或其他 → 无需跑检查
+- 只改 `doc/`（设计文档/索引/剧本）或其他 → 无需跑检查
 - 参数：`--dry-run` 只打印计划不执行；`--failed-only` 重跑上次失败项
 - UI-only 例外：只改展示、不动逻辑/契约时可直接跳过（桌面端测试边界见 `kalo-desktop/AGENTS.md`）
 
@@ -93,8 +93,8 @@
 从哪里开始读（路由）：
 
 - 最近区域 `AGENTS.md`（`kalo-desktop/AGENTS.md` / `kalo-harness/AGENTS.md`）→ 该目录的约定
-- `doc/README.md` → 设计文档按域索引（本地，不入库）
-- `doc/troubleshooting/README.md` → 调试剧本症状索引
+- `doc/README.md` → 设计文档按域索引（入库）
+- `doc/troubleshooting/README.md` → 调试剧本症状索引（入库）
 
 写文档约定：
 

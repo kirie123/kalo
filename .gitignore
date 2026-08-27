@@ -12,5 +12,7 @@ target/
 __pycache__/
 .pytest_cache/
 
-# Local design docs (kept local, not committed)
-doc/
+# Design docs stay local; conventions index & troubleshooting ship with the repo
+doc/*
+!doc/README.md
+!doc/troubleshooting/
