@@ -90,9 +90,15 @@
 
 ## Docs
 
-- `doc/` 是本地知识沉淀目录，**不入库**（`.gitignore` 已忽略）
+从哪里开始读（路由）：
+
+- 最近区域 `AGENTS.md`（`kalo-desktop/AGENTS.md` / `kalo-harness/AGENTS.md`）→ 该目录的约定
+- `doc/README.md` → 设计文档按域索引（本地，不入库）
+- `doc/troubleshooting/README.md` → 调试剧本症状索引
+
+写文档约定：
+
 - 设计文档：`doc/YYYY-MM-DD-<主题>.md`，中文；契约/架构级改动先写设计再动手
-- 调试剧本：`doc/troubleshooting/`（README 是症状索引，按域分文件）
 - 文档与代码同改：改动影响模块职责/数据流/交互/API/校验命令/troubleshooting 时，按 Self-Evolution 同步更新
 
 ## Logs 与数据目录
