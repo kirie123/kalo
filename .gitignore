@@ -12,7 +12,4 @@ target/
 __pycache__/
 .pytest_cache/
 
-# Design docs stay local; conventions index & troubleshooting ship with the repo
-doc/*
-!doc/README.md
-!doc/troubleshooting/
+# Design docs & conventions all ship with the repo (no ignore rule)

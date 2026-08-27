@@ -1,6 +1,6 @@
 # Kalo 设计文档索引
 
-`doc/` 是设计文档目录：`YYYY-MM-DD-<主题>.md` 设计文档保持本地（**不入库**）；本索引与 `troubleshooting/` 随仓库分发。这里是入口：改代码前先按域找对应设计，排查问题先看 [troubleshooting](troubleshooting/README.md)。
+`doc/` 是设计文档目录，全部随仓库分发：`YYYY-MM-DD-<主题>.md` 设计文档、本索引、`troubleshooting/` 剧本库。这里是入口：改代码前先按域找对应设计，排查问题先看 [troubleshooting](troubleshooting/README.md)。
 
 约定：设计文档 `doc/YYYY-MM-DD-<主题>.md`，中文；契约/架构级改动先写设计再动手。区域约定以最近的 `AGENTS.md` 为准。
 
@@ -64,4 +64,4 @@
 
 - 新增设计文档：`doc/YYYY-MM-DD-<主题>.md`，并挂到对应域下。
 - 文档失效/被取代时，保留历史但在本索引标注「已废弃，见 <新文档>」。
-- 调试陷阱进 `doc/troubleshooting/`（入库，随仓库分发），不占设计文档名额。
+- 调试陷阱进 `doc/troubleshooting/`，不占设计文档名额。
