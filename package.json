@@ -15,6 +15,8 @@
     "version:set": "bun scripts/version.mjs",
     "version:patch": "bun scripts/version.mjs patch",
     "version:minor": "bun scripts/version.mjs minor",
-    "version:major": "bun scripts/version.mjs major"
+    "version:major": "bun scripts/version.mjs major",
+    "check": "node scripts/check-changed.mjs",
+    "check:full": "node scripts/check-file-length.mjs --strict && node scripts/check-bridge-contract.mjs && node scripts/check-full.mjs"
   }
 }

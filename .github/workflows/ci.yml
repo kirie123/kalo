@@ -10,6 +10,18 @@ permissions:
   contents: read
 
 jobs:
+  # 仓库级机器检查（契约漂移 + 行数 ratchet）
+  machine-checks:
+    name: Machine checks (contract + length ratchet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node scripts/check-file-length.mjs --strict
+      - run: node scripts/check-bridge-contract.mjs
+
   # 前端类型检查 + 单测（纯逻辑层）
   desktop-ts:
     name: Desktop TS (typecheck + test)
@@ -26,7 +38,7 @@ jobs:
           cache-dependency-path: kalo-desktop/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm test
+      - run: npx vitest run
 
   # Rust 后端检查（src-tauri）
   desktop-rust:
@@ -43,21 +55,3 @@ jobs:
           workspaces: kalo-desktop/src-tauri
       - run: cargo check
       - run: cargo test --no-run
-
-  # 引擎侧 lint + 类型检查（vendored pi，跑上游 check 的子集，避免重依赖）
-  harness-check:
-    name: Harness check (biome + tsgo)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: kalo-harness
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: kalo-harness/package-lock.json
-      - run: npm ci
-      - run: npx biome check --error-on-warnings . || true
-      - run: npx tsgo --noEmit
