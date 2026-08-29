@@ -11,6 +11,10 @@
  * database. The Kalo desktop settings page manages the same directory, so
  * the frontmatter format must stay in sync with
  * kalo-desktop/src-tauri/src/memory.rs.
+ *
+ * Expert sessions (doc/2026-08-29-digital-experts.md): when the engine is
+ * spawned with KALO_MEMORY_DIR set, all reads/writes go there instead —
+ * an expert's memory is physically isolated from the user's own.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -36,6 +40,8 @@ const MAX_INDEX_CHARS = 2000;
 const MAX_RESULT_BODY_CHARS = 1500;
 
 function memoryDir(): string {
+	const override = process.env.KALO_MEMORY_DIR;
+	if (override?.trim()) return override;
 	return join(homedir(), CONFIG_DIR_NAME, "memory");
 }
 
@@ -308,7 +314,7 @@ export default function memoryExtension(pi: ExtensionAPI): void {
 		return {
 			systemPrompt:
 				event.systemPrompt +
-				`\n\n## 长期记忆\n\n以下是你为用户沉淀的个人知识索引（存于 ~/.kalo/memory/，可在设置页管理）。回答涉及用户偏好、习惯、过往决定时，先用 memory_search 检索全文；发现值得长期保留的新信息时，用 memory_save 更新。\n\n<user_memory>\n${lines.join("\n")}\n</user_memory>`,
+				`\n\n## 长期记忆\n\n以下是你沉淀的长期记忆索引（存于 ${memoryDir()}）。回答涉及偏好、习惯、过往决定时，先用 memory_search 检索全文；发现值得长期保留的新信息时，用 memory_save 更新。\n\n<user_memory>\n${lines.join("\n")}\n</user_memory>`,
 		};
 	});
 

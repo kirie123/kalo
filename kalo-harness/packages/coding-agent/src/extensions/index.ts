@@ -1,4 +1,5 @@
 import type { InlineExtension } from "../core/extensions/types.ts";
+import expertContextExtension from "./expert-context/index.ts";
 import kaloJobsExtension from "./kalo-jobs/index.ts";
 import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
@@ -12,6 +13,7 @@ import webFetchExtension from "./webfetch/index.ts";
 export const builtInExtensions: InlineExtension[] = [
 	{ name: "llama.cpp", factory: llamaExtension, hidden: true },
 	{ name: "memory", factory: memoryExtension, hidden: true },
+	{ name: "expert-context", factory: expertContextExtension, hidden: true },
 	{ name: "skill", factory: skillExtension, hidden: true },
 	{ name: "kalo-jobs", factory: kaloJobsExtension, hidden: true },
 	{ name: "webfetch", factory: webFetchExtension, hidden: true },
