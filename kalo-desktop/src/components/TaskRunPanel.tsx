@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { chatStore } from "../lib/chat-store";
-import { jobsList, onScheduleStatus, scheduleList } from "../lib/pi-bridge";
+import { jobsList, onScheduleStatus, scheduleList, scheduleRun } from "../lib/pi-bridge";
 import {
   dotClass,
   fmtTime,
@@ -18,6 +18,7 @@ import {
   toneClass,
 } from "../lib/task-run-view";
 import type { RunningJobSession, ScheduleTaskInfo } from "../types";
+import ContextMenu, { useContextMenu } from "./ContextMenu";
 
 /** jobs_list poll cadence; the task table itself is pushed via events. */
 const POLL_MS = 10_000;
@@ -30,6 +31,8 @@ export default function TaskRunPanel() {
   const [tasks, setTasks] = useState<ScheduleTaskInfo[]>([]);
   const [sessions, setSessions] = useState<RunningJobSession[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const menu = useContextMenu();
+  const [menuFor, setMenuFor] = useState<ScheduleTaskInfo | null>(null);
 
   useEffect(() => {
     scheduleList()
@@ -81,7 +84,20 @@ export default function TaskRunPanel() {
         <p className="text-xs text-dim">暂无任务。</p>
       ) : (
         rows.map((row) => (
-          <div key={row.task.id} className="rounded-md border border-edge bg-base px-3 py-2">
+          <div
+            key={row.task.id}
+            className={`rounded-md border border-edge bg-base px-3 py-2 ${
+              row.task.lastOutput ? "cursor-pointer hover:border-dim" : ""
+            }`}
+            onClick={() =>
+              row.task.lastOutput && setExpanded(expanded === row.task.id ? null : row.task.id)
+            }
+            onContextMenu={(e) => {
+              menu.onContextMenu(e);
+              setMenuFor(row.task);
+            }}
+            title={row.task.lastOutput ? "点击展开/收起最近输出" : undefined}
+          >
             <div className="flex items-center gap-1.5">
               <span
                 className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass(row.tone)} ${
@@ -96,22 +112,40 @@ export default function TaskRunPanel() {
               上次 {fmtTime(row.task.lastRun)} · 下次 {row.task.enabled ? fmtTime(row.task.nextRunAt) : "已停用"}
             </div>
             {row.task.lastOutput && (
-              <div className="mt-1">
-                <button
-                  onClick={() => setExpanded(expanded === row.task.id ? null : row.task.id)}
-                  className="text-[10px] text-dim hover:text-ink"
-                >
-                  {expanded === row.task.id ? "收起输出 ▴" : "最近输出 ▾"}
-                </button>
-                {expanded === row.task.id && (
-                  <pre className="mono mt-1 max-h-48 overflow-y-auto rounded border border-edge bg-card p-2 text-[10px] leading-relaxed whitespace-pre-wrap">
-                    {row.task.lastOutput}
-                  </pre>
-                )}
+              <div className="mt-1 text-[10px] text-dim">
+                {expanded === row.task.id ? "收起输出 ▴" : "最近输出 ▾"}
               </div>
+            )}
+            {expanded === row.task.id && row.task.lastOutput && (
+              <pre className="mono mt-1 max-h-48 overflow-y-auto rounded border border-edge bg-card p-2 text-[10px] leading-relaxed whitespace-pre-wrap">
+                {row.task.lastOutput}
+              </pre>
             )}
           </div>
         ))
+      )}
+
+      {menu.at && menuFor && (
+        <ContextMenu
+          at={menu.at}
+          onClose={() => {
+            menu.close();
+            setMenuFor(null);
+          }}
+          items={[
+            ...(menuFor.lastOutput
+              ? [{ label: "查看最近输出", action: () => setExpanded(menuFor.id) }]
+              : []),
+            {
+              label: "立即运行一次",
+              action: () => {
+                scheduleRun(menuFor.id)
+                  .then(() => chatStore.pushToast(`已触发「${menuFor.name}」`, "info"))
+                  .catch((err) => chatStore.pushToast(`触发失败：${errText(err)}`, "error"));
+              },
+            },
+          ]}
+        />
       )}
     </div>
   );

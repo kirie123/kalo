@@ -11,6 +11,7 @@ import {
 import { describeCron } from "../lib/schedule-spec";
 import { fmtTime } from "../lib/task-run-view";
 import type { ScheduleTaskInfo, ScheduleTaskResult } from "../types";
+import ContextMenu, { useContextMenu } from "./ContextMenu";
 import { Section } from "./SettingsPage";
 import TaskEditModal from "./TaskEditModal";
 
@@ -38,6 +39,11 @@ export default function TasksSettings() {
   const [tasks, setTasks] = useState<ScheduleTaskInfo[] | null>(null);
   /** undefined = closed, null = creating, info = editing. */
   const [editing, setEditing] = useState<ScheduleTaskInfo | null | undefined>(undefined);
+  /** Task id whose lastOutput is expanded inline. */
+  const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
+  /** Right-click menu on a task row; `menuFor` remembers which task it targets. */
+  const menu = useContextMenu();
+  const [menuFor, setMenuFor] = useState<ScheduleTaskInfo | null>(null);
 
   useEffect(() => {
     scheduleList()
@@ -90,8 +96,19 @@ export default function TasksSettings() {
       ) : (
         <div className="flex flex-col gap-1.5">
           {tasks.map((t) => (
-            <div key={t.id} className="flex items-center gap-2 rounded-md border border-edge bg-base px-3 py-2">
-              <div className="min-w-0 flex-1">
+            <div
+              key={t.id}
+              className="rounded-md border border-edge bg-base px-3 py-2"
+              onContextMenu={(e) => {
+                menu.onContextMenu(e);
+                setMenuFor(t);
+              }}
+            >              <div className="flex items-center gap-2">
+              <div
+                className={`min-w-0 flex-1 ${t.lastOutput ? "cursor-pointer" : ""}`}
+                onClick={() => t.lastOutput && setExpandedOutput(expandedOutput === t.id ? null : t.id)}
+                title={t.lastOutput ? "点击展开/收起最近一次输出" : undefined}
+              >
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-sm">{t.name}</span>
                   <span className="shrink-0 rounded border border-edge px-1 py-px text-[10px] text-dim">
@@ -106,6 +123,11 @@ export default function TasksSettings() {
                   {!t.running && t.lastResult && (
                     <span className={`shrink-0 text-[10px] ${RESULT_COLOR[t.lastResult]}`}>
                       {RESULT_LABEL[t.lastResult]}
+                    </span>
+                  )}
+                  {t.lastOutput && (
+                    <span className="shrink-0 text-[10px] text-dim">
+                      {expandedOutput === t.id ? "▴" : "▾"}
                     </span>
                   )}
                 </div>
@@ -145,6 +167,12 @@ export default function TasksSettings() {
               >
                 删除
               </button>
+              </div>
+              {expandedOutput === t.id && t.lastOutput && (
+                <pre className="mono mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded border border-edge bg-card p-2 text-[10px] leading-relaxed text-dim">
+                  {t.lastOutput}
+                </pre>
+              )}
             </div>
           ))}
         </div>
@@ -170,6 +198,33 @@ export default function TasksSettings() {
         <TaskEditModal
           task={editing ?? undefined}
           onClose={() => setEditing(undefined)}
+        />
+      )}
+
+      {menu.at && menuFor && (
+        <ContextMenu
+          at={menu.at}
+          onClose={() => {
+            menu.close();
+            setMenuFor(null);
+          }}
+          items={[
+            ...(menuFor.lastOutput
+              ? [
+                  {
+                    label: "查看最近输出",
+                    action: () => setExpandedOutput(menuFor.id),
+                  },
+                ]
+              : []),
+            { label: "立即运行一次", action: () => void runNow(menuFor) },
+            {
+              label: menuFor.enabled ? "停用" : "启用",
+              action: () => void toggle(menuFor),
+            },
+            { label: "编辑", action: () => setEditing(menuFor) },
+            { label: "删除", action: () => void remove(menuFor), danger: true },
+          ]}
         />
       )}
     </Section>
