@@ -164,7 +164,7 @@ export function sanitizeRecord(raw: any): JobRecord | null {
     logPath: raw.logPath,
     gate: sanitizeProbe(raw.gate),
     health: sanitizeProbe(raw.health),
-    rules: Array.isArray(raw.rules) ? raw.rules.map(sanitizeRule).filter((r): r is JobRule => r !== null) : undefined,
+    rules: Array.isArray(raw.rules) ? raw.rules.map(sanitizeRule).filter((r: JobRule | null): r is JobRule => r !== null) : undefined,
     status: raw.status,
     pid: Number.isFinite(raw.pid) ? Number(raw.pid) : undefined,
     exitCode: Number.isFinite(raw.exitCode) ? Number(raw.exitCode) : undefined,

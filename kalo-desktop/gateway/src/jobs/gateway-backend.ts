@@ -52,7 +52,7 @@ export interface JobBackendDeps {
   store?: JobStore;
   now?: () => number;
   /** Notified whenever a job's visible state changed (snapshot broadcast). */
-  onChange?: () => void;
+  onChange?: (owner: string | undefined) => void;
 }
 
 interface Waiter {
@@ -487,7 +487,7 @@ export class GatewayJobBackend implements JobRegistry {
   }
 
   private changed(owner: string | undefined): void {
-    this.deps.onChange?.();
+    this.deps.onChange?.(owner);
     for (const l of this.changedListeners) {
       try {
         l(owner);
