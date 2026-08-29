@@ -21,6 +21,8 @@ Skills 里可看、可改、可删）。
 | `filing-digest/` | 财报下载与分析：结构化指标先行，PDF 正文按需检索 |
 | `stock-checkup/` | 个股体检：风险排查 / 健康度 / 催化契机三大类逐项核对 |
 | `glassnode-research/` | Glassnode 公开研究报告（Week On-chain 等全栏目）的拉取与归档：RSS 全文 + sitemap 回填 + 图表本地化 |
+| `expert-designer/` | 创建数字专家：对话澄清使命 → 规划工作目录 → 写 AGENTS.md 宪章 → 注册 experts.json → 配定时任务 |
+| `paper-broker/` | 纸交易账本 CLI：入金/买卖/结算/收益/哈希链校验（A 股规则内置，append-only 账本） |
 
 `market-data/` 与 `glassnode-research/` 带脚本，其余是纯 markdown。`market-data/` 的依赖重
 （`md.py` + `lib/` + `sources.yaml` + `tests/` + `setup.sh`），它的解释器刻意不在
