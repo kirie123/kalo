@@ -213,6 +213,7 @@ FUTS 树搜索选一个节点 → 编码 Agent 在它基础上改程序 → 跑�
 - IM 网关（飞书）：扫码配对，会话进度以单条持续编辑的消息推送到手机，可在 IM 侧 `/status`、`/stop` 等指令回控
 - 定时任务：cron 驱动的 `watch`（本地脚本巡检，零 token）与 `agent`（到点起无头会话）两类任务，默认自带「宏观快照每日落盘」
 - 长跑任务（Jobs）：`job_run` / `job_list` / `job_output` / `job_kill` 工具 + Jobs 中心面板；任务进程脱离网关独立存活，状态落盘，网关重启后自动核对
+- 数字专家：独立工作目录 + 隔离记忆 + 专属技能的长期 Agent 实例，面板统一查看运行中会话 / 记忆 / 定时任务；配套 paper-broker 纸交易账本（append-only 哈希链账本，A 股规则内置）——详见 [doc/2026-08-29-digital-experts.md](doc/2026-08-29-digital-experts.md)
 
 ## 数据落盘
 
