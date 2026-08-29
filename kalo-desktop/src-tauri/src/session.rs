@@ -178,13 +178,25 @@ pub struct PiProcess {
     pub cwd: String,
     /// Who spawned this session: "desktop" (user UI) or "gateway" (scheduled task).
     pub source: String,
+    /// Digital expert this session belongs to, if any (experts panel grouping).
+    pub expert_id: Option<String>,
     /// ISO-ish start timestamp (job center display).
     pub started_at: String,
 }
 
 impl PiProcess {
     /// Spawn pi in `cwd` and wire up the IO threads that emit Tauri events.
-    pub fn spawn(session_id: &str, cwd: &str, app: AppHandle) -> Result<Self, String> {
+    ///
+    /// `expert` turns the session into a digital-expert session: the engine
+    /// gets `KALO_EXPERT_*` (identity, picked up by the expert-context
+    /// extension) and `KALO_MEMORY_DIR` (memory isolation, picked up by the
+    /// memory extension). See doc/2026-08-29-digital-experts.md.
+    pub fn spawn(
+        session_id: &str,
+        cwd: &str,
+        app: AppHandle,
+        expert: Option<&crate::experts::ExpertCtx>,
+    ) -> Result<Self, String> {
         let pi_path = resolve_pi_path()?;
 
         let mut cmd = Command::new(&pi_path);
@@ -193,6 +205,12 @@ impl PiProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(expert) = expert {
+            cmd.env("KALO_EXPERT_ID", &expert.id)
+                .env("KALO_EXPERT_NAME", &expert.name)
+                .env("KALO_EXPERT_MISSION", &expert.mission)
+                .env("KALO_MEMORY_DIR", &expert.memory_dir);
+        }
         crate::proc::no_window(&mut cmd);
 
         let mut child = cmd
@@ -308,6 +326,7 @@ impl PiProcess {
             stdin_tx,
             cwd: cwd.to_string(),
             source: "desktop".to_string(),
+            expert_id: expert.map(|e| e.id.clone()),
             started_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs().to_string())

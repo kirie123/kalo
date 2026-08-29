@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod files;
+mod experts;
 mod gateway;
 mod git;
 mod internal_skills;
@@ -40,11 +41,24 @@ use tauri::{AppHandle, Manager, State};
 #[tauri::command(async)]
 fn create_session(
     cwd: String,
+    expert_id: Option<String>,
     state: State<SessionManager>,
     app: AppHandle,
 ) -> Result<String, String> {
     let session_id = gen_session_id();
-    let process = PiProcess::spawn(&session_id, &cwd, app)?;
+    // Expert sessions get identity + memory isolation via env injection
+    // (doc/2026-08-29-digital-experts.md). Unknown id is a hard error:
+    // silently degrading to a normal session would write "expert" memories
+    // into the user's personal memory.
+    let expert = match expert_id.as_deref() {
+        Some(id) => Some(
+            experts::find(id)
+                .ok_or_else(|| format!("专家不存在或已停用：{id}"))?
+                .ctx(),
+        ),
+        None => None,
+    };
+    let process = PiProcess::spawn(&session_id, &cwd, app, expert.as_ref())?;
     lock_sessions(&state)?.insert(session_id.clone(), process);
     Ok(session_id)
 }
@@ -102,6 +116,7 @@ fn jobs_list(
         cwd: String,
         state: &'static str,
         started_at: String,
+        expert_id: Option<String>,
     }
 
     let mut running: Vec<RunningSession> = Vec::new();
@@ -116,6 +131,7 @@ fn jobs_list(
                 cwd: process.cwd.clone(),
                 state: "running",
                 started_at: process.started_at.clone(),
+                expert_id: process.expert_id.clone(),
             });
         }
     }
@@ -674,6 +690,9 @@ fn main() {
             onboarding::read_onboarding_state,
             onboarding::write_onboarding_state,
             jobs_list,
+            experts::expert_list,
+            experts::expert_upsert,
+            experts::expert_remove,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Kalo");

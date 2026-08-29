@@ -693,9 +693,10 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
 /// the gateway through the normal event forwarding chain.
 fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
     let task_id = value.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let cwd = value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut cwd = value.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let prompt = value.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let model = value.get("model").and_then(|v| v.as_str()).map(String::from);
+    let expert_id = value.get("expertId").and_then(|v| v.as_str()).map(String::from);
 
     let gateway = app.state::<GatewayManager>();
     let report_failure = |error: String| {
@@ -712,8 +713,25 @@ fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
         return;
     }
 
+    // Expert task: identity + memory isolation come from the registry
+    // (doc/2026-08-29-digital-experts.md); the registry's workdir wins over
+    // the task's cwd so a stale task can't redirect an expert's session.
+    let expert = match expert_id.as_deref() {
+        Some(id) => match crate::experts::find(id) {
+            Some(e) => {
+                cwd = e.workdir.clone();
+                Some(e.ctx())
+            }
+            None => {
+                report_failure(format!("专家不存在或已停用：{id}"));
+                return;
+            }
+        },
+        None => None,
+    };
+
     let session_id = crate::gen_session_id();
-    let mut process = match PiProcess::spawn(&session_id, &cwd, app.clone()) {
+    let mut process = match PiProcess::spawn(&session_id, &cwd, app.clone(), expert.as_ref()) {
         Ok(p) => p,
         Err(e) => {
             report_failure(e);
