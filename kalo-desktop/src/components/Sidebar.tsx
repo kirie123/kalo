@@ -36,6 +36,10 @@ interface SidebarProps {
   onOpenNotes: () => void;
   /** True while the notes panel is the current page. */
   notesActive?: boolean;
+  /** 「数字专家」— takes over the main pane with the experts panel. */
+  onOpenExperts: () => void;
+  /** True while the experts panel is the current page. */
+  expertsActive?: boolean;
   onOpenSettings: () => void;
 }
 
@@ -102,6 +106,8 @@ export default memo(function Sidebar({
   eraActive,
   onOpenNotes,
   notesActive,
+  onOpenExperts,
+  expertsActive,
   onOpenSettings,
 }: SidebarProps) {
   const [projects, setProjects] = useState<ProjectEntry[]>(() => listProjects());
@@ -202,6 +208,7 @@ export default memo(function Sidebar({
         <SideButton onClick={notImplemented} icon={<SearchIcon />} label="搜索" />
         <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" active={automationActive} />
         <SideButton onClick={onOpenNotes} icon={<BookIcon />} label="知识笔记" active={notesActive} />
+        <SideButton onClick={onOpenExperts} icon={<ExpertIcon />} label="数字专家" active={expertsActive} />
         <SideButton onClick={onOpenEra} icon={<EvolveIcon />} label="演化" active={eraActive} />
       </div>
 
@@ -666,6 +673,16 @@ function BookIcon() {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
       <path d="M8 4.2S6.8 3 4.6 3H2v9h2.6C6.8 12 8 13 8 13s1.2-1 3.4-1H14V3h-2.6C9.2 3 8 4.2 8 4.2z" strokeLinejoin="round" />
       <path d="M8 4.2V13" />
+    </svg>
+  );
+}
+
+/** A person silhouette with a badge: a named, long-lived expert identity. */
+function ExpertIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <circle cx="8" cy="5" r="2.5" />
+      <path d="M3 13.5c.8-2.4 2.8-3.7 5-3.7s4.2 1.3 5 3.7" strokeLinecap="round" />
     </svg>
   );
 }

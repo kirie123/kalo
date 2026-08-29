@@ -195,7 +195,7 @@ async function withEngineSession<T>(fn: (s: EngineSession) => Promise<T>): Promi
 
   try {
     const paths = await appPaths();
-    sid = await createSession(paths.kaloRoot || paths.home || ".");
+    sid = await createSession(paths.kaloRoot || paths.home || ".", undefined);
     const activeSid = sid;
 
     cleanups.push(

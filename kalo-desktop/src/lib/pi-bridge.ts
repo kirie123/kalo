@@ -2,7 +2,7 @@
  * Thin wrapper over the Tauri IPC contract exposed by the Rust backend.
  *
  * invoke commands (args camelCase):
- *   create_session { cwd } -> string
+ *   create_session { cwd, expertId? } -> string
  *   send_command   { sessionId, command } -> void
  *   close_session  { sessionId } -> void
  *   list_sessions  {} -> ProjectGroup[]
@@ -17,6 +17,7 @@
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   schedule_list / schedule_upsert / schedule_remove / schedule_run
  *   feed_list / feed_upsert / feed_remove / feed_run
+ *   expert_list / expert_upsert / expert_remove
  *   list_knowledge_cards / list_knowledge_domains / search_knowledge
  *   read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
@@ -54,6 +55,7 @@ import type {
   BackgroundJob,
   DirDiff,
   DirEntry,
+  Expert,
   FeedInfo,
   FeedSpec,
   FileMatch,
@@ -91,8 +93,15 @@ import type {
 // Session lifecycle
 // ============================================================================
 
-export function createSession(cwd: string): Promise<string> {
-  return invoke<string>("create_session", { cwd });
+/**
+ * Spawn an engine session rooted at `cwd`. `expertId` binds it to a digital
+ * expert: the backend injects the expert's identity env vars and points its
+ * memory at `<workdir>/.kalo/memory` (doc/2026-08-29-digital-experts.md).
+ */
+export function createSession(cwd: string, expertId?: string): Promise<string> {
+  const args: Record<string, unknown> = { cwd };
+  if (expertId !== undefined) args.expertId = expertId;
+  return invoke<string>("create_session", args);
 }
 
 export function closeSession(sessionId: string): Promise<void> {
@@ -408,6 +417,24 @@ export function onFeedStatus(cb: (feeds: FeedInfo[]) => void) {
 /** Subscribe to `feed-error` (async validation failures of feed_upsert). */
 export function onFeedError(cb: (message: string) => void) {
   return listen<string>("feed-error", (e) => cb(e.payload));
+}
+
+// ============================================================================
+// Digital experts (~/.kalo/experts.json registry)
+// ============================================================================
+
+/** The expert registry (id / name / workdir / mission / enabled). */
+export function expertList(): Promise<Expert[]> {
+  return invoke<Expert[]>("expert_list", {});
+}
+
+/** Create or replace one expert (whole object). */
+export function expertUpsert(expert: Expert): Promise<void> {
+  return invoke<void>("expert_upsert", { expert });
+}
+
+export function expertRemove(id: string): Promise<void> {
+  return invoke<void>("expert_remove", { id });
 }
 
 // ============================================================================

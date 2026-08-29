@@ -624,18 +624,44 @@ export interface ScheduleTask {
   /** agent: "provider/modelId", null/undefined = default model. */
   model?: string | null;
   enabled: boolean;
+  /** Digital-expert registry id this task runs for, when any. */
+  expertId?: string;
   /** ISO timestamp of the last run. */
   lastRun?: string;
   lastResult?: ScheduleTaskResult;
+  /**
+   * Last alert body / error summary (same text pushed to IM), persisted in
+   * schedules.json. Cleared on a clean watch run. Drives the run panel.
+   */
+  lastOutput?: string;
 }
 
 /**
  * Payload of the `schedule-status` Tauri event (and `schedule_list` command):
  * a full task-table snapshot, each row plus its computed next run
- * (null while disabled).
+ * (null while disabled) and its in-flight flag.
  */
 export interface ScheduleTaskInfo extends ScheduleTask {
   nextRunAt: string | null;
+  /** True while the task's run is in flight (watch child alive / agent session open). */
+  running: boolean;
+}
+
+// ============================================================================
+// Digital experts (~/.kalo/experts.json registry)
+// ============================================================================
+
+/** One digital-expert registry entry (doc/2026-08-29-digital-experts.md). */
+export interface Expert {
+  id: string;
+  name: string;
+  /** The expert's own working directory; sessions/tasks run here. */
+  workdir: string;
+  /** What the expert is for, in the creator's words. */
+  mission: string;
+  /** ISO timestamp of registration. */
+  createdAt: string;
+  enabled: boolean;
 }
 
 // ============================================================================
@@ -816,6 +842,8 @@ export interface RunningJobSession {
   state: "running";
   /** Unix seconds (string) — engine spawn time. */
   startedAt: string;
+  /** Digital-expert registry id when the session runs for an expert. */
+  expertId?: string | null;
 }
 
 /** jobs_list payload: live sessions plus the latest task snapshot. */

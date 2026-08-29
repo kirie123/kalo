@@ -362,7 +362,13 @@ class SessionRuntime {
   flushTimer: ReturnType<typeof setTimeout> | null = null;
   pendingClones = new Set<string>();
 
-  constructor(key: string, cwd = "") {
+  /**
+   * `expertId` (experts panel's 开始会话) is passed to create_session on every
+   * spawn, including crash recovery, so a recovered engine keeps the expert
+   * identity. A constructor parameter property, to keep this file within its
+   * length budget (the file is over the 800-line limit and may only shrink).
+   */
+  constructor(key: string, cwd = "", public expertId?: string) {
     this.key = key;
     this.view = freshView(cwd);
   }
@@ -635,11 +641,16 @@ export class ChatStore {
   /**
    * Park the current runtime and switch to a fresh view. The parked engine
    * keeps running (mid-run tasks continue; events keep updating its view).
+   *
+   * `opts` is how the experts panel's 开始会话 starts a chat in an expert's
+   * workdir: the engine still spawns lazily on the first prompt, and the
+   * expertId rides on the runtime so spawn — and crash recovery — both
+   * inject the expert identity.
    */
-  newChat() {
+  newChat(opts?: { cwd?: string; expertId?: string }) {
     this.active.lastActive = Date.now();
-    const cwd = this.active.view.cwd || localStorage.getItem("kalo.lastCwd") || "";
-    const rt = new SessionRuntime(`fresh-${this.freshSeq++}`, cwd);
+    const cwd = opts?.cwd || this.active.view.cwd || localStorage.getItem("kalo.lastCwd") || "";
+    const rt = new SessionRuntime(`fresh-${this.freshSeq++}`, cwd, opts?.expertId);
     this.runtimes.set(rt.key, rt);
     this.active = rt;
     this.commit();
@@ -818,7 +829,7 @@ export class ChatStore {
     for (const delay of [0, 500, 1500]) {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
-        const sid = await createSession(cwd);
+        const sid = await createSession(cwd, rt.expertId);
         this.attachSession(rt, sid, cwd, opts);
         return sid;
       } catch (err) {

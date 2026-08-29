@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView";
 import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
+import ExpertsPanel from "./features/experts/ExpertsPanel";
 import FeedsSettings from "./components/FeedsSettings";
 import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
@@ -19,6 +20,7 @@ import SettingsPage, {
 } from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
 import TasksSettings from "./components/TasksSettings";
+import TaskRunPanel from "./components/TaskRunPanel";
 import TitleBar, { type MenuEntry, type TitleMenu } from "./components/TitleBar";
 import { listSessions, deleteSession } from "./lib/pi-bridge";
 import { chatStore, useChatSelector } from "./lib/chat-store";
@@ -39,7 +41,7 @@ export default function App() {
     pendingSessions: s.pendingSessions,
     hasMessages: s.timeline.length > 0,
   }));
-  const [page, setPage] = useState<"chat" | "settings" | "era" | "notes" | "automation">("chat");
+  const [page, setPage] = useState<"chat" | "settings" | "era" | "notes" | "automation" | "experts">("chat");
   // undefined → SettingsPage restores the last visited tab.
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -178,6 +180,8 @@ export default function App() {
   // 「知识笔记」is a full main-pane workspace of its own (three columns), so
   // it takes the pane the same way 演化 does rather than opening a modal.
   const onOpenNotes = useCallback(() => setPage("notes"), []);
+  // 「数字专家」同样是整页面板：列表 + 详情，「开始会话」一键回到聊天页。
+  const onOpenExperts = useCallback(() => setPage("experts"), []);
 
   // 文件 → 选择工作目录…: same picker as the composer's cwd button.
   const pickCwd = useCallback(() => {
@@ -233,6 +237,7 @@ export default function App() {
           { kind: "item", label: "聊天", checked: page === "chat", onClick: () => setPage("chat") },
           { kind: "item", label: "自动化", checked: page === "automation", onClick: onOpenAutomation },
           { kind: "item", label: "知识笔记", checked: page === "notes", onClick: onOpenNotes },
+          { kind: "item", label: "数字专家", checked: page === "experts", onClick: onOpenExperts },
           { kind: "item", label: "演化", checked: page === "era", onClick: onOpenEra },
           { kind: "sep" },
           ...THEME_OPTIONS.map(
@@ -264,6 +269,7 @@ export default function App() {
       page,
       onOpenAutomation,
       onOpenNotes,
+      onOpenExperts,
       onOpenEra,
       theme,
     ],
@@ -280,9 +286,11 @@ export default function App() {
         ? "演化"
         : page === "notes"
           ? "知识笔记"
-          : page === "automation"
-            ? "自动化"
-            : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
+          : page === "experts"
+            ? "数字专家"
+            : page === "automation"
+              ? "自动化"
+              : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
 
   // 引导层。放在 TitleBar 之下、内容区之上：无边框窗口的拖动与关闭都靠那条
   // 标题栏，盖住它等于把人关在引导里。
@@ -332,6 +340,8 @@ export default function App() {
           eraActive={page === "era"}
           onOpenNotes={onOpenNotes}
           notesActive={page === "notes"}
+          onOpenExperts={onOpenExperts}
+          expertsActive={page === "experts"}
           onOpenSettings={onOpenSettings}
         />
 
@@ -349,7 +359,7 @@ export default function App() {
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
           <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-4">
             <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
-              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : page === "automation" ? "自动化 · 定时任务与数据源" : chat.cwd || "未选择目录"}
+              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : page === "experts" ? "数字专家 · ~/.kalo/experts.json" : page === "automation" ? "自动化 · 定时任务与数据源" : chat.cwd || "未选择目录"}
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
@@ -380,11 +390,20 @@ export default function App() {
                 </div>
               ) : page === "notes" ? (
                 <NotesPanel />
+              ) : page === "experts" ? (
+                <ExpertsPanel onLeaveToChat={() => setPage("chat")} />
               ) : page === "automation" ? (
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  <div className="mx-auto max-w-2xl px-6 py-6">
-                    <TasksSettings />
-                    <FeedsSettings />
+                <div className="flex min-h-0 flex-1">
+                  {/* 左栏：设置（任务 + 数据源），靠左不再居中 */}
+                  <div className="min-w-0 flex-1 overflow-y-auto">
+                    <div className="max-w-2xl px-6 py-6">
+                      <TasksSettings />
+                      <FeedsSettings />
+                    </div>
+                  </div>
+                  {/* 右栏：运行状态（窄屏隐藏，与顶栏跑马灯同一取舍） */}
+                  <div className="hidden w-80 shrink-0 overflow-y-auto border-l border-edge lg:block">
+                    <TaskRunPanel />
                   </div>
                 </div>
               ) : showEmpty ? (

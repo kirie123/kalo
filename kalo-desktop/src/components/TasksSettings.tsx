@@ -9,6 +9,7 @@ import {
   scheduleUpsert,
 } from "../lib/pi-bridge";
 import { describeCron } from "../lib/schedule-spec";
+import { fmtTime } from "../lib/task-run-view";
 import type { ScheduleTaskInfo, ScheduleTaskResult } from "../types";
 import { Section } from "./SettingsPage";
 import TaskEditModal from "./TaskEditModal";
@@ -27,15 +28,6 @@ const RESULT_COLOR: Record<ScheduleTaskResult, string> = {
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/** ISO timestamp -> local "YYYY-MM-DD HH:mm"; empty/invalid input as-is. */
-function fmtTime(iso?: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**
@@ -105,7 +97,13 @@ export default function TasksSettings() {
                   <span className="shrink-0 rounded border border-edge px-1 py-px text-[10px] text-dim">
                     {t.kind}
                   </span>
-                  {t.lastResult && (
+                  {t.running && (
+                    <span className="flex shrink-0 items-center gap-1 text-[10px] text-[var(--ok)]">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--ok)]" />
+                      运行中
+                    </span>
+                  )}
+                  {!t.running && t.lastResult && (
                     <span className={`shrink-0 text-[10px] ${RESULT_COLOR[t.lastResult]}`}>
                       {RESULT_LABEL[t.lastResult]}
                     </span>
