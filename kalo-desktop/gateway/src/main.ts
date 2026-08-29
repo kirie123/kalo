@@ -76,6 +76,7 @@ const scheduler = new Scheduler({
       cwd: task.cwd,
       prompt: task.prompt ?? "",
       model: task.model ?? null,
+      expertId: task.expertId ?? null,
     });
   },
   onChange: broadcastSchedules,

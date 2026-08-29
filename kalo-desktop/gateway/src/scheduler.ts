@@ -48,14 +48,25 @@ export interface ScheduleTask {
   prompt?: string;
   /** agent: "provider/modelId", null/undefined = current default model. */
   model?: string | null;
-  enabled: boolean;
+  /** Digital expert this task belongs to (its sessions get identity + isolated memory). */
+  expertId?: string;
+  /** ISO timestamp of the last run. */
   lastRun?: string;
   lastResult?: TaskResult;
+  /**
+   * Last alert body / error summary (same text that was pushed), so the
+   * desktop run panel can explain what "alerted" meant after the fact.
+   * Cleared on a clean watch run. Persisted in schedules.json.
+   */
+  lastOutput?: string;
+  enabled: boolean;
 }
 
 /** Snapshot row sent upstream (task + computed next run for the UI). */
 export interface ScheduleTaskInfo extends ScheduleTask {
   nextRunAt: string | null;
+  /** True while this task's run is in flight (watch child alive / agent session open). */
+  running: boolean;
 }
 
 interface RuntimeState {
@@ -340,6 +351,7 @@ export class Scheduler {
     return [...this.tasks.values()].map((t) => ({
       ...t,
       nextRunAt: t.enabled ? isoOrNull(this.runtime.get(t.id)?.nextRunAt) : null,
+      running: this.runtime.get(t.id)?.running ?? false,
     }));
   }
 
@@ -396,7 +408,10 @@ export class Scheduler {
   handleSessionStartFailed(taskId: string, error: string): void {
     this.pendingSessions.delete(taskId);
     const task = this.tasks.get(taskId);
-    if (task) this.finishRun(task, "error");
+    if (task) {
+      task.lastOutput = `agent 会话启动失败：${error}`;
+      this.finishRun(task, "error");
+    }
     log(`agent task ${taskId} failed to start: ${error}`);
   }
 
@@ -406,7 +421,10 @@ export class Scheduler {
     if (!taskId) return;
     this.sessionToTask.delete(sessionId);
     const task = this.tasks.get(taskId);
-    if (task) this.finishRun(task, code === 0 ? "ok" : "error");
+    if (task) {
+      task.lastOutput = code === 0 ? undefined : `agent 会话异常退出（code=${code ?? "未知"}）`;
+      this.finishRun(task, code === 0 ? "ok" : "error");
+    }
   }
 
   // ------------------------------------------------------------------ //
@@ -443,6 +461,7 @@ export class Scheduler {
   private runWatch(task: ScheduleTask, rt: RuntimeState): void {
     rt.running = true;
     task.lastRun = new Date(this.now()).toISOString();
+    this.deps.onChange();
 
     const child = spawn(resolveBash(), ["-c", task.script ?? ""], {
       cwd: existsSync(task.cwd) ? task.cwd : undefined,
@@ -461,7 +480,9 @@ export class Scheduler {
       // 5-minute task pushes 288 identical alerts a day.
       rt.lastAlertAt = this.now();
       this.finishRun(task, "error");
-      this.deps.sendAlert(task, `⏱️ 脚本执行超过 ${WATCH_TIMEOUT_MS / 1000}s，已强制终止`);
+      const body = `⏱️ 脚本执行超过 ${WATCH_TIMEOUT_MS / 1000}s，已强制终止`;
+      task.lastOutput = body;
+      this.deps.sendAlert(task, body);
     }, WATCH_TIMEOUT_MS);
 
     child.stdout?.on("data", (c) => {
@@ -477,7 +498,9 @@ export class Scheduler {
       rt.running = false;
       rt.lastAlertAt = this.now();
       this.finishRun(task, "error");
-      this.deps.sendAlert(task, `❌ 脚本无法启动：${e.message}（需要系统可用 bash）`);
+      const body = `❌ 脚本无法启动：${e.message}（需要系统可用 bash）`;
+      task.lastOutput = body;
+      this.deps.sendAlert(task, body);
     });
     child.on("close", () => {
       if (settled) return;
@@ -489,14 +512,19 @@ export class Scheduler {
         // Exit code is deliberately ignored: grep exits 1 on "no match",
         // which is the normal silent path for matchMode "nonEmpty".
         rt.lastAlertAt = this.now();
-        this.finishRun(task, "alerted");
         const body = output.length > MAX_ALERT_OUTPUT ? output.slice(0, MAX_ALERT_OUTPUT) + "\n…(截断)" : output;
+        task.lastOutput = body;
+        this.finishRun(task, "alerted");
         this.deps.sendAlert(task, body);
       } else if (err.trim() && !out) {
         rt.lastAlertAt = this.now();
+        const body = `❌ 脚本异常（无输出，stderr）：\n${err.trim().slice(0, MAX_ALERT_OUTPUT)}`;
+        task.lastOutput = body;
         this.finishRun(task, "error");
-        this.deps.sendAlert(task, `❌ 脚本异常（无输出，stderr）：\n${err.trim().slice(0, MAX_ALERT_OUTPUT)}`);
+        this.deps.sendAlert(task, body);
       } else {
+        // A clean watch run has nothing to say; stale alert text would mislead.
+        task.lastOutput = undefined;
         this.finishRun(task, "ok");
       }
     });
@@ -505,6 +533,7 @@ export class Scheduler {
   private runAgent(task: ScheduleTask, rt: RuntimeState): void {
     rt.running = true;
     task.lastRun = new Date(this.now()).toISOString();
+    this.deps.onChange();
     this.pendingSessions.set(task.id, "");
     this.deps.requestAgentSession(task);
     // rt.running is released by handleSessionExit / handleSessionStartFailed;
@@ -513,6 +542,7 @@ export class Scheduler {
       if (this.pendingSessions.has(task.id)) {
         this.pendingSessions.delete(task.id);
         rt.running = false;
+        task.lastOutput = "agent 会话启动超时（120s 无响应）";
         this.finishRun(task, "error");
         log(`agent task ${task.id}: session_request timed out`);
       }
@@ -559,8 +589,13 @@ function sanitizeTask(raw: any): ScheduleTask | null {
     cooldownMin: Number.isFinite(raw.cooldownMin) ? Math.max(0, Number(raw.cooldownMin)) : undefined,
     prompt: typeof raw.prompt === "string" ? raw.prompt : undefined,
     model: typeof raw.model === "string" && raw.model.trim() ? raw.model.trim() : null,
+    expertId:
+      typeof raw.expertId === "string" && /^[\w-]{1,64}$/.test(raw.expertId)
+        ? raw.expertId
+        : undefined,
     enabled: raw.enabled !== false,
     lastRun: typeof raw.lastRun === "string" ? raw.lastRun : undefined,
     lastResult: ["ok", "alerted", "error"].includes(raw.lastResult) ? raw.lastResult : undefined,
+    lastOutput: typeof raw.lastOutput === "string" && raw.lastOutput ? raw.lastOutput : undefined,
   };
 }

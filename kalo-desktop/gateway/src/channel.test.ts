@@ -94,7 +94,7 @@ describe("Channel commands", () => {
     const h = makeChannel();
     h.jobs = [job({ id: "gateway-7", label: "回测", status: "queued" })];
     h.tasks = [
-      { id: "t1", name: "早报", kind: "agent", schedule: "0 8 * * *", cwd: "C:/", enabled: true, nextRunAt: "08:00" },
+      { id: "t1", name: "早报", kind: "agent", schedule: "0 8 * * *", cwd: "C:/", enabled: true, nextRunAt: "08:00", running: false },
     ];
 
     await h.channel.handleText("/status");

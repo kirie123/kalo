@@ -71,6 +71,8 @@ export type OutMessage =
       cwd: string;
       prompt: string;
       model: string | null;
+      /** Digital expert this session belongs to (doc/2026-08-29-digital-experts.md). */
+      expertId?: string | null;
     }
   /**
    * Deliver a follow-up prompt into an ALREADY RUNNING session, which is what

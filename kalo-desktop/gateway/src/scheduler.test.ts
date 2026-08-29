@@ -195,6 +195,35 @@ describe("scheduler", () => {
     expect(scheduler.list()[0].lastResult).toBe("ok");
   });
 
+  test("snapshot exposes running flag while a watch task is in flight", async () => {
+    const { scheduler, nowRef } = makeScheduler();
+    scheduler.upsert(makeTask({ kind: "watch", script: "sleep 2", prompt: undefined }));
+    expect(scheduler.list()[0].running).toBe(false);
+    fireOnce(nowRef, scheduler);
+    expect(scheduler.list()[0].running).toBe(true);
+    await waitFor(() => scheduler.list()[0].lastResult !== undefined);
+    expect(scheduler.list()[0].running).toBe(false);
+  });
+
+  test("watch alert records lastOutput; a clean run clears it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kalo-sched-test-"));
+    const { scheduler, nowRef } = makeScheduler(dir);
+    scheduler.upsert(makeTask({ kind: "watch", script: "echo ALARM-BODY", prompt: undefined }));
+    fireOnce(nowRef, scheduler);
+    await waitFor(() => scheduler.list()[0].lastResult === "alerted");
+    expect(scheduler.list()[0].lastOutput).toContain("ALARM-BODY");
+    // Persisted: a fresh scheduler on the same store still sees it.
+    const { scheduler: reloaded } = makeScheduler(dir);
+    reloaded.load();
+    expect(reloaded.list()[0].lastOutput).toContain("ALARM-BODY");
+    // A subsequent clean run clears the stale alert text.
+    scheduler.upsert(makeTask({ kind: "watch", script: "true", prompt: undefined }));
+    fireOnce(nowRef, scheduler);
+    await waitFor(() => scheduler.list()[0].lastResult === "ok");
+    expect(scheduler.list()[0].lastOutput).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test("persistence round-trip via schedules.json", () => {
     const dir = mkdtempSync(join(tmpdir(), "kalo-sched-test-"));
     const { scheduler } = makeScheduler(dir);
@@ -206,6 +235,26 @@ describe("scheduler", () => {
     reloaded.load();
     expect(reloaded.list().map((t) => t.id)).toContain("persist-me");
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("expertId is sanitized, persisted and passed to the session request", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kalo-sched-test-"));
+    const { scheduler, requests, nowRef } = makeScheduler(dir);
+    scheduler.upsert(makeTask({ expertId: "trader-1" }));
+    fireOnce(nowRef, scheduler);
+    expect(requests[0].expertId).toBe("trader-1");
+    const raw = JSON.parse(readFileSync(join(dir, "schedules.json"), "utf-8"));
+    expect(raw.tasks[0].expertId).toBe("trader-1");
+
+    const { scheduler: reloaded } = makeScheduler(dir);
+    reloaded.load();
+    expect(reloaded.list()[0].expertId).toBe("trader-1");
+    rmSync(dir, { recursive: true, force: true });
+
+    // Invalid expertId is dropped, not fatal to the task.
+    const { scheduler: s2 } = makeScheduler();
+    expect(s2.upsert(makeTask({ expertId: "bad id!" }))).toBeNull();
+    expect(s2.list()[0].expertId).toBeUndefined();
   });
 
   test("watch task: stderr-only failure enters the cooldown", async () => {
