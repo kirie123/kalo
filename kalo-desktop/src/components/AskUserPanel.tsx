@@ -207,78 +207,78 @@ export default function AskUserPanel() {
 
   return (
     <div className="border-t border-edge bg-card px-4 py-3">
-      {/* Header */}
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          {question.header && (
-            <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-wide text-dim">
-              {question.header}
-            </span>
-          )}
-          <p className="text-sm font-medium leading-snug text-body">
-            {question.question}
-          </p>
-          {question.detail && (
-            <p className="mt-1 whitespace-pre-wrap text-xs text-dim leading-relaxed">
-              {question.detail}
+      <div className="mx-auto max-w-xl">
+        {/* Header */}
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            {question.header && (
+              <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-wide text-dim">
+                {question.header}
+              </span>
+            )}
+            <p className="text-sm font-medium leading-snug text-body">
+              {question.question}
             </p>
+            {question.detail && (
+              <p className="mt-1 whitespace-pre-wrap text-xs text-dim leading-relaxed">
+                {question.detail}
+              </p>
+            )}
+          </div>
+          <ProgressDots state={effectiveState} onGoTo={(i) => update(goTo(effectiveState, i))} />
+        </div>
+
+        {/* Answer area — capped height so long option lists don't push everything off screen */}
+        <div className="mt-2 max-h-64 overflow-y-auto">
+          {freeTextOnly || draft.customOpen ? (
+            <CustomField
+              value={draft.custom}
+              onChange={(text) => update(setCustom(effectiveState, text))}
+              onSubmit={handleNext}
+              placeholder={freeTextOnly ? "输入你的答案…" : "输入其他答案…"}
+            />
+          ) : (
+            <OptionList
+              question={question}
+              state={effectiveState}
+              onToggle={(label) => update(toggleOption(effectiveState, label))}
+              onCustomOpen={() => update(setCustomOpen(effectiveState, true))}
+            />
           )}
         </div>
-        <ProgressDots state={effectiveState} onGoTo={(i) => update(goTo(effectiveState, i))} />
-      </div>
 
-      {/* Answer area */}
-      {freeTextOnly || draft.customOpen ? (
-        <div className="mt-2">
-          <CustomField
-            value={draft.custom}
-            onChange={(text) => update(setCustom(effectiveState, text))}
-            onSubmit={handleNext}
-            placeholder={freeTextOnly ? "输入你的答案…" : "输入其他答案…"}
-          />
-        </div>
-      ) : (
-        <div className="mt-2">
-          <OptionList
-            question={question}
-            state={effectiveState}
-            onToggle={(label) => update(toggleOption(effectiveState, label))}
-            onCustomOpen={() => update(setCustomOpen(effectiveState, true))}
-          />
-        </div>
-      )}
-
-      {/* Footer actions */}
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {/* "我直接说" — dismiss without answering */}
-          <button
-            type="button"
-            onClick={() => void chatStore.cancelAsk()}
-            className="rounded px-2 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          >
-            我直接说
-          </button>
-          {/* Skip current question */}
-          {!last && (
+        {/* Footer actions */}
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {/* "我直接说" — dismiss without answering */}
             <button
               type="button"
-              onClick={() => update(skipCurrent(effectiveState))}
+              onClick={() => void chatStore.cancelAsk()}
               className="rounded px-2 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              跳过本问
+              我直接说
             </button>
-          )}
-        </div>
+            {/* Skip current question */}
+            {!last && (
+              <button
+                type="button"
+                onClick={() => update(skipCurrent(effectiveState))}
+                className="rounded px-2 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                跳过本问
+              </button>
+            )}
+          </div>
 
-        <button
-          type="button"
-          disabled={last ? !submittable : !answered}
-          onClick={handleNext}
-          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          {last ? "提交" : "下一问"}
-        </button>
+          <button
+            type="button"
+            disabled={last ? !submittable : !answered}
+            onClick={handleNext}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-[var(--accent-contrast)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {last ? "提交" : "下一问"}
+          </button>
+        </div>
       </div>
     </div>
   );
