@@ -1485,8 +1485,12 @@ export class ChatStore {
   private handleExtensionUiRequest(req: RpcExtensionUIRequest, rt: SessionRuntime) {
     dispatchExtensionUiRequest(
       req,
-      rt,
-      (view) => this.setRt(rt, view),
+      {
+        setPendingAsk: (state) => this.setRt(rt, { pendingAsk: state }),
+        setExtensionQueue: (queue) => this.setRt(rt, { extensionQueue: queue }),
+        currentQueue: () => rt.view.extensionQueue,
+        setInputDraft: (text) => this.setRt(rt, { inputDraft: text }),
+      },
       rt !== this.active,
       (msg, kind) => this.pushToast(msg, kind),
     );
