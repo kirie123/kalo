@@ -142,6 +142,7 @@ const TimelineItem = memo(function TimelineItem({ entry, copyText }: { entry: Ti
           streaming={entry.streaming}
           usage={entry.usage}
           copyText={copyText}
+          errorRetried={entry.retriedError}
         />
       );
     case "toolGroup":

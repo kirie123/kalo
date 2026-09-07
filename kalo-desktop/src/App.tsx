@@ -25,6 +25,7 @@ import TitleBar, { type MenuEntry, type TitleMenu } from "./components/TitleBar"
 import { listSessions, deleteSession } from "./lib/pi-bridge";
 import { chatStore, useChatSelector } from "./lib/chat-store";
 import { loadWidth, startColumnDrag } from "./lib/drag";
+import { startFreshChat } from "./lib/fresh-chat";
 import { cwdBasename } from "./lib/projects";
 import type { ProjectGroup, SessionSummary } from "./types";
 
@@ -127,8 +128,15 @@ export default function App() {
 
   // Stable callbacks so the memoized Sidebar actually skips re-renders.
   const onToggleCollapsed = useCallback(() => setSidebarCollapsed((v) => !v), []);
+  // 「新对话」starts in a fresh working directory rather than inheriting the
+  // current session's (doc/2026-09-07-新对话工作目录.md).
   const onNewChat = useCallback(() => {
-    chatStore.newChat();
+    void startFreshChat();
+    setPage("chat");
+  }, []);
+  // Clicking a pinned project starts a chat in that project's directory.
+  const onNewChatIn = useCallback((cwd: string) => {
+    chatStore.newChat({ cwd });
     setPage("chat");
   }, []);
   const onSelectSession = useCallback((sessionPath: string, cwd: string) => {
@@ -331,6 +339,7 @@ export default function App() {
           activeSessionId={chat.engineSessionId ?? null}
           runningByFile={chat.runningByFile}
           onNewChat={onNewChat}
+          onNewChatIn={onNewChatIn}
           onSelectSession={onSelectSession}
           onDeleteSession={onDeleteSession}
           onRenameSession={onRenameSession}

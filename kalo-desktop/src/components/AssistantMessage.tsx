@@ -97,6 +97,7 @@ export default function AssistantMessage({
   streaming,
   usage,
   copyText,
+  errorRetried,
 }: {
   message: AssistantMessageType;
   streaming?: boolean;
@@ -106,8 +107,10 @@ export default function AssistantMessage({
    * When absent no copy button is rendered — one button per turn, not per bubble.
    */
   copyText?: string;
+  /** Error already shown by the retry notice; don't render a second banner. */
+  errorRetried?: boolean;
 }) {
-  const failed = message.stopReason === "error" && message.errorMessage;
+  const failed = message.stopReason === "error" && message.errorMessage && !errorRetried;
   const lastIdx = message.content.length - 1;
   // Cache hit rate = cache reads over all input-side tokens (fresh + cached).
   const inputSide = usage ? usage.input + usage.cacheRead : 0;

@@ -21,6 +21,7 @@ import {
   missionSummary,
   sessionTitles,
 } from "../../lib/expert-view";
+import { startFreshChat } from "../../lib/fresh-chat";
 import { expertList, jobsList, listDir, listSessions, openPath, readFileText } from "../../lib/pi-bridge";
 import type { DirEntry, Expert, JobsSnapshot, ProjectGroup } from "../../types";
 
@@ -81,7 +82,9 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
 
   /** M2: creating an expert is an ordinary session driven by expert-designer. */
   const createExpert = async () => {
-    chatStore.newChat();
+    // A fresh workspace: expert-designer plans and creates the expert's own
+    // directory, so it must not start inside whatever project was last open.
+    await startFreshChat();
     onLeaveToChat();
     try {
       await chatStore.sendPrompt(

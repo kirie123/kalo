@@ -103,7 +103,7 @@
 
 ## Logs 与数据目录
 
-- 用户数据集中在 `~/.kalo/`：`agent/`（会话状态、settings.json、models）、`sessions/`、`jobs/`、`skills/`、`knowledge/`、`memory/`、`research/`、`market/`、`filings/`、`feeds/`、`attachments/`
+- 用户数据集中在 `~/.kalo/`：`agent/`（会话状态、settings.json、models）、`sessions/`、`jobs/`、`skills/`、`knowledge/`、`memory/`、`research/`、`market/`、`filings/`、`feeds/`、`attachments/`、`workspaces/`（「新对话」的默认工作目录 `chat-<n>`）
 - 排查引擎/网关问题先从 `~/.kalo/agent/`（settings、schedules、auth）与桌面端日志入手；复现两次以上的坑按「调试剧本」沉淀
 
 ## 冲突处理

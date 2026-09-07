@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { basename, parseAttachmentTag } from "../lib/attachments";
 import { openPath } from "../lib/pi-bridge";
 import type { ImageContent, UserMessage } from "../types";
@@ -16,6 +16,61 @@ function userText(message: UserMessage): string {
 function userImages(message: UserMessage): ImageContent[] {
   if (typeof message.content === "string") return [];
   return message.content.filter((c): c is ImageContent => c.type === "image");
+}
+
+/** Collapsed height cap (px) for a long user message — roughly 12 lines. */
+const COLLAPSED_MAX_H = 260;
+
+/**
+ * User text with a default height cap. When the text overflows, the bottom is
+ * clipped behind a gradient and an 展开/收起 button sits inside the bubble's
+ * bottom-right corner (revealed on hover). Short messages render unchanged.
+ */
+function CollapsibleText({ text }: { text: string }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+
+  // Wrapping depends on width and chat zoom, so measure on resize rather than
+  // only once on mount.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const measure = () => setOverflowing(el.scrollHeight > COLLAPSED_MAX_H + 8);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+
+  const clamped = overflowing && !expanded;
+
+  return (
+    <div
+      className={`group/bubble relative max-w-[75%] overflow-hidden rounded-2xl bg-[var(--bubble)] px-3.5 py-2 text-sm leading-relaxed ${
+        overflowing && expanded ? "pb-7" : ""
+      }`}
+    >
+      <div
+        ref={bodyRef}
+        className="whitespace-pre-wrap"
+        style={clamped ? { maxHeight: COLLAPSED_MAX_H, overflow: "hidden" } : undefined}
+      >
+        {text}
+      </div>
+      {clamped && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-[var(--bubble)]" />
+      )}
+      {overflowing && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="absolute bottom-1.5 right-2 rounded-md border border-edge bg-card px-1.5 py-0.5 text-[11px] text-dim opacity-0 shadow-sm transition-opacity hover:text-ink group-hover/bubble:opacity-100"
+        >
+          {expanded ? "收起" : "展开"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function UserBubble({ message }: { message: UserMessage }) {
@@ -67,11 +122,7 @@ export default function UserBubble({ message }: { message: UserMessage }) {
           ))}
         </div>
       )}
-      {text && (
-        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-[var(--bubble)] px-3.5 py-2 text-sm leading-relaxed">
-          {text}
-        </div>
-      )}
+      {text && <CollapsibleText text={text} />}
       <div className="pt-0.5 opacity-0 transition-opacity group-hover:opacity-100">
         <CopyButton text={text} title="复制这条输入" />
       </div>

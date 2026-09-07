@@ -19,6 +19,8 @@ interface SidebarProps {
   /** Engine-pool flags: session files (normalized) with a run in flight. */
   runningByFile: Record<string, boolean>;
   onNewChat: () => void;
+  /** Start a chat in a specific directory (a pinned project row). */
+  onNewChatIn: (cwd: string) => void;
   onSelectSession: (sessionPath: string, cwd: string) => void;
   /** Delete one session's history file (confirmed in the menu already). */
   onDeleteSession: (session: SessionSummary) => void;
@@ -97,6 +99,7 @@ export default memo(function Sidebar({
   activeSessionId,
   runningByFile,
   onNewChat,
+  onNewChatIn,
   onSelectSession,
   onDeleteSession,
   onRenameSession,
@@ -155,11 +158,10 @@ export default memo(function Sidebar({
     .filter((s) => !projectCwds.has(normalizeCwd(s.cwd)))
     .sort((a, b) => b.modifiedMs - a.modifiedMs);
   const looseVisible = visibleRows(looseSessions, chatLimit, mustShow);
-  // Clicking a project starts a fresh chat in its directory.
-  const openProject = (cwd: string) => {
-    onNewChat();
-    void chatStore.setCwd(cwd);
-  };
+  // Clicking a project starts a fresh chat in its directory. The cwd is passed
+  // up front (rather than newChat + setCwd) so no engine is ever spawned in the
+  // previous session's directory.
+  const openProject = (cwd: string) => onNewChatIn(cwd);
 
   if (collapsed) {
     return (
