@@ -10,8 +10,10 @@ import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { AskUserAnswerItem, AskUserQuestion } from "../../core/extensions/types.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { PermissionMode, PermissionModeDisplay } from "../../extensions/permission/types.ts";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -66,6 +68,9 @@ export type RpcCommand =
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
 
+	// Permission mode (doc/2026-09-07-权限模式.md)
+	| { id?: string; type: "set_permission_mode"; mode: PermissionMode }
+
 	// Messages
 	| { id?: string; type: "get_messages" }
 
@@ -105,6 +110,12 @@ export interface RpcSessionState {
 	autoCompactionEnabled: boolean;
 	messageCount: number;
 	pendingMessageCount: number;
+	/**
+	 * The session's permission mode. `custom` is derived-only (the client may
+	 * display it but cannot select it); absent means no permission extension is
+	 * loaded, and the client hides the control.
+	 */
+	permissionMode?: PermissionModeDisplay;
 }
 
 // ============================================================================
@@ -214,6 +225,7 @@ export type RpcResponse =
 			data: { text: string | null };
 	  }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
+	| { id?: string; type: "response"; command: "set_permission_mode"; success: true }
 
 	// Messages
 	| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
@@ -270,7 +282,14 @@ export type RpcExtensionUIRequest =
 			widgetPlacement?: "aboveEditor" | "belowEditor";
 	  }
 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
-	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
+	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "ask_user";
+			/** The batch to answer; the client replies with one answer per question, in order. */
+			questions: AskUserQuestion[];
+	  };
 
 // ============================================================================
 // Extension UI Commands (stdin)
@@ -280,6 +299,7 @@ export type RpcExtensionUIRequest =
 export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
+	| { type: "extension_ui_response"; id: string; answers: AskUserAnswerItem[] }
 	| { type: "extension_ui_response"; id: string; cancelled: true };
 
 // ============================================================================

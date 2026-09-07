@@ -68,6 +68,13 @@ export interface WarningSettings {
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
+/**
+ * Default permission mode for NEW sessions (see doc/2026-09-07-权限模式.md).
+ * Read only when a session is created, so changing it never alters the meaning
+ * of a session that already exists.
+ */
+export type DefaultPermissionMode = "read-only" | "workspace-write" | "full-auto";
+
 export type TransportSetting = Transport;
 
 /**
@@ -105,6 +112,7 @@ export interface Settings {
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
+	defaultPermissionMode?: DefaultPermissionMode; // default: "workspace-write"; permission mode pinned into new sessions
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
@@ -912,6 +920,17 @@ export class SettingsManager {
 	setDefaultProjectTrust(defaultProjectTrust: DefaultProjectTrust): void {
 		this.globalSettings.defaultProjectTrust = defaultProjectTrust;
 		this.markModified("defaultProjectTrust");
+		this.save();
+	}
+
+	getDefaultPermissionMode(): DefaultPermissionMode {
+		const value = this.settings.defaultPermissionMode;
+		return value === "read-only" || value === "full-auto" ? value : "workspace-write";
+	}
+
+	setDefaultPermissionMode(defaultPermissionMode: DefaultPermissionMode): void {
+		this.globalSettings.defaultPermissionMode = defaultPermissionMode;
+		this.markModified("defaultPermissionMode");
 		this.save();
 	}
 

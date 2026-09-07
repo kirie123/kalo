@@ -24,6 +24,8 @@ import type {
   ImageContent,
   ModelInfo,
   PendingSession,
+  PermissionMode,
+  PermissionModeDisplay,
   PiEvent,
   PiEventPayload,
   PiExitInfo,
@@ -40,12 +42,30 @@ import type {
 } from "../types";
 import { formatAttachmentTag } from "./attachments";
 import {
+  createAskState,
+  encodeAnswers,
+  validateEncoded,
+  type AskState,
+} from "./ask-user";
+import {
   accumulate,
   createAccumulator,
   summarize,
   type ChangeAccumulator,
   type ChangeSummary,
 } from "./changed-files";
+import {
+  errText,
+  fileToBase64,
+  loadLastModel,
+  normPath,
+  pastedImageName,
+  promptTitle,
+  samePending,
+  sameFlags,
+  saveLastModel,
+  uniqueAttachmentName,
+} from "./chat-store-helpers";
 import {
   createSession,
   closeSession,
@@ -62,6 +82,7 @@ import {
   sendCommand,
   sendRawCommand,
 } from "./pi-bridge";
+import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
 
 // ============================================================================
 // Timeline model
@@ -97,6 +118,11 @@ export interface AssistantEntry {
   streaming: boolean;
   /** Set at agent_settled: aggregated usage of the whole run, shown once as a footer. */
   usage?: TurnUsage;
+  /**
+   * The message's error is covered by a retry notice (auto-retry started or
+   * finally failed): the retry line carries the error, so no separate banner.
+   */
+  retriedError?: boolean;
 }
 
 export interface ToolGroupEntry {
@@ -187,7 +213,15 @@ export interface ChatState {
   thinkingLevel: ThinkingLevel;
   thinkingLevels: ThinkingLevel[];
   steeringMode: "all" | "one-at-a-time";
+  /** 会话的权限模式（doc/2026-09-07-权限模式.md）；undefined = 引擎未报告，隐藏控件。 */
+  permissionMode?: PermissionModeDisplay;
   extensionQueue: ExtensionUiPrompt[];
+  /**
+   * The `ask_user` request awaiting an answer, or undefined when none is open.
+   * Never a queue: the tool is registered `executionMode: "sequential"`, so the
+   * engine has at most one outstanding request per session.
+   */
+  pendingAsk?: AskState;
   toasts: Toast[];
   /** Draft pushed by an extension via set_editor_text; consumed by InputBox. */
   inputDraft?: string;
@@ -232,7 +266,9 @@ type SessionView = Pick<
   | "currentModel"
   | "thinkingLevel"
   | "steeringMode"
+  | "permissionMode"
   | "extensionQueue"
+  | "pendingAsk"
   | "inputDraft"
   | "attachments"
   | "contextUsage"
@@ -257,40 +293,15 @@ const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
   "currentModel",
   "thinkingLevel",
   "steeringMode",
+  "permissionMode",
   "extensionQueue",
+  "pendingAsk",
   "inputDraft",
   "attachments",
   "contextUsage",
   "sessionFile",
   "connecting",
 ]);
-
-/** Normalize a path for pool keys / file matching (Windows-safe). */
-function normPath(p: string): string {
-  return p.replace(/\\/g, "/").toLowerCase();
-}
-
-/** Same-keys-same-values check for the runningByFile flag maps. */
-function sameFlags(a: Record<string, boolean>, b: Record<string, boolean>): boolean {
-  const ka = Object.keys(a);
-  if (ka.length !== Object.keys(b).length) return false;
-  return ka.every((k) => a[k] === b[k]);
-}
-
-/** Field-wise comparison of the optimistic session list (identity stability). */
-function samePending(a: PendingSession[], b: PendingSession[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((x, i) => {
-    const y = b[i];
-    return x.path === y.path && x.id === y.id && x.title === y.title && x.cwd === y.cwd;
-  });
-}
-
-/** First line of a prompt, trimmed to a sidebar-sized title. */
-function promptTitle(text: string): string {
-  const line = text.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
-  return line.length > 80 ? `${line.slice(0, 80)}…` : line || "新对话";
-}
 
 /** Session-view changes that alter pool-visible state (runningByFile / pendingSessions) must commit. */
 function affectsPoolFlags(p: Partial<SessionView>): boolean {
@@ -311,7 +322,9 @@ function freshView(cwd = ""): SessionView {
     currentModel: saved ? ({ id: saved.modelId, name: saved.name || saved.modelId, provider: saved.provider } as ModelInfo) : undefined,
     thinkingLevel: "medium",
     steeringMode: "one-at-a-time",
+    permissionMode: undefined,
     extensionQueue: [],
+    pendingAsk: undefined,
     attachments: [],
     contextUsage: undefined,
   };
@@ -389,71 +402,6 @@ let entryCounter = 1;
 const nextEntryId = () => `e-${entryCounter++}`;
 
 let toastCounter = 1;
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-/** Base64 payload of a File, without the `data:...;base64,` prefix. */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("读取文件失败"));
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? "");
-      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-let pastedImageCounter = 1;
-
-/** A raw clipboard bitmap (a screenshot) arrives as a nameless `image.png`;
- *  label those, and keep real file names as-is. */
-function pastedImageName(file: File): string {
-  if (file.name && file.name !== "image.png") return file.name;
-  const ext = file.type.split("/")[1] || "png";
-  return `粘贴图片-${pastedImageCounter++}.${ext}`;
-}
-
-/** Attachment names are the chip key and the removal key, so they must be
- *  distinct: a collision gets `(2)`, `(3)`, … before the extension. */
-function uniqueAttachmentName(name: string, existing: AttachmentDraft[]): string {
-  const taken = new Set(existing.map((a) => a.name));
-  if (!taken.has(name)) return name;
-  const dot = name.lastIndexOf(".");
-  const stem = dot > 0 ? name.slice(0, dot) : name;
-  const ext = dot > 0 ? name.slice(dot) : "";
-  for (let i = 2; ; i++) {
-    const candidate = `${stem} (${i})${ext}`;
-    if (!taken.has(candidate)) return candidate;
-  }
-}
-
-// ============================================================================
-// Last-used model persistence (survives new chats and app restarts)
-// ============================================================================
-
-const LAST_MODEL_KEY = "kalo.lastModel";
-interface SavedModel {
-  provider: string;
-  modelId: string;
-  name?: string;
-}
-
-function loadLastModel(): SavedModel | null {
-  try {
-    const raw = localStorage.getItem(LAST_MODEL_KEY);
-    return raw ? (JSON.parse(raw) as SavedModel) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveLastModel(m: SavedModel) {
-  localStorage.setItem(LAST_MODEL_KEY, JSON.stringify(m));
-}
 
 // ============================================================================
 // Store
@@ -730,6 +678,7 @@ export class ChatStore {
       isStreaming: false,
       isCompacting: false,
       extensionQueue: [],
+      pendingAsk: undefined,
       inputDraft: undefined,
       attachments: [],
       contextUsage: undefined,
@@ -766,7 +715,7 @@ export class ChatStore {
   private async handleEngineExit(rt: SessionRuntime, deadSid: string, info: PiExitInfo) {
     rejectSessionPending(deadSid, new Error("engine process exited"));
     this.finalizeStreamingEntries(rt);
-    this.setRt(rt, { isStreaming: false, isCompacting: false, sessionId: null });
+    this.setRt(rt, { isStreaming: false, isCompacting: false, sessionId: null, pendingAsk: undefined });
 
     const isActive = rt === this.active;
     const file = rt.view.sessionFile;
@@ -1008,6 +957,7 @@ export class ChatStore {
         sessionPartial.thinkingLevel = s.thinkingLevel;
         sessionPartial.currentModel = s.model;
         sessionPartial.steeringMode = s.steeringMode;
+        sessionPartial.permissionMode = s.permissionMode;
         sessionPartial.isStreaming = s.isStreaming;
         sessionPartial.sessionName = s.sessionName;
         sessionPartial.engineSessionId = s.sessionId;
@@ -1427,7 +1377,26 @@ export class ChatStore {
     const resp = await sendCommand(sid, { type: "set_steering_mode", mode });
     if (!resp.success) {
       this.setRt(rt, { steeringMode: previous });
-      this.pushToast(`设置权限模式失败：${resp.error}`, "error");
+      this.pushToast(`设置插话模式失败：${resp.error}`, "error");
+    }
+  }
+
+  /**
+   * Switch the session's permission mode (doc/2026-09-07-权限模式.md).
+   * Optimistic, then reverted if the engine refuses — the engine owns the
+   * authoritative value, which it folds from the session log.
+   */
+  async setPermissionMode(mode: PermissionMode) {
+    const rt = this.rt;
+    const sid = rt.view.sessionId;
+    const previous = rt.view.permissionMode;
+    if (previous === mode) return;
+    this.setRt(rt, { permissionMode: mode });
+    if (!sid) return;
+    const resp = await sendCommand(sid, { type: "set_permission_mode", mode });
+    if (!resp.success) {
+      this.setRt(rt, { permissionMode: previous });
+      this.pushToast(`切换权限模式失败：${resp.error}`, "error");
     }
   }
 
@@ -1456,6 +1425,67 @@ export class ChatStore {
   }
 
   // --------------------------------------------------------------------------
+  // ask_user (doc/2026-09-07-ask-user-向用户提问工具.md)
+  // --------------------------------------------------------------------------
+
+  /** Drive the open ask_user exchange; the state machine lives in lib/ask-user.ts. */
+  updateAsk(next: AskState) {
+    const rt = this.rt;
+    if (rt.view.pendingAsk?.id !== next.id) return;
+    this.setRt(rt, { pendingAsk: next });
+    if (rt === this.active) this.commit();
+  }
+
+  /**
+   * Submit the answered batch.
+   *
+   * Self-checked first: the engine validates too and is the authority, but a
+   * rejected batch costs the user the whole exchange, so a batch that cannot
+   * pass is never sent.
+   */
+  async submitAsk() {
+    const rt = this.rt;
+    const state = rt.view.pendingAsk;
+    if (!state) return;
+    const answers = encodeAnswers(state);
+    const invalid = validateEncoded(state.questions, answers);
+    if (invalid !== undefined) {
+      this.pushToast(`回答无法提交：${invalid}`, "error");
+      return;
+    }
+    this.setRt(rt, { pendingAsk: undefined });
+    if (rt === this.active) this.commit();
+    const sid = rt.view.sessionId;
+    if (!sid) return;
+    try {
+      await sendRawCommand(sid, { type: "extension_ui_response", id: state.id, answers });
+    } catch (err) {
+      this.pushToast(`提交回答失败：${errText(err)}`, "error");
+    }
+  }
+
+  /**
+   * Dismiss the exchange to speak instead.
+   *
+   * The engine turns this into ASK_CANCELLED, which tells the model to stop and
+   * wait rather than re-ask — that distinction is why this is not just an abort.
+   */
+  async cancelAsk() {
+    const rt = this.rt;
+    const state = rt.view.pendingAsk;
+    if (!state) return;
+    this.setRt(rt, { pendingAsk: undefined });
+    if (rt === this.active) this.commit();
+    const sid = rt.view.sessionId;
+    if (!sid) return;
+    try {
+      await sendRawCommand(sid, { type: "extension_ui_response", id: state.id, cancelled: true });
+    } catch (err) {
+      this.pushToast(`关闭提问失败：${errText(err)}`, "error");
+    }
+  }
+
+  // --------------------------------------------------------------------------
   // Event dispatch (routed to the owning runtime, parked or active)
   // --------------------------------------------------------------------------
 
@@ -1476,6 +1506,13 @@ export class ChatStore {
 
   private handleExtensionUiRequest(req: RpcExtensionUIRequest, rt: SessionRuntime) {
     switch (req.method) {
+      case "ask_user": {
+        this.setRt(rt, { pendingAsk: createAskState(req.id, req.questions) });
+        if (rt !== this.active) {
+          this.pushToast("后台会话在等你回答问题，请切换到该会话处理", "info");
+        }
+        break;
+      }
       case "select":
       case "confirm":
       case "input":
@@ -1594,29 +1631,10 @@ export class ChatStore {
       }
 
       case "auto_retry_start":
-        this.mutateTimeline(
-          (t) =>
-            t.push({
-              id: nextEntryId(),
-              kind: "retry",
-              attempt: ev.attempt,
-              maxAttempts: ev.maxAttempts,
-              delayMs: ev.delayMs,
-              errorMessage: ev.errorMessage,
-            }),
-          rt,
-        );
+        this.mutateTimeline((t) => applyRetryStart(t, ev, nextEntryId()), rt);
         break;
       case "auto_retry_end":
-        this.mutateTimeline((t) => {
-          for (let i = t.length - 1; i >= 0; i--) {
-            const e = t[i];
-            if (e.kind === "retry" && !e.done) {
-              t[i] = { ...e, done: { success: ev.success, finalError: ev.finalError } };
-              return;
-            }
-          }
-        }, rt);
+        this.mutateTimeline((t) => applyRetryEnd(t, ev), rt);
         break;
 
       case "thinking_level_changed":
@@ -1909,7 +1927,7 @@ function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
     if (m.role === "user") {
       t.push({ id: nextEntryId(), kind: "user", message: m });
     } else if (m.role === "assistant") {
-      t.push({ id: nextEntryId(), kind: "assistant", message: m, streaming: false });
+      pushAssistantEntry(t, m, nextEntryId());
       for (const c of m.content) {
         if (c.type === "toolCall") {
           const rec: ToolCallRecord = {

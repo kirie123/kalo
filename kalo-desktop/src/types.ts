@@ -119,6 +119,21 @@ export type AssistantMessageEvent =
 // RPC Commands (stdin)
 // ============================================================================
 
+/** 权限模式（设计：doc/2026-09-07-权限模式.md）。 */
+export const PERMISSION_MODES = ["read-only", "workspace-write", "full-auto"] as const;
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/** 界面可能显示的当前值；`custom` 是派生态，不可被用户选中。 */
+export type PermissionModeDisplay = PermissionMode | "custom";
+
+/** 档位的中文标签与一句话说明。 */
+export const PERMISSION_MODE_LABELS: Record<PermissionMode, { label: string; hint: string }> = {
+  "read-only": { label: "只读", hint: "只看不改；每次改动逐一审批" },
+  "workspace-write": { label: "工作区", hint: "工作区内自由读写；越界写需审批" },
+  "full-auto": { label: "全自动", hint: "不打扰；仅拦不可挠回的操作" },
+};
+
 export type RpcCommand =
   // Prompting
   | { id?: string; type: "prompt"; message: string; images?: ImageContent[]; streamingBehavior?: "steer" | "followUp" }
@@ -159,6 +174,7 @@ export type RpcCommand =
   | { id?: string; type: "get_tree" }
   | { id?: string; type: "get_last_assistant_text" }
   | { id?: string; type: "set_session_name"; name: string }
+  | { id?: string; type: "set_permission_mode"; mode: PermissionMode }
   // Messages
   | { id?: string; type: "get_messages" }
   // Commands
@@ -181,6 +197,8 @@ export interface RpcSessionState {
   autoCompactionEnabled: boolean;
   messageCount: number;
   pendingMessageCount: number;
+  /** 会话的权限模式；`custom` 只用于显示、不可选中；缺失表示引擎未加载权限扩展，界面隐藏该控件。 */
+  permissionMode?: PermissionModeDisplay;
 }
 
 // ============================================================================
@@ -197,7 +215,7 @@ export type RpcResponse =
   | { id?: string; type: "response"; command: "set_thinking_level"; success: true; data?: any }
   | { id?: string; type: "response"; command: "cycle_thinking_level"; success: true; data: { level: ThinkingLevel } | null }
   | { id?: string; type: "response"; command: "get_available_thinking_levels"; success: true; data: { levels: ThinkingLevel[] } }
-  | { id?: string; type: "response"; command: "set_steering_mode" | "set_follow_up_mode" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" | "abort_bash" | "set_session_name"; success: true; data?: any }
+  | { id?: string; type: "response"; command: "set_steering_mode" | "set_follow_up_mode" | "set_auto_compaction" | "set_auto_retry" | "abort_retry" | "abort_bash" | "set_session_name" | "set_permission_mode"; success: true; data?: any }
   | { id?: string; type: "response"; command: "compact"; success: true; data?: any }
   | { id?: string; type: "response"; command: "bash"; success: true; data: { output?: string; exitCode?: number; [key: string]: any } }
   | { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
@@ -245,6 +263,44 @@ export type PiEvent =
 // Extension UI
 // ============================================================================
 
+/**
+ * One selectable answer in an `ask_user` question.
+ *
+ * `label` is both the displayed text and the value sent back to the model:
+ * there is no separate value field, so what the user clicked and what the model
+ * reads cannot drift apart.
+ */
+export interface AskUserOption {
+  label: string;
+  description?: string;
+}
+
+/** One question of an `ask_user` batch. */
+export interface AskUserQuestion {
+  /** Stable id, echoed in the answer. */
+  id: string;
+  question: string;
+  /** Supporting detail shown with the question, kept out of the option labels. */
+  detail?: string;
+  header?: string;
+  /** Absent means free-text only. */
+  options?: AskUserOption[];
+  multiSelect?: boolean;
+}
+
+/**
+ * The answer to one question.
+ *
+ * `selected` is always an array (single-select included) so both shapes are
+ * consumed without branching. Empty with no `custom` means the user explicitly
+ * skipped this question.
+ */
+export interface AskUserAnswerItem {
+  id: string;
+  selected: string[];
+  custom?: string;
+}
+
 export type RpcExtensionUIRequest =
   | { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
@@ -254,11 +310,13 @@ export type RpcExtensionUIRequest =
   | { type: "extension_ui_request"; id: string; method: "setStatus"; statusKey: string; statusText: string | undefined }
   | { type: "extension_ui_request"; id: string; method: "setWidget"; widgetKey: string; widgetLines: string[] | undefined; widgetPlacement?: "aboveEditor" | "belowEditor" }
   | { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
-  | { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
+  | { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string }
+  | { type: "extension_ui_request"; id: string; method: "ask_user"; questions: AskUserQuestion[] };
 
 export type RpcExtensionUIResponse =
   | { type: "extension_ui_response"; id: string; value: string }
   | { type: "extension_ui_response"; id: string; confirmed: boolean }
+  | { type: "extension_ui_response"; id: string; answers: AskUserAnswerItem[] }
   | { type: "extension_ui_response"; id: string; cancelled: true };
 
 // ============================================================================

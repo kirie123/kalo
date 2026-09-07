@@ -15,6 +15,7 @@ import GatewaySettings from "./GatewaySettings";
 import MarketEnvCard from "./MarketEnvCard";
 import McpSettings from "./McpSettings";
 import MemorySettings from "./MemorySettings";
+import PermissionSettings from "./PermissionSettings";
 import ProviderEditModal from "./ProviderEditModal";
 import SkillEditModal from "./SkillEditModal";
 import TasksSettings from "./TasksSettings";
@@ -49,12 +50,22 @@ export const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
 ];
 
 /** Left navigation tabs; the key is persisted across visits. */
-export type SettingsTab = "models" | "skills" | "memory" | "appearance" | "gateway" | "tasks" | "mcp" | "about";
+export type SettingsTab =
+  | "models"
+  | "skills"
+  | "memory"
+  | "permission"
+  | "appearance"
+  | "gateway"
+  | "tasks"
+  | "mcp"
+  | "about";
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "models", label: "模型" },
   { id: "skills", label: "Skills" },
   { id: "memory", label: "记忆" },
+  { id: "permission", label: "权限" },
   { id: "appearance", label: "外观" },
   { id: "gateway", label: "IM 网关" },
   { id: "tasks", label: "任务" },
@@ -115,6 +126,7 @@ export default function SettingsPage({ theme, onThemeChange, onBack, initialTab 
           {tab === "models" && <ModelSettings />}
           {tab === "skills" && <SkillsSettings />}
           {tab === "memory" && <MemorySettings />}
+          {tab === "permission" && <PermissionSettings />}
           {tab === "appearance" && <AppearanceSettings theme={theme} onThemeChange={onThemeChange} />}
           {tab === "gateway" && <GatewaySettings />}
           {tab === "tasks" && <TasksSettings />}

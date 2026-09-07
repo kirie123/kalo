@@ -4,6 +4,7 @@ import { resetChatZoom, stepChatZoom, useChatZoom } from "../lib/chat-zoom";
 import InputBox from "./InputBox";
 import MessageList from "./MessageList";
 import TodoPanel from "./TodoPanel";
+import AskUserPanel from "./AskUserPanel";
 
 export default function ChatView() {
   const zoom = useChatZoom();
@@ -41,6 +42,7 @@ export default function ChatView() {
       {/* zoom (not transform) so the composer keeps its normal layout box. */}
       <div className="shrink-0 px-4 pb-4 pt-1" style={{ zoom }}>
         <TodoPanel />
+        <AskUserPanel />
         <InputBox />
       </div>
 
@@ -110,16 +112,27 @@ function ExtensionModalInner({ prompt, queued }: { prompt: ExtensionUiPrompt; qu
   const submitValue = (v: string) => void chatStore.respondExtension(prompt.id, { value: v });
   const submitConfirmed = (confirmed: boolean) => void chatStore.respondExtension(prompt.id, { confirmed });
 
+  // An approval prompt (permission mode gating a tool call) must not look like
+  // the model asking a question: one is the engine stopping the model, the
+  // other is the model waiting on you. The engine marks approvals with a
+  // 「审批：」title prefix (doc/2026-09-07-权限模式.md).
+  const isApproval = prompt.title.startsWith("审批：");
+  const [heading, ...bodyLines] = prompt.title.split("\n");
+  const detail = bodyLines.join("\n").trim();
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={cancel}>
       <div
-        className="w-[480px] max-w-[90vw] rounded-xl border border-edge bg-card p-5 shadow-2xl"
+        className={`w-[480px] max-w-[90vw] rounded-xl border bg-card p-5 shadow-2xl ${
+          isApproval ? "border-tone-orange/60" : "border-edge"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-baseline justify-between">
-          <h3 className="text-base font-semibold">{prompt.title}</h3>
+          <h3 className={`text-base font-semibold ${isApproval ? "text-tone-orange" : ""}`}>{heading}</h3>
           {queued > 0 && <span className="text-xs text-dim">还有 {queued} 个请求</span>}
         </div>
+        {detail && <p className="mono mb-2 break-all whitespace-pre-wrap text-xs text-dim">{detail}</p>}
 
         {prompt.method === "confirm" && (
           <>

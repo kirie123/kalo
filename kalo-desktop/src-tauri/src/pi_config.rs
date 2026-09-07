@@ -51,3 +51,42 @@ pub fn read_auth_config() -> Result<serde_json::Value, String> {
 pub fn write_auth_config(config: &serde_json::Value) -> Result<(), String> {
     write_json_file(&agent_dir()?.join("auth.json"), config)
 }
+
+const PERMISSION_MODES: [&str; 3] = ["read-only", "workspace-write", "full-auto"];
+
+/// Read `defaultPermissionMode` from ~/.kalo/agent/settings.json.
+///
+/// The engine reads this only when a session is created, so it is the default
+/// for FUTURE sessions and never rewrites an existing one
+/// (doc/2026-09-07-权限模式.md). An absent or unrecognized value falls back to
+/// `workspace-write`, matching the engine's own fallback.
+pub fn read_default_permission_mode() -> Result<String, String> {
+    let settings = read_json_file(&agent_dir()?.join("settings.json"), "{}")?;
+    let mode = settings
+        .get("defaultPermissionMode")
+        .and_then(|v| v.as_str())
+        .filter(|v| PERMISSION_MODES.contains(v))
+        .unwrap_or("workspace-write");
+    Ok(mode.to_string())
+}
+
+/// Set `defaultPermissionMode` in ~/.kalo/agent/settings.json.
+///
+/// Reads, patches the single field, and writes back: settings.json is shared
+/// with the engine and the user, so replacing the whole document would discard
+/// every other setting.
+pub fn write_default_permission_mode(mode: &str) -> Result<(), String> {
+    if !PERMISSION_MODES.contains(&mode) {
+        return Err(format!("unknown permission mode: {mode}"));
+    }
+    let path = agent_dir()?.join("settings.json");
+    let mut settings = read_json_file(&path, "{}")?;
+    let object = settings
+        .as_object_mut()
+        .ok_or_else(|| "settings.json is not a JSON object".to_string())?;
+    object.insert(
+        "defaultPermissionMode".to_string(),
+        serde_json::Value::String(mode.to_string()),
+    );
+    write_json_file(&path, &settings)
+}

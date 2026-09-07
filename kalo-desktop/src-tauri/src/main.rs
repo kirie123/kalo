@@ -18,6 +18,7 @@ mod onboarding;
 mod session;
 mod session_paging;
 mod sessions_store;
+mod workspace;
 mod pi_config;
 mod proc;
 mod skills;
@@ -263,6 +264,19 @@ fn read_auth_config() -> Result<serde_json::Value, String> {
 #[tauri::command(async)]
 fn write_auth_config(config: serde_json::Value) -> Result<(), String> {
     pi_config::write_auth_config(&config)
+}
+
+/// Read the default permission mode for new sessions.
+#[tauri::command(async)]
+fn read_default_permission_mode() -> Result<String, String> {
+    pi_config::read_default_permission_mode()
+}
+
+/// Set the default permission mode. Applies to sessions created afterwards;
+/// existing sessions keep the mode pinned into their own log.
+#[tauri::command(async)]
+fn write_default_permission_mode(mode: String) -> Result<(), String> {
+    pi_config::write_default_permission_mode(&mode)
 }
 
 /// List one directory level for the file panel (dirs first, name-sorted).
@@ -637,6 +651,8 @@ fn main() {
             write_models_config,
             read_auth_config,
             write_auth_config,
+            read_default_permission_mode,
+            write_default_permission_mode,
             list_skills,
             read_skill,
             write_skill,
@@ -693,6 +709,7 @@ fn main() {
             experts::expert_list,
             experts::expert_upsert,
             experts::expert_remove,
+            workspace::create_workspace,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Kalo");

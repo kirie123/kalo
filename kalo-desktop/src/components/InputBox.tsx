@@ -8,6 +8,7 @@ import type { FileMatch } from "../types";
 import ContextRing from "./ContextRing";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import ModelPicker from "./ModelPicker";
+import PermissionChip from "./PermissionChip";
 
 const MAX_TEXTAREA_HEIGHT = 192; // ~8 lines
 
@@ -49,6 +50,7 @@ export default function InputBox() {
     isStreaming: s.isStreaming,
     connecting: s.connecting,
     steeringMode: s.steeringMode,
+    hasPendingAsk: s.pendingAsk !== undefined,
   }));
   const [text, setText] = useState("");
   const [previewImage, setPreviewImage] = useState<LightboxImage | null>(null);
@@ -340,7 +342,16 @@ export default function InputBox() {
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           rows={1}
-          placeholder={chat.isStreaming ? "输入引导消息，Enter 插入当前运行…" : chat.connecting ? "正在连接引擎，可先发消息…" : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"}
+          placeholder={
+            chat.hasPendingAsk
+              ? "请先回答上方的问题，或点\"我直接说\"…"
+              : chat.isStreaming
+                ? "输入引导消息，Enter 插入当前运行…"
+                : chat.connecting
+                  ? "正在连接引擎，可先发消息…"
+                  : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"
+          }
+          disabled={chat.hasPendingAsk}
           className="min-h-14 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-dim"
         />
 
@@ -358,7 +369,9 @@ export default function InputBox() {
             </svg>
           </button>
 
-          <PermissionChip mode={chat.steeringMode} onChange={(m) => void chatStore.setSteeringMode(m)} />
+          <PermissionChip />
+
+          <SteeringChip mode={chat.steeringMode} onChange={(m) => void chatStore.setSteeringMode(m)} />
 
           <ContextRing />
 
@@ -424,19 +437,21 @@ export default function InputBox() {
 
 type SteeringMode = "all" | "one-at-a-time";
 
-const PERMISSION_OPTIONS: Array<{ value: SteeringMode; label: string; hint: string }> = [
-  { value: "one-at-a-time", label: "默认权限", hint: "每个敏感操作都问一次" },
-  { value: "all", label: "全部放行", hint: "不再逐个确认，谨慎使用" },
+const STEERING_OPTIONS: Array<{ value: SteeringMode; label: string; hint: string }> = [
+  { value: "one-at-a-time", label: "逐条插话", hint: "排队的消息一条条送进当前轮" },
+  { value: "all", label: "一次全送", hint: "排队的消息一次性全部送进当前轮" },
 ];
 
 /**
- * Permission-mode dropdown. Replaces a native `<select>`: on Windows the
- * system widget can't shed its own chrome, so it was the one control that
- * refused to match the rest of the composer. Behaviour is unchanged — the same
- * two options calling the same `setSteeringMode`. 「全部放行」turns the chip
- * orange, since it is the mode worth noticing at a glance.
+ * Steering-mode dropdown: how queued messages are delivered into a running
+ * turn. Replaces a native `<select>`, which on Windows can't shed its own
+ * chrome and was the one control that refused to match the composer.
+ *
+ * Note: this chip used to be labelled 「权限模式」, which it never was — it
+ * controls message steering, not authorization. Real permission modes live in
+ * {@link PermissionChip} (doc/2026-09-07-权限模式.md).
  */
-function PermissionChip({ mode, onChange }: { mode: SteeringMode; onChange: (mode: SteeringMode) => void }) {
+function SteeringChip({ mode, onChange }: { mode: SteeringMode; onChange: (mode: SteeringMode) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -457,14 +472,14 @@ function PermissionChip({ mode, onChange }: { mode: SteeringMode; onChange: (mod
     };
   }, [open]);
 
-  const current = PERMISSION_OPTIONS.find((o) => o.value === mode) ?? PERMISSION_OPTIONS[0];
+  const current = STEERING_OPTIONS.find((o) => o.value === mode) ?? STEERING_OPTIONS[0];
   const risky = mode === "all";
 
   return (
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        title="权限模式"
+        title="插话投递方式"
         className={`flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs hover:bg-card ${
           risky ? "text-tone-orange" : "text-dim hover:text-ink"
         }`}
@@ -490,7 +505,7 @@ function PermissionChip({ mode, onChange }: { mode: SteeringMode; onChange: (mod
 
       {open && (
         <div className="absolute bottom-full left-0 z-30 mb-1.5 w-56 overflow-hidden rounded-lg border border-edge bg-card py-1 shadow-lift">
-          {PERMISSION_OPTIONS.map((o) => (
+          {STEERING_OPTIONS.map((o) => (
             <button
               key={o.value}
               onClick={() => {

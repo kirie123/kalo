@@ -3,6 +3,7 @@
  *
  * invoke commands (args camelCase):
  *   create_session { cwd, expertId? } -> string
+ *   create_workspace {} -> string   (fresh chat's working directory)
  *   send_command   { sessionId, command } -> void
  *   close_session  { sessionId } -> void
  *   list_sessions  {} -> ProjectGroup[]
@@ -75,6 +76,7 @@ import type {
   MemoryMeta,
   ModelsConfig,
   OnboardingState,
+  PermissionMode,
   PiEventPayload,
   PiExitInfo,
   ProjectGroup,
@@ -106,6 +108,15 @@ export function createSession(cwd: string, expertId?: string): Promise<string> {
 
 export function closeSession(sessionId: string): Promise<void> {
   return invoke<void>("close_session", { sessionId });
+}
+
+/**
+ * A working directory for a fresh chat: an empty `~/.kalo/workspaces/chat-<n>`
+ * (the newest one is reused while still empty). 「新对话」uses this instead of
+ * inheriting the previous session's cwd (doc/2026-09-07-新对话工作目录.md).
+ */
+export function createWorkspace(): Promise<string> {
+  return invoke<string>("create_workspace", {});
 }
 
 export function listSessions(): Promise<ProjectGroup[]> {
@@ -225,6 +236,19 @@ export function readAuthConfig(): Promise<AuthConfig> {
 
 export function writeAuthConfig(config: AuthConfig): Promise<void> {
   return invoke<void>("write_auth_config", { config });
+}
+
+/**
+ * Default permission mode for NEW sessions (doc/2026-09-07-权限模式.md).
+ * Existing sessions keep the mode pinned into their own log, so changing this
+ * never alters a conversation already under way.
+ */
+export function readDefaultPermissionMode(): Promise<PermissionMode> {
+  return invoke<PermissionMode>("read_default_permission_mode", {});
+}
+
+export function writeDefaultPermissionMode(mode: PermissionMode): Promise<void> {
+  return invoke<void>("write_default_permission_mode", { mode });
 }
 
 // ============================================================================

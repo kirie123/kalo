@@ -25,6 +25,10 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import type { RpcAskReply } from "../../extensions/ask-user/rpc-provider.ts";
+import { createRpcAskUser } from "../../extensions/ask-user/rpc-provider.ts";
+import { foldMode } from "../../extensions/permission/state.ts";
+import { PERMISSION_MODES } from "../../extensions/permission/types.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
@@ -131,6 +135,28 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	}
 
 	/**
+	 * Ask the client a batch of structured questions. The rules live in
+	 * `extensions/ask-user/rpc-provider.ts`; this only supplies the transport.
+	 */
+	const askUser = createRpcAskUser({
+		newId: () => crypto.randomUUID(),
+		register: (id, onReply) => {
+			pendingExtensionRequests.set(id, {
+				resolve: (response: RpcExtensionUIResponse) => {
+					onReply(response as RpcAskReply);
+				},
+				reject: () => {},
+			});
+		},
+		unregister: (id) => {
+			pendingExtensionRequests.delete(id);
+		},
+		send: (id, questions) => {
+			output({ type: "extension_ui_request", id, method: "ask_user", questions });
+		},
+	});
+
+	/**
 	 * Create an extension UI context that uses the RPC protocol.
 	 */
 	const createExtensionUIContext = (): ExtensionUIContext => ({
@@ -148,6 +174,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
 				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
 			),
+
+		askUser,
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			// Fire and forget - no response needed
@@ -457,6 +485,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					autoCompactionEnabled: session.autoCompactionEnabled,
 					messageCount: session.messages.length,
 					pendingMessageCount: session.pendingMessageCount,
+					// Folded from the session log rather than cached here: the
+					// permission extension owns the state, and a second copy in the
+					// RPC layer would be one more thing to keep in sync.
+					permissionMode: foldMode(session.sessionManager.getEntries()),
 				};
 				return success(id, "get_state", state);
 			}
@@ -661,6 +693,24 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				}
 				session.setSessionName(name);
 				return success(id, "set_session_name");
+			}
+
+			// =================================================================
+			// Permission mode
+			// =================================================================
+
+			case "set_permission_mode": {
+				if (!PERMISSION_MODES.includes(command.mode)) {
+					return error(id, "set_permission_mode", `Unknown permission mode: ${command.mode}`);
+				}
+				// Route through the extension's own command so the switch takes the
+				// single code path that also resets grants and records the entries.
+				const permissionCommand = session.extensionRunner.getCommand("permission");
+				if (!permissionCommand) {
+					return error(id, "set_permission_mode", "Permission extension is not loaded");
+				}
+				await permissionCommand.handler(command.mode, session.extensionRunner.createCommandContext());
+				return success(id, "set_permission_mode");
 			}
 
 			// =================================================================

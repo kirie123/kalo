@@ -285,6 +285,28 @@ describe("SettingsManager", () => {
 
 			expect(manager.getDefaultProjectTrust()).toBe("ask");
 		});
+
+		it("should default the permission mode to workspace-write when unset", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultPermissionMode()).toBe("workspace-write");
+		});
+
+		it("should read a configured default permission mode", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultPermissionMode: "read-only" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultPermissionMode()).toBe("read-only");
+		});
+
+		it("should fall back to workspace-write for an unknown permission mode", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultPermissionMode: "yolo" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getDefaultPermissionMode()).toBe("workspace-write");
+		});
 	});
 
 	describe("project settings directory creation", () => {
