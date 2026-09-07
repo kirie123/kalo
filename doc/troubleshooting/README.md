@@ -43,6 +43,9 @@
 - [cargo check 报 os error 32（文件被运行中的 kalo 锁住）](cargo-file-locked-os-error-32.md)
 - [ContextRing 加载历史会话后始终显示「–」（上下文长度不刷新）](context-ring-shows-dash-on-history-session.md)
 
+### 引擎（kalo-harness / sidecar）
+- [OpenAI-compat 代理的缓存命中率始终显示 0%（Anthropic 原生字段未映射）](openai-compat-proxy-cache-hit-always-zero.md)
+
 ### 工具链
 - [npm registry 证书过期导致 npx 失败](npm-registry-cert-expired.md)
 

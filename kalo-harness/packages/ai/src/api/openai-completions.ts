@@ -1379,12 +1379,21 @@ function parseChunkUsage(
 		prompt_cache_hit_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
+		// Anthropic-native cache fields, present when an OpenAI-compat proxy
+		// forwards Anthropic responses without translating usage field names.
+		cache_read_input_tokens?: number;
+		cache_creation_input_tokens?: number;
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const cacheReadTokens = rawUsage.prompt_tokens_details?.cached_tokens ?? rawUsage.prompt_cache_hit_tokens ?? 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const cacheReadTokens =
+		rawUsage.prompt_tokens_details?.cached_tokens ??
+		rawUsage.prompt_cache_hit_tokens ??
+		rawUsage.cache_read_input_tokens ??
+		0;
+	const cacheWriteTokens =
+		rawUsage.prompt_tokens_details?.cache_write_tokens || rawUsage.cache_creation_input_tokens || 0;
 
 	// Follow documented OpenAI/OpenRouter semantics: cached_tokens is cache-read
 	// tokens (hits). OpenAI does not document or emit cache_write_tokens, but
