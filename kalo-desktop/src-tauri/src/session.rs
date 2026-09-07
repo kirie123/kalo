@@ -191,11 +191,16 @@ impl PiProcess {
     /// gets `KALO_EXPERT_*` (identity, picked up by the expert-context
     /// extension) and `KALO_MEMORY_DIR` (memory isolation, picked up by the
     /// memory extension). See doc/2026-08-29-digital-experts.md.
+    ///
+    /// `unattended` marks the session as having no human at the screen: the
+    /// engine's ask_user tool will not register itself (see
+    /// doc/2026-09-07-ask-user-向用户提问工具.md).
     pub fn spawn(
         session_id: &str,
         cwd: &str,
         app: AppHandle,
         expert: Option<&crate::experts::ExpertCtx>,
+        unattended: bool,
     ) -> Result<Self, String> {
         let pi_path = resolve_pi_path()?;
 
@@ -210,6 +215,9 @@ impl PiProcess {
                 .env("KALO_EXPERT_NAME", &expert.name)
                 .env("KALO_EXPERT_MISSION", &expert.mission)
                 .env("KALO_MEMORY_DIR", &expert.memory_dir);
+        }
+        if unattended {
+            cmd.env("KALO_UNATTENDED", "1");
         }
         crate::proc::no_window(&mut cmd);
 

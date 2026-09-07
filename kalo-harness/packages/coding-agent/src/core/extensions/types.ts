@@ -94,6 +94,65 @@ export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 // UI Context
 // ============================================================================
 
+/**
+ * One selectable answer offered to the user by `askUser`.
+ *
+ * `label` is both the user-facing text and the value returned to the model:
+ * a separate value field would be one more chance for what the user clicked
+ * and what the model reads to drift apart.
+ */
+export interface AskUserOption {
+	/** Short user-facing option label. Also the value echoed back to the model. */
+	label: string;
+	/** One sentence explaining the tradeoff or impact of this option. */
+	description?: string;
+}
+
+/** One question in an `askUser` request. */
+export interface AskUserQuestion {
+	/** Stable question id, echoed in the answer so answers route without matching text. */
+	id: string;
+	/** The question to display. */
+	question: string;
+	/** Supporting detail rendered with the question, kept out of option labels. */
+	detail?: string;
+	/** Short heading for the question, e.g. "确认" or "选择方案". */
+	header?: string;
+	/** Choices the UI renders as a menu. Absent means free-text only. */
+	options?: AskUserOption[];
+	/** Whether more than one option may be selected. Defaults to single-select. */
+	multiSelect?: boolean;
+}
+
+/**
+ * Answer to one question.
+ *
+ * `selected` is always an array, single-select included, so both shapes are
+ * consumed without branching. `{ selected: [] }` with no `custom` means the
+ * user explicitly skipped this question.
+ */
+export interface AskUserAnswerItem {
+	/** The answered question id. */
+	id: string;
+	/** Selected option labels. Empty (with no `custom`) means skipped. */
+	selected: string[];
+	/** Free-text "other" answer. Mutually exclusive with `selected` for single-select. */
+	custom?: string;
+}
+
+/** A request for a batch of human answers. */
+export interface AskUserRequest {
+	/** Questions to display, answered as one batch. */
+	questions: AskUserQuestion[];
+	/** Abort signal of the owning tool call/turn. */
+	signal?: AbortSignal;
+}
+
+/** The human's answer batch, one entry per question in request order. */
+export interface AskUserAnswer {
+	answers: AskUserAnswerItem[];
+}
+
 /** Options for extension UI dialogs. */
 export interface ExtensionUIDialogOptions {
 	/** AbortSignal to programmatically dismiss the dialog. */
@@ -139,6 +198,21 @@ export interface ExtensionUIContext {
 
 	/** Show a text input dialog. */
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+
+	/**
+	 * Ask the user a batch of structured questions and wait for the answers.
+	 *
+	 * Optional because only surfaces that can collect structured answers
+	 * implement it. Unlike `select`/`confirm`, this never resolves to a default
+	 * on cancel, timeout, or a missing channel: a made-up answer to "which of
+	 * these should I delete" is worse than a failure. Callers must treat an
+	 * absent method as "cannot ask here" and rejections as final.
+	 *
+	 * @throws Error tagged `ASK_CANCELLED` when the user dismissed the request,
+	 *   `ASK_ABORTED` when the owning turn was aborted, `BAD_ANSWER` when the
+	 *   surface returned an answer batch that does not fit the questions.
+	 */
+	askUser?(request: AskUserRequest): Promise<AskUserAnswer>;
 
 	/** Show a notification to the user. */
 	notify(message: string, type?: "info" | "warning" | "error"): void;

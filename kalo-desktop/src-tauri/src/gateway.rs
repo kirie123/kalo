@@ -731,7 +731,7 @@ fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
     };
 
     let session_id = crate::gen_session_id();
-    let mut process = match PiProcess::spawn(&session_id, &cwd, app.clone(), expert.as_ref()) {
+    let mut process = match PiProcess::spawn(&session_id, &cwd, app.clone(), expert.as_ref(), true) {
         Ok(p) => p,
         Err(e) => {
             report_failure(e);
@@ -739,6 +739,9 @@ fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
         }
     };
     process.source = "gateway".to_string();
+    // Gateway sessions have nobody watching the screen: the ask_user tool must
+    // not register itself. KALO_UNATTENDED=1 is read by the extension at load
+    // time, before the first request is assembled. The env var is set in spawn.
     {
         let sessions = app.state::<SessionManager>();
         let Ok(mut map) = sessions.sessions.lock() else {

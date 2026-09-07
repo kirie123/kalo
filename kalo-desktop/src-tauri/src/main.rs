@@ -59,7 +59,7 @@ fn create_session(
         ),
         None => None,
     };
-    let process = PiProcess::spawn(&session_id, &cwd, app, expert.as_ref())?;
+    let process = PiProcess::spawn(&session_id, &cwd, app, expert.as_ref(), false)?;
     lock_sessions(&state)?.insert(session_id.clone(), process);
     Ok(session_id)
 }
