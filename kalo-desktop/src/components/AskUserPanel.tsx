@@ -207,7 +207,7 @@ export default function AskUserPanel() {
 
   return (
     <div className="border-t border-edge bg-card px-4 py-3">
-      <div className="mx-auto max-w-xl">
+      <div className="mx-auto max-w-lg">
         {/* Header */}
         <div className="mb-2 flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
