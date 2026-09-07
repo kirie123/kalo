@@ -42,7 +42,6 @@ import type {
 } from "../types";
 import { formatAttachmentTag } from "./attachments";
 import {
-  createAskState,
   encodeAnswers,
   validateEncoded,
   type AskState,
@@ -83,6 +82,7 @@ import {
   sendRawCommand,
 } from "./pi-bridge";
 import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
+import { dispatchExtensionUiRequest } from "./extension-ui-dispatch";
 
 // ============================================================================
 // Timeline model
@@ -1428,25 +1428,9 @@ export class ChatStore {
   // ask_user (doc/2026-09-07-ask-user-向用户提问工具.md)
   // --------------------------------------------------------------------------
 
-  /** Drive the open ask_user exchange; the state machine lives in lib/ask-user.ts. */
-  updateAsk(next: AskState) {
+  async submitAsk(state: AskState) {
     const rt = this.rt;
-    if (rt.view.pendingAsk?.id !== next.id) return;
-    this.setRt(rt, { pendingAsk: next });
-    if (rt === this.active) this.commit();
-  }
-
-  /**
-   * Submit the answered batch.
-   *
-   * Self-checked first: the engine validates too and is the authority, but a
-   * rejected batch costs the user the whole exchange, so a batch that cannot
-   * pass is never sent.
-   */
-  async submitAsk() {
-    const rt = this.rt;
-    const state = rt.view.pendingAsk;
-    if (!state) return;
+    if (rt.view.pendingAsk?.id !== state.id) return;
     const answers = encodeAnswers(state);
     const invalid = validateEncoded(state.questions, answers);
     if (invalid !== undefined) {
@@ -1464,12 +1448,6 @@ export class ChatStore {
     }
   }
 
-  /**
-   * Dismiss the exchange to speak instead.
-   *
-   * The engine turns this into ASK_CANCELLED, which tells the model to stop and
-   * wait rather than re-ask — that distinction is why this is not just an abort.
-   */
   async cancelAsk() {
     const rt = this.rt;
     const state = rt.view.pendingAsk;
@@ -1505,47 +1483,13 @@ export class ChatStore {
   }
 
   private handleExtensionUiRequest(req: RpcExtensionUIRequest, rt: SessionRuntime) {
-    switch (req.method) {
-      case "ask_user": {
-        this.setRt(rt, { pendingAsk: createAskState(req.id, req.questions) });
-        if (rt !== this.active) {
-          this.pushToast("后台会话在等你回答问题，请切换到该会话处理", "info");
-        }
-        break;
-      }
-      case "select":
-      case "confirm":
-      case "input":
-      case "editor": {
-        const prompt: ExtensionUiPrompt = {
-          id: req.id,
-          method: req.method,
-          title: req.title,
-          message: req.method === "confirm" ? req.message : undefined,
-          options: req.method === "select" ? req.options : undefined,
-          placeholder: req.method === "input" ? req.placeholder : undefined,
-          prefill: req.method === "editor" ? req.prefill : undefined,
-        };
-        this.setRt(rt, { extensionQueue: [...rt.view.extensionQueue, prompt] });
-        if (rt !== this.active) {
-          this.pushToast(`后台会话正在等待交互输入（${prompt.title}），请切换到该会话处理`, "info");
-        }
-        break;
-      }
-      case "notify":
-        this.pushToast(req.message, req.notifyType ?? "info");
-        break;
-      case "setTitle":
-        document.title = req.title || "Kalo";
-        break;
-      case "set_editor_text":
-        this.setRt(rt, { inputDraft: req.text });
-        break;
-      case "setStatus":
-      case "setWidget":
-        // Status lines and widgets are not rendered yet.
-        break;
-    }
+    dispatchExtensionUiRequest(
+      req,
+      rt,
+      (view) => this.setRt(rt, view),
+      rt !== this.active,
+      (msg, kind) => this.pushToast(msg, kind),
+    );
   }
 
   private handleAgentEvent(ev: PiEvent, rt: SessionRuntime) {
@@ -1644,6 +1588,8 @@ export class ChatStore {
         // The engine's own name beats the first-line-of-prompt placeholder.
         if (rt.pending && ev.name) rt.pending = { ...rt.pending, title: ev.name };
         this.setRt(rt, { sessionName: ev.name });
+        // Session fully loaded (history in engine memory) — refresh context usage now.
+        void this.refreshContextUsage(rt);
         break;
       case "extension_error":
         this.pushToast(`扩展错误：${ev.error ?? "未知错误"}`, "error");
