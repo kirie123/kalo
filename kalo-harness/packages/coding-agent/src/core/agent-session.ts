@@ -162,6 +162,12 @@ export type AgentSessionEvent =
 			aborted: boolean;
 			willRetry: boolean;
 			errorMessage?: string;
+			/** Relative savings ratio (0-1), present on successful compactions */
+			savingsRatio?: number;
+			/** Whether this compaction was deemed effective (>= 15% reduction) */
+			isEffective?: boolean;
+			/** Whether circuit breaker has tripped after this event */
+			circuitBreakerTripped?: boolean;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
@@ -327,6 +333,12 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	/** Consecutive compaction failures (structural or ineffective). Reset on effective compaction. */
+	private _compactionConsecutiveFailures = 0;
+	/** Max consecutive failures before disabling auto-compaction. */
+	private readonly _compactionCircuitBreakerThreshold = 3;
+	/** Whether compaction circuit breaker has tripped (auto-compaction disabled). */
+	private _compactionCircuitBreakerTripped = false;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -1881,6 +1893,16 @@ export class AgentSession {
 			this.agent.state.messages = sessionContext.messages;
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
+			// Evaluate compaction effectiveness via relative savings ratio.
+			// Manual compaction also benefits from effectiveness tracking but doesn't trip circuit breaker.
+			const savingsRatioManual = tokensBefore > 0 ? (tokensBefore - estimatedTokensAfter) / tokensBefore : 1;
+			const isEffectiveManual = savingsRatioManual >= 0.15;
+			if (isEffectiveManual) {
+				// Manual compaction was effective: reset circuit breaker to allow auto-compaction to resume
+				this._compactionConsecutiveFailures = 0;
+				this._compactionCircuitBreakerTripped = false;
+			}
+
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
 				| CompactionEntry
@@ -1904,6 +1926,10 @@ export class AgentSession {
 				usage,
 				details,
 			};
+			// Compute effectiveness metrics (>= 15% reduction is effective)
+			const savingsRatio = tokensBefore > 0 ? (tokensBefore - estimatedTokensAfter) / tokensBefore : 1;
+			const isEffective = savingsRatio >= 0.15;
+
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
 			this._compactionAbortController = undefined;
 			this._emit({
@@ -1912,6 +1938,9 @@ export class AgentSession {
 				result: compactionResult,
 				aborted: false,
 				willRetry: false,
+				savingsRatio,
+				isEffective,
+				circuitBreakerTripped: this._compactionCircuitBreakerTripped,
 			});
 			return compactionResult;
 		} catch (error) {
@@ -2059,6 +2088,12 @@ export class AgentSession {
 		const settings = this.settingsManager.getCompactionSettings();
 		let started = false;
 
+		// Check circuit breaker before attempting compaction
+		if (this._compactionCircuitBreakerTripped) {
+			// Circuit breaker tripped, skip compaction
+			return false;
+		}
+
 		try {
 			if (!this.model) {
 				return false;
@@ -2070,6 +2105,7 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
+				// Structural issue: no messages to compact. Don't count as failure.
 				return false;
 			}
 
@@ -2160,6 +2196,23 @@ export class AgentSession {
 			this.agent.state.messages = sessionContext.messages;
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
+			// Evaluate compaction effectiveness via relative savings ratio (not absolute threshold).
+			// A compaction is "effective" if it reduced context by at least 15%.
+			// Structural impossibility (tokensBefore ~ 0 or nothing to compact) is not a failure.
+			const savingsRatio = tokensBefore > 0 ? (tokensBefore - estimatedTokensAfter) / tokensBefore : 1;
+			const isEffective = savingsRatio >= 0.15;
+			if (isEffective) {
+				// Effective compaction: reset circuit breaker
+				this._compactionConsecutiveFailures = 0;
+				this._compactionCircuitBreakerTripped = false;
+			} else {
+				// Compaction ran but was structurally ineffective (e.g. context dominated by system prompt/tools)
+				this._compactionConsecutiveFailures++;
+				if (this._compactionConsecutiveFailures >= this._compactionCircuitBreakerThreshold) {
+					this._compactionCircuitBreakerTripped = true;
+				}
+			}
+
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
 				| CompactionEntry
@@ -2183,7 +2236,16 @@ export class AgentSession {
 				usage,
 				details,
 			};
-			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+			this._emit({
+				type: "compaction_end",
+				reason,
+				result,
+				aborted: false,
+				willRetry,
+				savingsRatio,
+				isEffective,
+				circuitBreakerTripped: this._compactionCircuitBreakerTripped,
+			});
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2204,6 +2266,12 @@ export class AgentSession {
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
 			if (started) {
+				// True failure (exception): increment failure counter and check circuit breaker
+				this._compactionConsecutiveFailures++;
+				if (this._compactionConsecutiveFailures >= this._compactionCircuitBreakerThreshold) {
+					this._compactionCircuitBreakerTripped = true;
+				}
+
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2214,6 +2282,7 @@ export class AgentSession {
 						reason === "overflow"
 							? `Context overflow recovery failed: ${errorMessage}`
 							: `Auto-compaction failed: ${errorMessage}`,
+					circuitBreakerTripped: this._compactionCircuitBreakerTripped,
 				});
 			}
 			return false;

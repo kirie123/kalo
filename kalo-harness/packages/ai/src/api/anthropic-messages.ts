@@ -313,6 +313,20 @@ const ANTHROPIC_MESSAGE_EVENTS: ReadonlySet<string> = new Set([
 	"content_block_stop",
 ]);
 
+/** Default idle timeout for stream watchdog (60 seconds). Can be overridden via PI_STREAM_IDLE_TIMEOUT_MS. */
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
+
+function getStreamIdleTimeout(env?: ProviderEnv): number {
+	const envValue = getProviderEnvValue("PI_STREAM_IDLE_TIMEOUT_MS", env);
+	if (envValue) {
+		const parsed = Number.parseInt(envValue, 10);
+		if (!Number.isNaN(parsed) && parsed > 0) {
+			return parsed;
+		}
+	}
+	return DEFAULT_STREAM_IDLE_TIMEOUT_MS;
+}
+
 function flushSseEvent(state: SseDecoderState): ServerSentEvent | null {
 	if (!state.event && state.data.length === 0) {
 		return null;
@@ -387,6 +401,7 @@ function consumeLine(text: string): { line: string; rest: string } | null {
 async function* iterateSseMessages(
 	body: ReadableStream<Uint8Array>,
 	signal?: AbortSignal,
+	idleTimeoutMs?: number,
 ): AsyncGenerator<ServerSentEvent> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
@@ -399,12 +414,27 @@ async function* iterateSseMessages(
 				throw new Error("Request was aborted");
 			}
 
-			const { value, done } = await reader.read();
-			if (done) {
-				break;
+			if (idleTimeoutMs && idleTimeoutMs > 0) {
+				// Apply idle watchdog: if no data arrives within timeout, abort
+				const timeoutPromise = new Promise<never>((_, reject) =>
+					setTimeout(
+						() => reject(new Error(`Stream idle timeout: no data received in ${idleTimeoutMs}ms`)),
+						idleTimeoutMs,
+					),
+				);
+				const { value, done } = await Promise.race([reader.read(), timeoutPromise]);
+				if (done) {
+					break;
+				}
+				buffer += decoder.decode(value, { stream: true });
+			} else {
+				const { value, done } = await reader.read();
+				if (done) {
+					break;
+				}
+				buffer += decoder.decode(value, { stream: true });
 			}
 
-			buffer += decoder.decode(value, { stream: true });
 			let consumed = consumeLine(buffer);
 			while (consumed) {
 				buffer = consumed.rest;
@@ -446,6 +476,7 @@ async function* iterateSseMessages(
 async function* iterateAnthropicEvents(
 	response: Response,
 	signal?: AbortSignal,
+	idleTimeoutMs?: number,
 ): AsyncGenerator<RawMessageStreamEvent> {
 	if (!response.body) {
 		throw new Error("Attempted to iterate over an Anthropic response with no body");
@@ -454,7 +485,7 @@ async function* iterateAnthropicEvents(
 	let sawMessageStart = false;
 	let sawMessageEnd = false;
 
-	for await (const sse of iterateSseMessages(response.body, signal)) {
+	for await (const sse of iterateSseMessages(response.body, signal, idleTimeoutMs)) {
 		if (sse.event === "error") {
 			throw new Error(sse.data);
 		}
@@ -567,10 +598,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
+			const idleTimeoutMs = getStreamIdleTimeout(options?.env);
+
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
 			const blocks = output.content as Block[];
 
-			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
+			for await (const event of iterateAnthropicEvents(response, options?.signal, idleTimeoutMs)) {
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					// Capture initial token usage from message_start event

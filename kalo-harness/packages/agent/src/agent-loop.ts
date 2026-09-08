@@ -219,6 +219,42 @@ async function runLoop(
 					currentContext.messages.push(result);
 					newMessages.push(result);
 				}
+			} else if (message.stopReason === "length") {
+				// Output was truncated but no tool calls: inject continuation message
+				const continuationMessage: AgentMessage = {
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text: "Output token limit reached. Continue directly from where you left off—no apology, no recap, just resume.",
+						},
+					],
+					timestamp: Date.now(),
+				};
+				currentContext.messages.push(continuationMessage);
+				newMessages.push(continuationMessage);
+				hasMoreToolCalls = true; // Force continuation
+			} else {
+				// No tool calls and clean stop: check if message has any visible content
+				const hasText = message.content.some((c) => c.type === "text" && c.text.trim().length > 0);
+				const hasThinking = message.content.some((c) => c.type === "thinking");
+
+				// If only thinking without any text/tool output, inject continuation to prevent silent task abandonment
+				if (!hasText && hasThinking) {
+					const continuationMessage: AgentMessage = {
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text: "You provided reasoning but no visible output or action. Please proceed with the task.",
+							},
+						],
+						timestamp: Date.now(),
+					};
+					currentContext.messages.push(continuationMessage);
+					newMessages.push(continuationMessage);
+					hasMoreToolCalls = true; // Force continuation
+				}
 			}
 
 			await emit({ type: "turn_end", message, toolResults });

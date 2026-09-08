@@ -76,6 +76,13 @@ export function createGrepTool<TContext extends ExecutionToolContext = Execution
 		label: "grep",
 		description: `Search file contents with a regular expression. Returns matching lines with line numbers, grouped by file. Respects .gitignore and skips dependency/build directories and binary files. Output is capped at ${GREP_DEFAULT_LIMIT} matches (raise with limit) and ${DEFAULT_MAX_BYTES / 1024}KB. Use read on a matched file for surrounding context.`,
 		parameters: grepSchema,
+		prepareArguments: (args: any) => {
+			// Accept "query" as alias for "pattern" (common in weaker models)
+			if (args.query !== undefined && args.pattern === undefined) {
+				return { ...args, pattern: args.query };
+			}
+			return args;
+		},
 		async execute(_toolCallId, args, signal, _onUpdate, { env }) {
 			if (args.pattern.length === 0) throw new Error("pattern must be a non-empty string");
 			if (args.glob !== undefined) validateGlobFilter(args.glob);

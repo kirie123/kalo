@@ -770,6 +770,7 @@ export class ChatStore {
       todos: latestTodos(page.messages),
       history: { path, start: page.start, hasMore: page.hasMore },
     });
+    void this.refreshContextUsage(rt);
   }
 
   /** Spawn with retry: transient failures (busy binary, AV scans) happen. */
@@ -1522,6 +1523,7 @@ export class ChatStore {
         break;
       case "message_end":
         this.onMessageEnd(ev.message, rt);
+        void this.refreshContextUsage(rt);
         break;
 
       case "tool_execution_start":

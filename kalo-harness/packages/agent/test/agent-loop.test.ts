@@ -1605,3 +1605,138 @@ describe("agentLoopContinue with AgentMessage", () => {
 		expect(messages[0].role).toBe("assistant");
 	});
 });
+
+describe("agentLoop continuation logic", () => {
+	it("should auto-continue when assistant returns only thinking without text", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let turnCount = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				turnCount++;
+				if (turnCount === 1) {
+					// First turn: only thinking, no text or tool calls
+					const message = createAssistantMessage([{ type: "thinking", thinking: "Let me think..." }], "stop");
+					stream.push({ type: "done", reason: "stop", message });
+				} else {
+					// Second turn: should have injected continuation prompt, now return text
+					const message = createAssistantMessage([{ type: "text", text: "Here is my answer." }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		const messages = await stream.result();
+
+		// Should have: user, assistant(thinking-only), user(continuation), assistant(text)
+		expect(messages.length).toBe(4);
+		expect(messages[0].role).toBe("user");
+		expect(messages[1].role).toBe("assistant");
+		expect(messages[2].role).toBe("user");
+		const continuationMsg = messages[2] as UserMessage;
+		const continuationText = Array.isArray(continuationMsg.content)
+			? continuationMsg.content.find((c) => c.type === "text")?.text || ""
+			: continuationMsg.content;
+		expect(continuationText).toContain("reasoning but no visible output");
+		expect(messages[3].role).toBe("assistant");
+		expect(turnCount).toBe(2);
+	});
+
+	it("should auto-continue when stopReason is length (pure text truncation)", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let turnCount = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				turnCount++;
+				if (turnCount === 1) {
+					// First turn: text truncated by max_tokens
+					const message = createAssistantMessage(
+						[{ type: "text", text: "This is a very long response that got cut off..." }],
+						"length",
+					);
+					stream.push({ type: "done", reason: "length", message });
+				} else {
+					// Second turn: continuation after auto-injected prompt
+					const message = createAssistantMessage([{ type: "text", text: "...and here is the rest." }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("Write a long essay")], context, config, undefined, streamFn);
+		const messages = await stream.result();
+
+		// Should have: user, assistant(truncated), user(continuation), assistant(rest)
+		expect(messages.length).toBe(4);
+		expect(messages[0].role).toBe("user");
+		expect(messages[1].role).toBe("assistant");
+		expect(messages[2].role).toBe("user");
+		const continuationMsg = messages[2] as UserMessage;
+		const continuationText = Array.isArray(continuationMsg.content)
+			? continuationMsg.content.find((c) => c.type === "text")?.text || ""
+			: continuationMsg.content;
+		expect(continuationText).toContain("Output token limit reached");
+		expect(messages[3].role).toBe("assistant");
+		expect(turnCount).toBe(2);
+	});
+
+	it("should not continue when assistant returns text with thinking", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let turnCount = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				turnCount++;
+				const message = createAssistantMessage([
+					{ type: "thinking", thinking: "Let me think..." },
+					{ type: "text", text: "Here is my answer." },
+				]);
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, streamFn);
+		const messages = await stream.result();
+
+		// Should have: user, assistant (no continuation injected)
+		expect(messages.length).toBe(2);
+		expect(messages[0].role).toBe("user");
+		expect(messages[1].role).toBe("assistant");
+		expect(turnCount).toBe(1);
+	});
+});
