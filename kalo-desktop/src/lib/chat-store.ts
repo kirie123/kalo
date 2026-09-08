@@ -371,6 +371,8 @@ class SessionRuntime {
   resumePromise: Promise<void> | null = null;
   compactionNoticeId: string | null = null;
   lastActive = Date.now();
+  /** Per-runtime lock: prevents concurrent get_session_stats IPC calls. */
+  contextInflight = false;
   // Per-runtime stream batching (20fps clone flush).
   flushTimer: ReturnType<typeof setTimeout> | null = null;
   pendingClones = new Set<string>();
@@ -420,7 +422,6 @@ export class ChatStore {
   private active: SessionRuntime;
 
   private listeners = new Set<() => void>();
-  private contextInflight = false;
 
   constructor() {
     this.active = new SessionRuntime(`fresh-${this.freshSeq++}`);
@@ -1154,8 +1155,8 @@ export class ChatStore {
   /** Refresh context-window usage from the engine (get_session_stats). */
   async refreshContextUsage(rt: SessionRuntime = this.active) {
     const sid = rt.view.sessionId;
-    if (!sid || this.contextInflight) return;
-    this.contextInflight = true;
+    if (!sid || rt.contextInflight) return;
+    rt.contextInflight = true;
     try {
       const resp = await sendCommand(sid, { type: "get_session_stats" }, 15000);
       if (resp.success) {
@@ -1165,7 +1166,7 @@ export class ChatStore {
     } catch {
       // Stats are best-effort UI decoration.
     } finally {
-      this.contextInflight = false;
+      rt.contextInflight = false;
     }
   }
 
