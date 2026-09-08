@@ -826,6 +826,7 @@ export async function compact(
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	sessionFile?: string,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -904,6 +905,17 @@ export async function compact(
 	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
+
+	// Append session file reference if available
+	if (sessionFile) {
+		summary += `\n\n<session-file>\n${sessionFile}\n</session-file>\n\n`;
+		summary +=
+			`**Note for Assistant**: This summary represents a compressed checkpoint. ` +
+			`The original conversation is stored at the path above in JSONL format. ` +
+			`If you need more specific details (exact tool arguments, full error messages, raw thinking, etc.), ` +
+			`you can read segments of the session file using the \`read\` tool with \`offset\` and \`limit\` options. ` +
+			`Each line is a JSON object with type/role/content/timestamp fields.`;
+	}
 
 	if (!firstKeptEntryId) {
 		throw new Error("First kept entry has no UUID - session may need migration");

@@ -67,6 +67,7 @@
 - [Agent 引擎可靠性改进](2026-01-01-harness-reliability-improvements.md)
 - [客户端会话元数据 SQLite 持久化](2026-01-01-客户端会话元数据SQLite持久化.md)
 - [每轮 LLM 调用前检查压缩](2026-01-01-每轮LLM调用前检查压缩.md)
+- [压缩摘要追加 session-file 路径](2026-01-01-压缩摘要追加session-file路径.md)
 
 ## 权限与安全
 
