@@ -551,6 +551,14 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
+			// Check compaction threshold before each LLM call
+			if (turn.message.role === "assistant") {
+				const assistantMsg = turn.message as AssistantMessage;
+				// Check with skipAbortedCheck=false to catch aborted responses
+				// Compaction will run synchronously and reload agent state before LLM call
+				await this._checkCompaction(assistantMsg, false);
+			}
+
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
 			const previousContext = previousSnapshot?.context ?? turn.context;
 
