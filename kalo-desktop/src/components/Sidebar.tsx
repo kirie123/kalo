@@ -500,10 +500,12 @@ function SessionRowItem({
     { label: "重命名", action: () => onStartRename(session) },
     openPathItem("打开项目文件夹", session.cwd, true),
     copyPathItem(session.cwd, "复制项目路径"),
-    // Optimistic rows have no file on disk to delete yet.
+    // Optimistic rows have no file on disk to locate or copy yet.
     ...(session.pending
       ? []
       : [
+          openPathItem("定位引擎会话文件", session.path, true),
+          copyPathItem(session.path, "复制引擎会话路径"),
           {
             label: "删除会话",
             danger: true,
