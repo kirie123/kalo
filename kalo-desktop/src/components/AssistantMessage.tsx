@@ -9,7 +9,7 @@ import type { AssistantMessage as AssistantMessageType } from "../types";
 import { formatK } from "./ContextRing";
 import CopyButton from "./CopyButton";
 import ThinkingBlock from "./ThinkingBlock";
-import type { TurnUsage } from "../lib/chat-store";
+import type { TurnUsage } from "../lib/timeline";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

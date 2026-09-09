@@ -321,7 +321,10 @@ describe("AgentSession compaction characterization", () => {
 
 		await harness.session.prompt("hello");
 
-		expect(harness.faux.state.callCount).toBe(1);
+		// The vendored agent loop auto-continues after a "length" stop (agent-loop.ts
+		// injects a continuation user message), so the single queued response is
+		// requested twice. What matters for compaction: nothing was compacted.
+		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
 
@@ -350,7 +353,11 @@ describe("AgentSession compaction characterization", () => {
 
 		await harness.session.prompt("x".repeat(5000));
 
-		expect(harness.faux.state.callCount).toBe(2);
+		// The vendored agent loop auto-continues after a "length" stop, so after the
+		// failed compact-and-retry it issues one more request (empty faux queue
+		// answer) before settling. The compaction assertions below are the point of
+		// this test: exactly one overflow compaction, then the terminal error.
+		expect(harness.faux.state.callCount).toBe(3);
 		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
@@ -378,6 +385,31 @@ describe("AgentSession compaction characterization", () => {
 		const compactPromise = harness.session.compact();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		harness.session.abortCompaction();
+
+		await expect(compactPromise).rejects.toThrow("Compaction cancelled");
+	});
+
+	it("abort cancels an in-progress manual compaction", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						return await new Promise<{ cancel: true }>((resolve) => {
+							event.signal.addEventListener("abort", () => resolve({ cancel: true }), { once: true });
+						});
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await harness.session.prompt("one");
+		await harness.session.prompt("two");
+
+		const compactPromise = harness.session.compact();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await harness.session.abort();
 
 		await expect(compactPromise).rejects.toThrow("Compaction cancelled");
 	});

@@ -78,7 +78,28 @@ export interface ToolResultMessage<TDetails = any> {
   timestamp: number;
 }
 
-export type AgentMessage = UserMessage | AssistantMessage | ToolResultMessage;
+/**
+ * One context compaction, surfaced as a transcript item by the Rust session
+ * pager (session_paging.rs synthesizes each `compaction` chain node into this
+ * shape; engine messages.ts has a sibling type). Rendered by the desktop as a
+ * persistent, expandable "auto-compaction" bubble (doc/2026-09-09-自动压缩气泡常驻与摘要展开.md).
+ * `timestamp` is omitted by the pager — ordering comes from the array
+ * position, so the field is optional here (unlike the engine's type).
+ */
+export interface CompactionSummaryMessage {
+  role: "compactionSummary";
+  /** LLM-generated structured summary of the compacted context (markdown). */
+  summary: string;
+  /** Context tokens before the compaction, when the entry recorded them. */
+  tokensBefore?: number;
+  timestamp?: number;
+}
+
+export type AgentMessage =
+  | UserMessage
+  | AssistantMessage
+  | ToolResultMessage
+  | CompactionSummaryMessage;
 
 // ============================================================================
 // Model

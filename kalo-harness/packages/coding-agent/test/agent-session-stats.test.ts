@@ -116,6 +116,24 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 
+	it("keeps context usage above a prior full usage when a provider reports a smaller incremental usage", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("first", 1));
+			sessionManager.appendMessage(createAssistantMessage("full usage", 40_000, 2));
+			sessionManager.appendMessage(createUserMessage("continue", 3));
+			sessionManager.appendMessage(createAssistantMessage("incremental usage", 120, 4));
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			expect(stats.contextUsage?.tokens ?? 0).toBeGreaterThan(40_000);
+			expect(stats.contextUsage?.percent ?? 0).toBeGreaterThan((40_000 / model.contextWindow) * 100);
+		} finally {
+			session.dispose();
+		}
+	});
+
 	it("reports unknown current context usage immediately after compaction", async () => {
 		const { session, sessionManager } = await createSession();
 
@@ -148,8 +166,9 @@ describe("AgentSession.getSessionStats", () => {
 			const keptUserId = sessionManager.appendMessage(createUserMessage("second", 3));
 			sessionManager.appendMessage(createAssistantMessage("response2", 195_000, 4));
 			sessionManager.appendCompaction("summary", keptUserId, 195_000);
-			sessionManager.appendMessage(createUserMessage("third", 5));
-			sessionManager.appendMessage(createAssistantMessage("response3", 25_000, 6));
+			const postCompactionTimestamp = Date.now() + 1_000;
+			sessionManager.appendMessage(createUserMessage("third", postCompactionTimestamp));
+			sessionManager.appendMessage(createAssistantMessage("response3", 25_000, postCompactionTimestamp + 1));
 			syncAgentMessages(session, sessionManager);
 
 			const stats = session.getSessionStats();
@@ -266,10 +285,11 @@ describe("AgentSession.getSessionStats", () => {
 			const keptUserId = sessionManager.appendMessage(createUserMessage("second", 3));
 			sessionManager.appendMessage(createAssistantMessage("response2", 195_000, 4));
 			sessionManager.appendCompaction("summary", keptUserId, 195_000);
-			sessionManager.appendMessage(createUserMessage("third", 5));
-			sessionManager.appendMessage(createAssistantMessage("response3", 25_000, 6));
-			sessionManager.appendMessage(createUserMessage("continue", 7));
-			sessionManager.appendMessage(createAssistantMessage("partial", 0, 8));
+			const postCompactionTimestamp = Date.now() + 1_000;
+			sessionManager.appendMessage(createUserMessage("third", postCompactionTimestamp));
+			sessionManager.appendMessage(createAssistantMessage("response3", 25_000, postCompactionTimestamp + 1));
+			sessionManager.appendMessage(createUserMessage("continue", postCompactionTimestamp + 2));
+			sessionManager.appendMessage(createAssistantMessage("partial", 0, postCompactionTimestamp + 3));
 			syncAgentMessages(session, sessionManager);
 
 			const stats = session.getSessionStats();

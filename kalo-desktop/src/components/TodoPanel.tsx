@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useChatSelector, type TodoItem } from "../lib/chat-store";
+import { useChatSelector } from "../lib/chat-store";
+import type { TodoItem } from "../lib/timeline";
 
 /**
  * Status glyph shared by the panel and the todo_write tool bubble, so one

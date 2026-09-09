@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AssistantEntry, RetryEntry, TimelineEntry } from "./chat-store";
+import type { AssistantEntry, RetryEntry, TimelineEntry } from "./timeline";
 import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
 
 function failedAssistant(id: string): AssistantEntry {

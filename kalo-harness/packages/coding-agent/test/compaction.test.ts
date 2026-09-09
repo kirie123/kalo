@@ -269,6 +269,42 @@ describe("estimateContextTokens", () => {
 		expect(estimate.trailingTokens).toBeGreaterThan(0);
 		expect(estimate.tokens).toBe(150 + estimate.trailingTokens);
 	});
+
+	it("does not reset context when a compatible provider reports incremental usage", () => {
+		const messages: AgentMessage[] = [
+			{ ...createUserMessage("start"), timestamp: 1 },
+			{ ...createAssistantMessage("full", createMockUsage(4_000, 400)), timestamp: 2 },
+			{ ...createUserMessage("continue"), timestamp: 3 },
+			{ ...createAssistantMessage("incremental", createMockUsage(80, 40)), timestamp: 4 },
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).toBe(1);
+		expect(estimate.usageTokens).toBe(4_400);
+		expect(estimate.trailingTokens).toBeGreaterThan(0);
+		expect(estimate.tokens).toBeGreaterThan(4_400);
+	});
+
+	it("resets the usage high-water mark at the latest compaction boundary", () => {
+		const messages: AgentMessage[] = [
+			{
+				role: "compactionSummary",
+				summary: "summary",
+				tokensBefore: 190_000,
+				timestamp: 3,
+			},
+			{ ...createAssistantMessage("retained", createMockUsage(180_000, 1_000)), timestamp: 2 },
+			{ ...createUserMessage("after compaction"), timestamp: 4 },
+			{ ...createAssistantMessage("new segment", createMockUsage(100, 20)), timestamp: 5 },
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).toBe(3);
+		expect(estimate.usageTokens).toBe(120);
+		expect(estimate.tokens).toBe(120);
+	});
 });
 
 describe("shouldCompact", () => {

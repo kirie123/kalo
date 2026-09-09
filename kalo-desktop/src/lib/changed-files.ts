@@ -11,7 +11,7 @@
  */
 
 import { diffStats, extractDiff } from "../components/DiffView";
-import type { ToolCallRecord } from "./chat-store";
+import type { ToolCallRecord } from "./timeline";
 
 export interface ChangedFile {
   /** Display path, relative to the working directory when possible. */

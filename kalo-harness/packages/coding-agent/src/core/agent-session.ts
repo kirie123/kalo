@@ -339,6 +339,15 @@ export class AgentSession {
 	private readonly _compactionCircuitBreakerThreshold = 3;
 	/** Whether compaction circuit breaker has tripped (auto-compaction disabled). */
 	private _compactionCircuitBreakerTripped = false;
+	/**
+	 * Bumped every time a compaction rebuilds `agent.state.messages`.
+	 *
+	 * The agent loop runs on a snapshot taken when the run started, so shrinking
+	 * `agent.state.messages` mid-run is invisible to it. `prepareNextTurn` is the
+	 * only seam that can swap the loop's context, and it compares this counter to
+	 * decide whether the rebuilt history must replace the snapshot.
+	 */
+	private _contextRebuildGeneration = 0;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -552,12 +561,18 @@ export class AgentSession {
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
 			// Check compaction threshold before each LLM call
+			const generationBefore = this._contextRebuildGeneration;
 			if (turn.message.role === "assistant") {
 				const assistantMsg = turn.message as AssistantMessage;
 				// Check with skipAbortedCheck=false to catch aborted responses
 				// Compaction will run synchronously and reload agent state before LLM call
 				await this._checkCompaction(assistantMsg, false);
 			}
+			// A compaction just rebuilt the history: hand the loop the rebuilt list.
+			// Without this the loop keeps sending its pre-compaction snapshot, so the
+			// request never shrinks and the threshold check fires again on the next
+			// turn, compacting in a loop while each summary grows the context.
+			const compacted = this._contextRebuildGeneration !== generationBefore;
 
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.(turn, signal);
 			const previousContext = previousSnapshot?.context ?? turn.context;
@@ -566,6 +581,7 @@ export class AgentSession {
 				...previousSnapshot,
 				context: {
 					...previousContext,
+					...(compacted ? { messages: this.agent.state.messages.slice() } : {}),
 					systemPrompt: this._systemPromptOverride ?? this._baseSystemPrompt,
 					tools: this.agent.state.tools.slice(),
 				},
@@ -1569,6 +1585,8 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		this.abortCompaction();
+		this.abortBranchSummary();
 		this.agent.abort();
 		await this.waitForIdle();
 	}
@@ -1900,6 +1918,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._contextRebuildGeneration++;
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Evaluate compaction effectiveness via relative savings ratio.
@@ -2059,31 +2078,16 @@ export class AgentSession {
 			return await this._runAutoCompaction("overflow", willRetry);
 		}
 
-		// Case 2: Threshold - context is getting large
-		// For error messages or all-zero usage messages, estimate from the last valid response.
-		// This ensures sessions that hit persistent API errors (e.g. 529) or malformed zero-usage
-		// responses can still compact and do not reset context accounting.
-		let contextTokens: number;
+		// Case 2: Threshold - context is getting large. Always use the message-list
+		// estimate so compatible providers that intermittently report incremental
+		// usage cannot reset context accounting. The estimator scopes its usage
+		// high-water mark to the current compaction segment.
+		const messages = this.agent.state.messages;
+		const estimate = estimateContextTokens(messages);
 		const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
-		if (assistantMessage.stopReason === "error" || directContextTokens === 0) {
-			const messages = this.agent.state.messages;
-			const estimate = estimateContextTokens(messages);
-			if (estimate.lastUsageIndex === null) return false; // No usage data at all
-			// Verify the usage source is post-compaction. Kept pre-compaction messages
-			// have stale usage reflecting the old (larger) context and would falsely
-			// trigger compaction right after one just finished.
-			const usageMsg = messages[estimate.lastUsageIndex];
-			if (
-				compactionEntry &&
-				usageMsg.role === "assistant" &&
-				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
-			) {
-				return false;
-			}
-			contextTokens = estimate.tokens;
-		} else {
-			contextTokens = directContextTokens;
-		}
+		const contextTokens =
+			estimate.lastUsageIndex === null ? Math.max(estimate.tokens, directContextTokens) : estimate.tokens;
+		if (contextTokens === 0) return false;
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			return await this._runAutoCompaction("threshold", false);
 		}
@@ -2204,6 +2208,7 @@ export class AgentSession {
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
+			this._contextRebuildGeneration++;
 			const estimatedTokensAfter = estimateMessagesTokens(sessionContext.messages);
 
 			// Evaluate compaction effectiveness via relative savings ratio (not absolute threshold).

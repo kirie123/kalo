@@ -7,8 +7,9 @@
 //! `pi-exit:{session_id}` with payload `{"code": Option<i32>}`.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -145,7 +146,10 @@ fn resolve_pi_path() -> Result<PathBuf, String> {
         if p.is_file() {
             return Ok(p);
         }
-        return Err(format!("KALO_PI_PATH does not point to a file: {}", p.display()));
+        return Err(format!(
+            "KALO_PI_PATH does not point to a file: {}",
+            p.display()
+        ));
     }
 
     if let Ok(exe) = std::env::current_exe() {
@@ -168,6 +172,16 @@ fn resolve_pi_path() -> Result<PathBuf, String> {
         "pi binary not found; set KALO_PI_PATH or place {} under a binaries/ directory",
         SIDECAR
     ))
+}
+
+fn engine_args(cwd: &Path) -> Vec<OsString> {
+    let mut args = vec![OsString::from("--mode"), OsString::from("rpc")];
+    let project_skills = cwd.join(".agents").join("skills");
+    if project_skills.is_dir() {
+        args.push(OsString::from("--skill"));
+        args.push(project_skills.into_os_string());
+    }
+    args
 }
 
 /// One running `pi --mode rpc` subprocess.
@@ -205,7 +219,7 @@ impl PiProcess {
         let pi_path = resolve_pi_path()?;
 
         let mut cmd = Command::new(&pi_path);
-        cmd.args(["--mode", "rpc"])
+        cmd.args(engine_args(Path::new(cwd)))
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -237,9 +251,7 @@ impl PiProcess {
             for line in stdin_rx {
                 let mut bytes = line.into_bytes();
                 bytes.push(b'\n');
-                let result = stdin
-                    .write_all(&bytes)
-                    .and_then(|_| stdin.flush());
+                let result = stdin.write_all(&bytes).and_then(|_| stdin.flush());
                 if let Err(e) = result {
                     eprintln!("[kalo] pi stdin write failed, stopping writer: {e}");
                     break;
@@ -385,7 +397,83 @@ fn forward_to_gateway(app: &AppHandle, session_id: &str, cwd: &str, line: &str) 
 
 #[cfg(test)]
 mod tests {
-    use super::NdjsonFramer;
+    use super::{engine_args, NdjsonFramer};
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            let sequence = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "kalo-session-test-{label}-{}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create test directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn engine_args_include_project_agents_skills_directory() {
+        let cwd = TempDir::new("project-skills");
+        let skills = cwd.path().join(".agents").join("skills");
+        fs::create_dir_all(&skills).expect("create project skills directory");
+
+        assert_eq!(
+            engine_args(cwd.path()),
+            vec![
+                OsString::from("--mode"),
+                OsString::from("rpc"),
+                OsString::from("--skill"),
+                skills.into_os_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn engine_args_skip_missing_or_non_directory_project_skills() {
+        let cwd = TempDir::new("no-project-skills");
+        assert_eq!(
+            engine_args(cwd.path()),
+            vec![OsString::from("--mode"), OsString::from("rpc")]
+        );
+
+        let skills = cwd.path().join(".agents").join("skills");
+        fs::create_dir_all(skills.parent().expect("skills parent")).expect("create .agents");
+        fs::write(&skills, "not a directory").expect("create skills file");
+        assert_eq!(
+            engine_args(cwd.path()),
+            vec![OsString::from("--mode"), OsString::from("rpc")]
+        );
+    }
+
+    #[test]
+    fn engine_args_keep_spaced_project_skills_path_as_one_argument() {
+        let cwd = TempDir::new("project with spaces");
+        let skills = cwd.path().join(".agents").join("skills");
+        fs::create_dir_all(&skills).expect("create project skills directory");
+
+        let args = engine_args(cwd.path());
+        assert_eq!(args.len(), 4);
+        assert_eq!(args[2], OsString::from("--skill"));
+        assert_eq!(args[3], skills.into_os_string());
+    }
 
     #[test]
     fn multiple_lines_in_one_chunk() {
@@ -420,7 +508,10 @@ mod tests {
     #[test]
     fn crlf_line_endings_are_tolerated() {
         let mut f = NdjsonFramer::new();
-        assert_eq!(f.push(b"{\"a\":1}\r\n{\"b\":2}\r\n"), vec!["{\"a\":1}", "{\"b\":2}"]);
+        assert_eq!(
+            f.push(b"{\"a\":1}\r\n{\"b\":2}\r\n"),
+            vec!["{\"a\":1}", "{\"b\":2}"]
+        );
     }
 
     #[test]

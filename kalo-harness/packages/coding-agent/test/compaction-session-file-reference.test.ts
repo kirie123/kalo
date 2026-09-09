@@ -5,7 +5,7 @@ import type { SessionEntry } from "../src/core/session-manager.ts";
 
 /**
  * Test suite: Session file path appended to compaction summary
- * 
+ *
  * 验证 compact() 函数在提供 sessionFile 参数时会在摘要末尾追加：
  * 1. <session-file> XML 标签包裹的路径
  * 2. 工具使用提示（告知 LLM 可用 read 工具读取原始会话）
@@ -17,12 +17,12 @@ describe("compact() session file reference", () => {
 		name: "Test Model",
 		api: "anthropic-messages",
 		provider: "anthropic",
+		baseUrl: "https://test.invalid",
 		contextWindow: 200000,
 		maxTokens: 8192,
 		reasoning: false,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		compat: { tools: true, thinking: false },
 	};
 
 	// Helper: create minimal session entries for compaction
@@ -47,9 +47,17 @@ describe("compact() session file reference", () => {
 				timestamp: new Date(now - 1000).toISOString(),
 				message: {
 					role: "assistant",
+					api: "anthropic-messages",
 					content: [{ type: "text", text: "Hi there" }],
 					timestamp: now - 1000,
-					usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
+					usage: {
+						input: 100,
+						output: 50,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 150,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
 					model: "test-model",
 					provider: "anthropic",
 					stopReason: "stop",
@@ -83,10 +91,19 @@ describe("compact() session file reference", () => {
 		// Mock LLM call: return fixed summary
 		const mockSummarization = async () => ({
 			role: "assistant" as const,
-			content: [{ type: "text" as const, text: "## Goal\nTest conversation\n\n## Progress\n### Done\n- [x] Said hello" }],
+			content: [
+				{ type: "text" as const, text: "## Goal\nTest conversation\n\n## Progress\n### Done\n- [x] Said hello" },
+			],
 			stopReason: "stop" as const,
 			timestamp: Date.now(),
-			usage: { input: 50, output: 30, cacheRead: 0, cacheWrite: 0 },
+			usage: {
+				input: 50,
+				output: 30,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 80,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
 		});
 
 		const result = await compact(
@@ -134,7 +151,14 @@ describe("compact() session file reference", () => {
 			content: [{ type: "text" as const, text: "## Goal\nTest conversation" }],
 			stopReason: "stop" as const,
 			timestamp: Date.now(),
-			usage: { input: 50, output: 30, cacheRead: 0, cacheWrite: 0 },
+			usage: {
+				input: 50,
+				output: 30,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 80,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
 		});
 
 		const result = await compact(
@@ -179,6 +203,7 @@ describe("compact() session file reference", () => {
 				timestamp: new Date(now - 1000).toISOString(),
 				message: {
 					role: "assistant",
+					api: "anthropic-messages",
 					content: [
 						{
 							type: "toolCall",
@@ -188,7 +213,14 @@ describe("compact() session file reference", () => {
 						},
 					],
 					timestamp: now - 1000,
-					usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
+					usage: {
+						input: 100,
+						output: 50,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 150,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
 					model: "test-model",
 					provider: "anthropic",
 					stopReason: "stop",
@@ -204,6 +236,8 @@ describe("compact() session file reference", () => {
 					content: [{ type: "text", text: "export function foo() {}" }],
 					timestamp: now,
 					toolCallId: "call-1",
+					toolName: "read",
+					isError: false,
 				},
 			},
 		];
@@ -222,7 +256,14 @@ describe("compact() session file reference", () => {
 			content: [{ type: "text" as const, text: "## Goal\nRead file" }],
 			stopReason: "stop" as const,
 			timestamp: Date.now(),
-			usage: { input: 50, output: 30, cacheRead: 0, cacheWrite: 0 },
+			usage: {
+				input: 50,
+				output: 30,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 80,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
 		});
 
 		const result = await compact(

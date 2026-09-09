@@ -83,87 +83,16 @@ import {
 } from "./pi-bridge";
 import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
 import { dispatchExtensionUiRequest } from "./extension-ui-dispatch";
-
-// ============================================================================
-// Timeline model
-// ============================================================================
-
-export interface ToolCallRecord {
-  toolCallId: string;
-  toolName: string;
-  args: any;
-  status: "running" | "success" | "error";
-  result?: any;
-  partialResult?: any;
-}
-
-export interface UserEntry {
-  id: string;
-  kind: "user";
-  message: UserMessage;
-}
-
-/** Aggregated token usage of one agent run (summed across all its LLM calls/turns). */
-export interface TurnUsage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export interface AssistantEntry {
-  id: string;
-  kind: "assistant";
-  message: AssistantMessage;
-  streaming: boolean;
-  /** Set at agent_settled: aggregated usage of the whole run, shown once as a footer. */
-  usage?: TurnUsage;
-  /**
-   * The message's error is covered by a retry notice (auto-retry started or
-   * finally failed): the retry line carries the error, so no separate banner.
-   */
-  retriedError?: boolean;
-}
-
-export interface ToolGroupEntry {
-  id: string;
-  kind: "toolGroup";
-  toolName: string;
-  calls: ToolCallRecord[];
-}
-
-export interface RetryEntry {
-  id: string;
-  kind: "retry";
-  attempt: number;
-  maxAttempts: number;
-  delayMs: number;
-  errorMessage: string;
-  done?: { success: boolean; finalError?: string };
-}
-
-export interface NoticeEntry {
-  id: string;
-  kind: "notice";
-  text: string;
-}
-
-/**
- * End-of-run summary of the files the agent wrote or edited. Pushed once at
- * `agent_settled`, and only when at least one file changed.
- */
-export interface ChangesEntry extends ChangeSummary {
-  id: string;
-  kind: "changes";
-}
-
-export type TimelineEntry = UserEntry | AssistantEntry | ToolGroupEntry | RetryEntry | NoticeEntry | ChangesEntry;
-
-/** One task of the agent's plan, written whole-list by the `todo_write` tool. */
-export interface TodoItem {
-  content: string;
-  status: "pending" | "in_progress" | "completed";
-}
+import { pushCompactingNotice, settleCompaction } from "./compaction-entries";
+import type {
+  AssistantEntry,
+  TimelineEntry,
+  ToolCallRecord,
+  ToolGroupEntry,
+  TodoItem,
+  TurnUsage,
+  UserEntry,
+} from "./timeline";
 
 // ============================================================================
 // Other state slices
@@ -1187,8 +1116,17 @@ export class ChatStore {
   }
 
   async abort() {
-    const sid = this.rt.view.sessionId;
+    const rt = this.rt;
+    const sid = rt.view.sessionId;
     if (!sid) return;
+    // Stopping the run makes the engine withdraw every pending extension-UI
+    // request (an open ask rejects ASK_ABORTED, dialogs settle to defaults),
+    // so drop the local card / queued prompts at the same time — otherwise a
+    // stopped run leaves the ask panel blocking the input with nobody on the
+    // other end to answer it (doc/2026-09-07-ask-user §6 pending 提问的生命周期).
+    if (rt.view.pendingAsk !== undefined || rt.view.extensionQueue.length > 0) {
+      this.setRt(rt, { pendingAsk: undefined, extensionQueue: [] });
+    }
     try {
       await sendCommand(sid, { type: "abort" });
     } catch (err) {
@@ -1559,25 +1497,14 @@ export class ChatStore {
       case "compaction_start":
         rt.compactionNoticeId = nextEntryId();
         this.setRt(rt, { isCompacting: true });
-        this.mutateTimeline(
-          (t) => t.push({ id: rt.compactionNoticeId!, kind: "notice", text: "正在压缩上下文…" }),
-          rt,
-        );
+        this.mutateTimeline((t) => pushCompactingNotice(t, rt.compactionNoticeId!), rt);
         break;
       case "compaction_end": {
-        const text = ev.aborted
-          ? "上下文压缩已取消"
-          : ev.errorMessage
-            ? `上下文压缩失败：${ev.errorMessage}`
-            : "上下文已压缩";
         this.setRt(rt, { isCompacting: false });
         void this.refreshContextUsage(rt);
         const noticeId = rt.compactionNoticeId;
-        this.mutateTimeline((t) => {
-          const idx = t.findIndex((e) => e.id === noticeId);
-          if (idx >= 0) t[idx] = { ...t[idx], text } as NoticeEntry;
-          else t.push({ id: nextEntryId(), kind: "notice", text });
-        }, rt);
+        rt.compactionNoticeId = null;
+        this.mutateTimeline((t) => settleCompaction(t, noticeId, ev, nextEntryId), rt);
         break;
       }
 
@@ -1893,6 +1820,16 @@ function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
           addCall(rec);
         }
       }
+    } else if (m.role === "compactionSummary") {
+      // A compaction node from the session file: keep the persistent bubble
+      // with the summary the engine wrote (file can't tell auto vs manual).
+      t.push({
+        id: nextEntryId(),
+        kind: "compaction",
+        summary: m.summary,
+        auto: false,
+        tokensBefore: m.tokensBefore,
+      });
     } else if (m.role === "toolResult") {
       const result = { content: m.content, details: m.details, isError: m.isError };
       const rec = pendingCalls.get(m.toolCallId);

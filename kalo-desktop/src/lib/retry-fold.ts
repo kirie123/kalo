@@ -1,5 +1,5 @@
 import type { AssistantMessage } from "../types";
-import type { TimelineEntry } from "./chat-store";
+import type { TimelineEntry } from "./timeline";
 
 export interface RetryStartEvent {
   attempt: number;

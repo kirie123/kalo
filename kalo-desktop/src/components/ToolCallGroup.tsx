@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { TodoItem, ToolCallRecord } from "../lib/chat-store";
+import type { TodoItem, ToolCallRecord } from "../lib/timeline";
 import { CodeRenderer } from "./AssistantMessage";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 import { TodoStatusIcon } from "./TodoPanel";

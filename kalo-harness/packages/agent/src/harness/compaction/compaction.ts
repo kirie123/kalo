@@ -204,42 +204,49 @@ export interface ContextUsageEstimate {
 	lastUsageIndex: number | null;
 }
 
-function getLastAssistantUsageInfo(messages: AgentMessage[]): { usage: Usage; index: number } | undefined {
+function getLatestCompactionTimestamp(messages: AgentMessage[]): number | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
-		const usage = getAssistantUsage(messages[i]);
-		if (usage) return { usage, index: i };
+		const message = messages[i];
+		if (message.role === "compactionSummary") return message.timestamp;
 	}
 	return undefined;
 }
 
-/** Estimate context tokens for messages using provider usage when available. */
+/**
+ * Estimate context tokens using the strongest provider-usage anchor in the
+ * current compaction segment. Compatible providers may intermittently report
+ * incremental rather than full-context usage.
+ */
 export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
-	const usageInfo = getLastAssistantUsageInfo(messages);
+	const latestCompactionTimestamp = getLatestCompactionTimestamp(messages);
+	const trailingByIndex = new Array<number>(messages.length + 1).fill(0);
+	for (let i = messages.length - 1; i >= 0; i--) {
+		trailingByIndex[i] = trailingByIndex[i + 1] + estimateTokens(messages[i]);
+	}
 
-	if (!usageInfo) {
-		let estimated = 0;
-		for (const message of messages) {
-			estimated += estimateTokens(message);
+	let best: { tokens: number; usageTokens: number; trailingTokens: number; lastUsageIndex: number } | undefined;
+	for (let i = 0; i < messages.length; i++) {
+		const message = messages[i];
+		if (latestCompactionTimestamp !== undefined && message.timestamp <= latestCompactionTimestamp) continue;
+		const usage = getAssistantUsage(message);
+		if (!usage) continue;
+
+		const usageTokens = calculateContextTokens(usage);
+		const trailingTokens = trailingByIndex[i + 1];
+		const tokens = usageTokens + trailingTokens;
+		if (!best || tokens >= best.tokens) {
+			best = { tokens, usageTokens, trailingTokens, lastUsageIndex: i };
 		}
-		return {
-			tokens: estimated,
-			usageTokens: 0,
-			trailingTokens: estimated,
-			lastUsageIndex: null,
-		};
 	}
 
-	const usageTokens = calculateContextTokens(usageInfo.usage);
-	let trailingTokens = 0;
-	for (let i = usageInfo.index + 1; i < messages.length; i++) {
-		trailingTokens += estimateTokens(messages[i]);
-	}
+	if (best) return best;
 
+	const estimated = trailingByIndex[0];
 	return {
-		tokens: usageTokens + trailingTokens,
-		usageTokens,
-		trailingTokens,
-		lastUsageIndex: usageInfo.index,
+		tokens: estimated,
+		usageTokens: 0,
+		trailingTokens: estimated,
+		lastUsageIndex: null,
 	};
 }
 

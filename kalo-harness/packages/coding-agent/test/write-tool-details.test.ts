@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { createWriteToolDefinition, type WriteToolDetails } from "../src/core/tools/write.ts";
 
 const dirs: string[] = [];
@@ -18,7 +19,7 @@ afterEach(async () => {
 
 async function run(dir: string, path: string, content: string): Promise<WriteToolDetails | undefined> {
 	const tool = createWriteToolDefinition(dir);
-	const result = await tool.execute("call-1", { path, content });
+	const result = await tool.execute("call-1", { path, content }, undefined, undefined, {} as ExtensionContext);
 	return result.details;
 }
 
@@ -52,7 +53,13 @@ describe("write tool details", () => {
 				},
 			},
 		});
-		const result = await tool.execute("call-1", { path: "x.txt", content: "new\n" });
+		const result = await tool.execute(
+			"call-1",
+			{ path: "x.txt", content: "new\n" },
+			undefined,
+			undefined,
+			{} as ExtensionContext,
+		);
 		// Unknown stats, not a failed write: the text result is unchanged.
 		expect(result.details).toEqual({ created: false });
 		expect(result.content[0]).toMatchObject({ type: "text" });
@@ -63,7 +70,13 @@ describe("write tool details", () => {
 		const tool = createWriteToolDefinition(dir, {
 			operations: { writeFile: async () => {}, mkdir: async () => {} },
 		});
-		const result = await tool.execute("call-1", { path: "remote.txt", content: "a\n" });
+		const result = await tool.execute(
+			"call-1",
+			{ path: "remote.txt", content: "a\n" },
+			undefined,
+			undefined,
+			{} as ExtensionContext,
+		);
 		expect(result.details).toEqual({ created: false });
 	});
 });

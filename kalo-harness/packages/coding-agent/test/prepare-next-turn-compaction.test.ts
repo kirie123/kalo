@@ -20,13 +20,18 @@ describe("prepareNextTurn compaction check", () => {
 		const mockAssistantMessage: AssistantMessage = {
 			role: "assistant",
 			content: [{ type: "text", text: "response" }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
 			stopReason: "stop",
 			timestamp: Date.now(),
 			usage: {
-				inputTokens: 150000,
-				outputTokens: 1000,
-				cacheReadTokens: 0,
-				cacheWriteTokens: 0,
+				input: 150000,
+				output: 1000,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 151000,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
 		};
 
@@ -58,20 +63,25 @@ describe("prepareNextTurn compaction check", () => {
 		const abortedMessage: AssistantMessage = {
 			role: "assistant",
 			content: [{ type: "text", text: "partial" }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
 			stopReason: "aborted",
 			timestamp: Date.now(),
 			usage: {
-				inputTokens: 180000,
-				outputTokens: 500,
-				cacheReadTokens: 0,
-				cacheWriteTokens: 0,
+				input: 180000,
+				output: 500,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 180500,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
 		};
 
 		// prepareNextTurn 里会调用 _checkCompaction(abortedMessage, false)
 		// skipAbortedCheck=false 表示即使 stopReason=aborted 也要检查
 		expect(abortedMessage.stopReason).toBe("aborted");
-		expect(abortedMessage.usage!.inputTokens).toBeGreaterThan(150000);
+		expect(abortedMessage.usage!.input).toBeGreaterThan(150000);
 
 		// 预期：即使 aborted，只要 contextTokens > threshold 就会触发压缩
 	});

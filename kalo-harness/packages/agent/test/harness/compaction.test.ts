@@ -333,6 +333,33 @@ describe("harness compaction", () => {
 		expect(estimate.tokens).toBe(20 + estimate.trailingTokens);
 	});
 
+	it("keeps the strongest usage anchor when a provider reports incremental usage", () => {
+		const estimate = estimateContextTokens([
+			{ ...createUserMessage("start"), timestamp: 1 },
+			{ ...createAssistantMessage("full", createMockUsage(4_000, 400)), timestamp: 2 },
+			{ ...createUserMessage("continue"), timestamp: 3 },
+			{ ...createAssistantMessage("incremental", createMockUsage(80, 40)), timestamp: 4 },
+		]);
+
+		expect(estimate.lastUsageIndex).toBe(1);
+		expect(estimate.usageTokens).toBe(4_400);
+		expect(estimate.trailingTokens).toBeGreaterThan(0);
+		expect(estimate.tokens).toBeGreaterThan(4_400);
+	});
+
+	it("resets the usage high-water mark at a compaction summary", () => {
+		const estimate = estimateContextTokens([
+			{ role: "compactionSummary", summary: "summary", tokensBefore: 190_000, timestamp: 3 },
+			{ ...createAssistantMessage("retained", createMockUsage(180_000, 1_000)), timestamp: 2 },
+			{ ...createUserMessage("after compaction"), timestamp: 4 },
+			{ ...createAssistantMessage("new segment", createMockUsage(100, 20)), timestamp: 5 },
+		]);
+
+		expect(estimate.lastUsageIndex).toBe(3);
+		expect(estimate.usageTokens).toBe(120);
+		expect(estimate.tokens).toBe(120);
+	});
+
 	it("builds session context with a compaction entry", () => {
 		const u1 = createMessageEntry(createUserMessage("1"));
 		const a1 = createMessageEntry(createAssistantMessage("a"), u1.id);

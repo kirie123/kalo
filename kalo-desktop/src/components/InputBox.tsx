@@ -48,11 +48,13 @@ export default function InputBox() {
     commands: s.commands,
     attachments: s.attachments,
     isStreaming: s.isStreaming,
+    isCompacting: s.isCompacting,
     connecting: s.connecting,
     steeringMode: s.steeringMode,
     hasPendingAsk: s.pendingAsk !== undefined,
   }));
   const [text, setText] = useState("");
+  const [isAborting, setIsAborting] = useState(false);
   const [previewImage, setPreviewImage] = useState<LightboxImage | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Autocomplete state: active token, highlighted row, @ search results.
@@ -387,14 +389,23 @@ export default function InputBox() {
             </span>
           )}
 
-          {chat.isStreaming ? (
+          {chat.isStreaming || chat.isCompacting ? (
             <button
-              onClick={() => void chatStore.abort()}
-              title="停止生成"
-              className="rounded-full bg-accent p-2 text-[var(--accent-contrast)] hover:opacity-90"
+              onClick={() => {
+                if (isAborting) return;
+                setIsAborting(true);
+                void chatStore.abort().finally(() => setIsAborting(false));
+              }}
+              disabled={isAborting}
+              title={isAborting ? "正在停止" : chat.isCompacting ? "停止压缩" : "停止生成"}
+              className="rounded-full bg-accent p-2 text-[var(--accent-contrast)] hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <rect x="3" y="3" width="10" height="10" rx="1.5" />
+                {isAborting ? (
+                  <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                ) : (
+                  <rect x="3" y="3" width="10" height="10" rx="1.5" />
+                )}
               </svg>
             </button>
           ) : (

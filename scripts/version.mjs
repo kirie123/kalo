@@ -60,7 +60,7 @@ function cargoToml() {
 
 /** The `[[package]] name = "<crate>"` entry in Cargo.lock. */
 function cargoLock(crate) {
-  const re = new RegExp(`(\\[\\[package\\]\\]\\nname = "${crate}"\\nversion = ")([^"]+)(")`);
+  const re = new RegExp(`(\\[\\[package\\]\\]\\r?\\nname = "${crate}"\\r?\\nversion = ")([^"]+)(")`);
   return {
     read: (text) => text.match(re)?.[2],
     write: (text, next) => text.replace(re, (_m, a, _old, c) => `${a}${next}${c}`),

@@ -1,8 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { chatStore, useChatSelector, type TimelineEntry } from "../lib/chat-store";
+import { chatStore, useChatSelector } from "../lib/chat-store";
+import type { TimelineEntry } from "../lib/timeline";
 import { useChatZoom } from "../lib/chat-zoom";
 import AssistantMessage, { assistantText } from "./AssistantMessage";
 import ChangedFilesCard from "./ChangedFilesCard";
+import CompactionBubble from "./CompactionBubble";
 import RetryNotice from "./RetryNotice";
 import ToolCallGroup from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
@@ -159,6 +161,8 @@ const TimelineItem = memo(function TimelineItem({ entry, copyText }: { entry: Ti
       );
     case "notice":
       return <div className="text-center text-xs text-dim">{entry.text}</div>;
+    case "compaction":
+      return <CompactionBubble entry={entry} />;
     case "changes":
       return (
         <ChangedFilesCard files={entry.files} totalAdded={entry.totalAdded} totalRemoved={entry.totalRemoved} />
