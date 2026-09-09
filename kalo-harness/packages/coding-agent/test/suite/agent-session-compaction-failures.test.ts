@@ -220,15 +220,15 @@ describe("AgentSession compaction failure semantics", () => {
 		expect(getCallCount()).toBe(9);
 	});
 
-	it("does not retry upstream-unavailable wording that misses the retryable patterns", async () => {
+	it("retries upstream-unavailable wording through the summarization retry policy", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
 		harness.settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 0 } });
 
 		// The exact production wording: "Upstream service temporarily unavailable"
-		// matches neither the retryable nor the non-retryable pattern list, so it
-		// is treated as deterministic and fails without a single retry.
+		// is a transient gateway failure and must honor the retry policy instead of
+		// burning a circuit-breaker count on the first attempt.
 		const error: AssistantMessage = {
 			...fauxAssistantMessage("", {
 				stopReason: "error",
@@ -241,8 +241,8 @@ describe("AgentSession compaction failure semantics", () => {
 
 		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
 
-		expect(getCallCount()).toBe(1);
-		expect(harness.eventsOfType("summarization_retry_scheduled")).toHaveLength(0);
+		expect(getCallCount()).toBe(4); // 1 initial + 3 retries
+		expect(harness.eventsOfType("summarization_retry_scheduled")).toHaveLength(3);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
 			"Auto-compaction failed: Summarization failed: Upstream service temporarily unavailable",
 		);

@@ -10,6 +10,7 @@ import {
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
+	estimateTokens,
 	findCutPoint,
 	getLastAssistantUsage,
 	prepareCompaction,
@@ -599,6 +600,103 @@ describe("Large session fixture", () => {
 
 		expect(loaded.messages.length).toBeGreaterThan(100);
 		expect(loaded.model).not.toBeNull();
+	});
+});
+
+// ============================================================================
+// CJK-aware token estimation
+// ============================================================================
+
+describe("CJK-aware token estimation", () => {
+	it("prices CJK text at ~1 token per character while ASCII stays at chars/4", () => {
+		expect(estimateTokens(createUserMessage("a".repeat(400)))).toBe(100);
+		expect(estimateTokens(createUserMessage("汉".repeat(400)))).toBe(400);
+		// Mixed content: 200 ASCII chars (50 tokens) + 100 CJK chars (100 tokens).
+		expect(estimateTokens(createUserMessage(`${"a".repeat(200)}${"汉".repeat(100)}`))).toBe(150);
+		// CJK punctuation and fullwidth forms are CJK-priced too.
+		expect(estimateTokens(createUserMessage("。".repeat(40)))).toBe(40);
+	});
+
+	it("keeps roughly keepRecentTokens of real content for CJK sessions at the cut point", () => {
+		// Each message holds 2000 CJK chars, i.e. ~2000 real tokens.
+		const filler = "汉".repeat(2000);
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 8; i++) {
+			entries.push(createMessageEntry(createUserMessage(`${filler} ${i}`)));
+			entries.push(createMessageEntry(createAssistantMessage(`${filler} reply ${i}`)));
+		}
+
+		const result = findCutPoint(entries, 0, entries.length, 4000);
+
+		const keptTokens = entries
+			.slice(result.firstKeptEntryIndex)
+			.reduce(
+				(sum, entry) =>
+					sum +
+					(entry.type === "message" ? estimateTokens((entry as SessionMessageEntry).message as AgentMessage) : 0),
+				0,
+			);
+		// Budget 4000 is met with about two messages, not the whole history.
+		expect(keptTokens).toBeGreaterThanOrEqual(4000);
+		expect(keptTokens).toBeLessThanOrEqual(6500);
+		expect(result.firstKeptEntryIndex).toBeGreaterThanOrEqual(entries.length - 3);
+	});
+
+	it("drops the estimated context sharply after compaction in a CJK session", () => {
+		const filler = "汉".repeat(2000);
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 10; i++) {
+			entries.push(createMessageEntry(createUserMessage(`${filler} ${i}`)));
+			entries.push(createMessageEntry(createAssistantMessage(`${filler} reply ${i}`)));
+		}
+
+		const tokensBefore = estimateContextTokens(buildSessionContext(entries).messages).tokens;
+		expect(tokensBefore).toBeGreaterThan(30000);
+
+		const preparation = prepareCompaction(entries, { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 4000 });
+		expect(preparation).toBeDefined();
+		const compactionEntry: CompactionEntry = {
+			type: "compaction",
+			id: `test-id-${entryCounter++}`,
+			parentId: lastId,
+			timestamp: new Date().toISOString(),
+			summary: "历史对话摘要",
+			firstKeptEntryId: preparation!.firstKeptEntryId,
+			tokensBefore: preparation!.tokensBefore,
+		};
+
+		const reloaded = buildSessionContext([...entries, compactionEntry]);
+		const tokensAfter = estimateContextTokens(reloaded.messages).tokens;
+
+		expect(reloaded.messages[0]?.role).toBe("compactionSummary");
+		// ~32K of CJK context shrinks to the ~4K kept tail plus a short summary.
+		expect(tokensAfter).toBeLessThan(tokensBefore * 0.3);
+	});
+
+	it("preserves the compaction boundary timestamp through rebuild, so pre-compaction usage stops anchoring", () => {
+		const staleTimestamp = Date.now() - 60_000;
+		const staleAssistant: AssistantMessage = {
+			...createAssistantMessage("kept response", createMockUsage(180_000, 10_000)),
+			timestamp: staleTimestamp,
+		};
+		const entries: SessionEntry[] = [
+			createMessageEntry({ ...createUserMessage("before compaction"), timestamp: staleTimestamp - 1000 }),
+			createMessageEntry(staleAssistant),
+		];
+		const compactionEntry = createCompactionEntry("summary", entries[0]!.id);
+
+		const reloaded = buildSessionContext([...entries, compactionEntry]);
+
+		// The rebuilt compactionSummary message carries a numeric timestamp...
+		const summaryMessage = reloaded.messages[0];
+		expect(summaryMessage?.role).toBe("compactionSummary");
+		expect(typeof summaryMessage?.timestamp).toBe("number");
+
+		// ...so the kept pre-compaction usage (190K) is excluded from anchor
+		// selection and the estimate falls back to local message pricing.
+		const estimate = estimateContextTokens(reloaded.messages);
+		expect(estimate.lastUsageIndex).toBeNull();
+		expect(estimate.tokens).toBeLessThan(1000);
 	});
 });
 

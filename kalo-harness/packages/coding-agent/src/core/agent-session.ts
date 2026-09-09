@@ -340,6 +340,13 @@ export class AgentSession {
 	/** Whether compaction circuit breaker has tripped (auto-compaction disabled). */
 	private _compactionCircuitBreakerTripped = false;
 	/**
+	 * Backoff anchor for failed auto-compactions: the agent message-list length at
+	 * the last counted failure. While failures are outstanding, automatic checks
+	 * skip compaction until the list grows past the anchor (i.e. at least one new
+	 * message landed), so a failed compaction is not retried on every turn.
+	 */
+	private _autoCompactionBackoffAnchor: number | undefined = undefined;
+	/**
 	 * Bumped every time a compaction rebuilds `agent.state.messages`.
 	 *
 	 * The agent loop runs on a snapshot taken when the run started, so shrinking
@@ -1929,6 +1936,7 @@ export class AgentSession {
 				// Manual compaction was effective: reset circuit breaker to allow auto-compaction to resume
 				this._compactionConsecutiveFailures = 0;
 				this._compactionCircuitBreakerTripped = false;
+				this._autoCompactionBackoffAnchor = undefined;
 			}
 
 			// Get the saved compaction entry for the extension event
@@ -2019,6 +2027,17 @@ export class AgentSession {
 	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (!settings.enabled) return false;
+
+		// Backoff after counted auto-compaction failures: do not retry until the
+		// context has actually changed (at least one new message since the failure).
+		// Skipped silently - the last failure already surfaced an error event.
+		if (
+			this._compactionConsecutiveFailures > 0 &&
+			this._autoCompactionBackoffAnchor !== undefined &&
+			this.agent.state.messages.length <= this._autoCompactionBackoffAnchor
+		) {
+			return false;
+		}
 
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
@@ -2220,9 +2239,11 @@ export class AgentSession {
 				// Effective compaction: reset circuit breaker
 				this._compactionConsecutiveFailures = 0;
 				this._compactionCircuitBreakerTripped = false;
+				this._autoCompactionBackoffAnchor = undefined;
 			} else {
 				// Compaction ran but was structurally ineffective (e.g. context dominated by system prompt/tools)
 				this._compactionConsecutiveFailures++;
+				this._autoCompactionBackoffAnchor = this.agent.state.messages.length;
 				if (this._compactionConsecutiveFailures >= this._compactionCircuitBreakerThreshold) {
 					this._compactionCircuitBreakerTripped = true;
 				}
@@ -2283,6 +2304,7 @@ export class AgentSession {
 			if (started) {
 				// True failure (exception): increment failure counter and check circuit breaker
 				this._compactionConsecutiveFailures++;
+				this._autoCompactionBackoffAnchor = this.agent.state.messages.length;
 				if (this._compactionConsecutiveFailures >= this._compactionCircuitBreakerThreshold) {
 					this._compactionCircuitBreakerTripped = true;
 				}

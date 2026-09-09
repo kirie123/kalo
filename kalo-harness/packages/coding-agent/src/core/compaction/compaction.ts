@@ -250,15 +250,38 @@ export function shouldCompact(contextTokens: number, contextWindow: number, sett
 
 const ESTIMATED_IMAGE_CHARS = 4800;
 
+// CJK scripts tokenize at roughly 1 token per character, so the chars/4
+// heuristic undercounts them 3-4x. Weight one CJK code point as 4 characters
+// so the shared divide-by-4 prices them at ~1 token each. Iterating the string
+// yields code points, so astral-plane ideographs are handled too.
+function isCjkCodePoint(cp: number): boolean {
+	return (
+		(cp >= 0x3000 && cp <= 0x30ff) || // CJK symbols/punctuation, hiragana, katakana
+		(cp >= 0x3400 && cp <= 0x4dbf) || // CJK Unified Ideographs Extension A
+		(cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified Ideographs
+		(cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+		(cp >= 0xff00 && cp <= 0xffef) || // Fullwidth forms
+		(cp >= 0x20000 && cp <= 0x2a6df) // CJK Unified Ideographs Extension B
+	);
+}
+
+function estimateTextChars(text: string): number {
+	let chars = 0;
+	for (const ch of text) {
+		chars += isCjkCodePoint(ch.codePointAt(0)!) ? 4 : 1;
+	}
+	return chars;
+}
+
 function estimateTextAndImageContentChars(content: string | Array<{ type: string; text?: string }>): number {
 	if (typeof content === "string") {
-		return content.length;
+		return estimateTextChars(content);
 	}
 
 	let chars = 0;
 	for (const block of content) {
 		if (block.type === "text" && block.text) {
-			chars += block.text.length;
+			chars += estimateTextChars(block.text);
 		} else if (block.type === "image") {
 			chars += ESTIMATED_IMAGE_CHARS;
 		}
@@ -267,7 +290,8 @@ function estimateTextAndImageContentChars(content: string | Array<{ type: string
 }
 
 /**
- * Estimate token count for a message using chars/4 heuristic.
+ * Estimate token count for a message. Non-CJK text uses a chars/4 heuristic;
+ * CJK code points are weighted to ~1 token each (see estimateTextChars).
  * This is conservative (overestimates tokens).
  */
 export function estimateTokens(message: AgentMessage): number {
@@ -284,11 +308,11 @@ export function estimateTokens(message: AgentMessage): number {
 			const assistant = message as AssistantMessage;
 			for (const block of assistant.content) {
 				if (block.type === "text") {
-					chars += block.text.length;
+					chars += estimateTextChars(block.text);
 				} else if (block.type === "thinking") {
-					chars += block.thinking.length;
+					chars += estimateTextChars(block.thinking);
 				} else if (block.type === "toolCall") {
-					chars += block.name.length + JSON.stringify(block.arguments).length;
+					chars += estimateTextChars(block.name) + estimateTextChars(JSON.stringify(block.arguments));
 				}
 			}
 			return Math.ceil(chars / 4);
@@ -299,12 +323,12 @@ export function estimateTokens(message: AgentMessage): number {
 			return Math.ceil(chars / 4);
 		}
 		case "bashExecution": {
-			chars = message.command.length + message.output.length;
+			chars = estimateTextChars(message.command) + estimateTextChars(message.output);
 			return Math.ceil(chars / 4);
 		}
 		case "branchSummary":
 		case "compactionSummary": {
-			chars = message.summary.length;
+			chars = estimateTextChars(message.summary);
 			return Math.ceil(chars / 4);
 		}
 	}

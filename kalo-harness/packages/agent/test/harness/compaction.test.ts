@@ -300,6 +300,12 @@ describe("harness compaction", () => {
 		expect(estimateTokens(branchSummaryMessage)).toBeGreaterThan(0);
 		expect(estimateTokens(compactionSummaryMessage)).toBeGreaterThan(0);
 		expect(estimateTokens({ role: "unknown", timestamp: Date.now() } as unknown as AgentMessage)).toBe(0);
+		// CJK code points are priced at ~1 token each; ASCII stays at chars/4.
+		expect(estimateTokens({ role: "user", content: "a".repeat(400), timestamp: Date.now() })).toBe(100);
+		expect(estimateTokens({ role: "user", content: "汉".repeat(400), timestamp: Date.now() })).toBe(400);
+		expect(
+			estimateTokens({ role: "user", content: `${"a".repeat(200)}${"汉".repeat(100)}`, timestamp: Date.now() }),
+		).toBe(150);
 		expect(
 			getLastAssistantUsage([createMessageEntry(createUserMessage("user")), createMessageEntry(assistant)]),
 		).toBe(usage);
