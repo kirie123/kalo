@@ -413,7 +413,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
  * This follows the current leaf path. If the path contains compaction entries,
  * the latest compaction is represented by the compaction entry itself, followed
  * by the kept entries starting at firstKeptEntryId and all entries after the
- * compaction entry. Older summarized entries are omitted.
+ * compaction entry. Older summarized entries and older compaction entries are omitted.
  */
 export function buildContextEntries(
 	entries: SessionEntry[],
@@ -445,7 +445,7 @@ export function buildContextEntries(
 		if (entry.id === compaction.firstKeptEntryId) {
 			foundFirstKept = true;
 		}
-		if (foundFirstKept) {
+		if (foundFirstKept && entry.type !== "compaction") {
 			contextEntries.push(entry);
 		}
 	}

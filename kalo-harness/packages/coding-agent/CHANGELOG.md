@@ -25,6 +25,7 @@
 
 ### Fixed
 
+- Fixed consecutive compactions retaining older compaction summaries in the active model context and reusing pre-compaction token usage as the current high-water mark.
 - Fixed inherited GitHub Copilot login triggering API rate limits while enabling model policies by limiting concurrent policy updates ([#6187](https://github.com/earendil-works/pi/issues/6187)).
 - Fixed fullscreen transcript search snapping back to the current match during manual scrolling and fragmented mouse input leaking into the search query.
 - Fixed inherited required LaTeX arguments starting on a new line being parsed as empty ([#7760](https://github.com/earendil-works/pi/issues/7760)).

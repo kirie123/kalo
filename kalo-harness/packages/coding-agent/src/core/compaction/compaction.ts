@@ -188,11 +188,13 @@ export interface ContextUsageEstimate {
 }
 
 function getLatestCompactionTimestamp(messages: AgentMessage[]): number | undefined {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i];
-		if (message.role === "compactionSummary") return message.timestamp;
+	let latestTimestamp: number | undefined;
+	for (const message of messages) {
+		if (message.role !== "compactionSummary" || !Number.isFinite(message.timestamp)) continue;
+		latestTimestamp =
+			latestTimestamp === undefined ? message.timestamp : Math.max(latestTimestamp, message.timestamp);
 	}
-	return undefined;
+	return latestTimestamp;
 }
 
 /**

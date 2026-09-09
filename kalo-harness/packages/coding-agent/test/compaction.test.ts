@@ -305,6 +305,35 @@ describe("estimateContextTokens", () => {
 		expect(estimate.usageTokens).toBe(120);
 		expect(estimate.tokens).toBe(120);
 	});
+
+	it("uses the newest compaction timestamp even when an older summary appears later", () => {
+		const messages: AgentMessage[] = [
+			{
+				role: "compactionSummary",
+				summary: "latest summary",
+				tokensBefore: 190_000,
+				timestamp: 20,
+			},
+			{
+				...createAssistantMessage("retained before latest compaction", createMockUsage(180_000, 10_000)),
+				timestamp: 10,
+			},
+			{
+				role: "compactionSummary",
+				summary: "older summary",
+				tokensBefore: 180_000,
+				timestamp: 5,
+			},
+			{ ...createUserMessage("after latest compaction"), timestamp: 21 },
+			{ ...createAssistantMessage("new segment", createMockUsage(100, 20)), timestamp: 22 },
+		];
+
+		const estimate = estimateContextTokens(messages);
+
+		expect(estimate.lastUsageIndex).toBe(4);
+		expect(estimate.usageTokens).toBe(120);
+		expect(estimate.tokens).toBe(120);
+	});
 });
 
 describe("shouldCompact", () => {

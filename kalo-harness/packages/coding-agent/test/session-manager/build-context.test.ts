@@ -176,6 +176,33 @@ describe("buildSessionContext", () => {
 			expect((ctx.messages[0] as any).summary).toContain("Second summary");
 		});
 
+		it("omits older compaction entries when the latest kept range crosses them", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "a"),
+				msg("2", "1", "assistant", "b"),
+				compaction("3", "2", "First summary", "1"),
+				msg("4", "3", "user", "c"),
+				msg("5", "4", "assistant", "d"),
+				compaction("6", "5", "Second summary includes the first", "1"),
+				msg("7", "6", "user", "e"),
+			];
+
+			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "1", "2", "4", "5", "7"]);
+			const ctx = buildSessionContext(entries);
+			const summaries = ctx.messages.filter((message) => message.role === "compactionSummary");
+
+			expect(summaries).toHaveLength(1);
+			expect((summaries[0] as any).summary).toBe("Second summary includes the first");
+			expect(ctx.messages.map((message) => message.role)).toEqual([
+				"compactionSummary",
+				"user",
+				"assistant",
+				"user",
+				"assistant",
+				"user",
+			]);
+		});
+
 		it("buildContextEntries returns compaction-aware entries including custom entries", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "first"),
