@@ -10,6 +10,7 @@ const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
+const upstreamStreamInterruptedMessage = "upstream response stream was interrupted";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 
@@ -66,6 +67,48 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIResponsesEarlyEofMessage }),
 			),
 		).toBe(true);
+	});
+
+	it("matches gateway upstream-temporarily-unavailable wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Upstream service temporarily unavailable",
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("matches upstream stream interruption wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: upstreamStreamInterruptedMessage }),
+			),
+		).toBe(true);
+	});
+
+	it("does not treat user-initiated turn interruption as retryable", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage:
+						"Approval for edit was cancelled because the turn was interrupted. Stop and wait for the user.",
+				}),
+			),
+		).toBe(false);
+	});
+
+	it("keeps 4xx Consumer Terms errors non-retryable", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: '400 {"error":{"message":"Consumer Terms must be accepted"}}',
+				}),
+			),
+		).toBe(false);
 	});
 
 	it("keeps provider limit errors non-retryable", () => {

@@ -35,6 +35,10 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"504",
 	"524",
 	"service.?unavailable",
+	// Gateways phrase 503s as "Upstream service temporarily unavailable", which
+	// "service.?unavailable" cannot match. A bare "upstream" pattern is unsafe:
+	// it also appears in non-transient (config/auth) wording.
+	"temporarily.?unavailable",
 	"server.?error",
 	"internal.?error",
 
@@ -74,6 +78,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"stream ended before message_stop",
 	"stream ended before a terminal response event",
 	"http2 request did not get a response",
+	// Gateways drop a mid-flight response body as "upstream response stream was
+	// interrupted". Scoped to stream wording on purpose: a bare "interrupted"
+	// would also match user-initiated turn interruption, which must not retry.
+	"stream was interrupted",
+	"stream.?interrupted",
 
 	// Provider-requested retry delay cap failures should flow through the outer
 	// retry policy so callers can surface/abort the backoff (#1123).
