@@ -49,8 +49,30 @@ const MAX_RESULT_CHARS = 16_000;
  * and silence is the signal for that. Every child event resets the timer.
  */
 const IDLE_TIMEOUT_MS = 5 * 60_000;
-/** Max concurrent child agents per engine process (local models queue anyway). */
-const MAX_CONCURRENCY = 3;
+/**
+ * Max concurrent child agents per engine process.
+ *
+ * Cloud models answer several children at once, so a low cap wastes the main
+ * win of delegation: six parallel research children finish in roughly the time
+ * one does. The cap still exists because each child holds a provider
+ * connection and its own tool traffic — unbounded fan-out invites 429s and
+ * runaway token spend. Local models serialize on the GPU anyway, so a higher
+ * cap only changes queue depth for them.
+ *
+ * Override with KALO_SUBAGENT_CONCURRENCY (integer >= 1) when a deployment
+ * needs a different ceiling without rebuilding the engine.
+ */
+const DEFAULT_MAX_CONCURRENCY = 6;
+
+function resolveMaxConcurrency(): number {
+	const raw = process.env.KALO_SUBAGENT_CONCURRENCY?.trim();
+	if (!raw) return DEFAULT_MAX_CONCURRENCY;
+	const parsed = Number.parseInt(raw, 10);
+	if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_MAX_CONCURRENCY;
+	return parsed;
+}
+
+const MAX_CONCURRENCY = resolveMaxConcurrency();
 /** Per-entry and total caps for the live activity feed pushed to the UI. */
 const MAX_ACTIVITY_TEXT_CHARS = 2_000;
 const MAX_ACTIVITY_ITEMS = 200;

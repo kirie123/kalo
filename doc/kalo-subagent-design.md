@@ -41,7 +41,7 @@ agent(prompt: string, description?: string, tools?: string[])
 4. **回传**：取子会话最后一条 assistant 文本，按 16K 字符截断（`...[truncated N chars]`），附 tokens 用量；截断或中途停下时结果文本附带过程转录文件路径。
 5. **取消**：主 run 的 abort signal 传播到子 session（`sub.abort()`）。
 6. **活性看门狗**：连续 5 分钟无任何子会话事件才判为卡死并中止；不设总时长上限。中止不抛错，返回部分结果 + 转录路径。详见 [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)。
-7. **并发上限**：进程级信号量 3；超限的调用排队等待（本地 Ollama 推理本身串行排队，语义一致）。
+7. **并发上限**：进程级信号量，默认 6；超限的调用排队等待。可用环境变量 `KALO_SUBAGENT_CONCURRENCY`（整数 ≥ 1）覆盖，非法值回落到默认。云端模型能真并行，本地模型推理本身串行排队，语义一致（只是队列更深）。
 8. **嵌套**：子会话不注册 `subagent` 扩展（通过 `excludeTools: ["agent"]` + 子会话不加载该扩展的守卫），防止递归派生。
 
 ### 3.3 桌面端呈现
