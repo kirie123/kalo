@@ -83,6 +83,8 @@ describe("compact() session file reference", () => {
 			enabled: true,
 			reserveTokens: 16384,
 			keepRecentTokens: 20000,
+			thinkingLevel: "off",
+			reuseMessages: false,
 		});
 
 		expect(preparation).not.toBeNull();
@@ -109,7 +111,6 @@ describe("compact() session file reference", () => {
 		const result = await compact(
 			preparation,
 			mockModel,
-			undefined,
 			undefined,
 			undefined,
 			undefined,
@@ -141,6 +142,8 @@ describe("compact() session file reference", () => {
 			enabled: true,
 			reserveTokens: 16384,
 			keepRecentTokens: 20000,
+			thinkingLevel: "off",
+			reuseMessages: false,
 		});
 
 		expect(preparation).not.toBeNull();
@@ -164,7 +167,6 @@ describe("compact() session file reference", () => {
 		const result = await compact(
 			preparation,
 			mockModel,
-			undefined,
 			undefined,
 			undefined,
 			undefined,
@@ -246,6 +248,8 @@ describe("compact() session file reference", () => {
 			enabled: true,
 			reserveTokens: 16384,
 			keepRecentTokens: 20000,
+			thinkingLevel: "off",
+			reuseMessages: false,
 		});
 
 		expect(preparation).not.toBeNull();
@@ -269,7 +273,6 @@ describe("compact() session file reference", () => {
 		const result = await compact(
 			preparation,
 			mockModel,
-			undefined,
 			undefined,
 			undefined,
 			undefined,

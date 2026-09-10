@@ -12,7 +12,15 @@ import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dis
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
-	keepRecentTokens?: number; // default: 20000
+	keepRecentTokens?: number; // default: 8000
+	// Thinking level for summarization requests. Independent of the session level:
+	// summaries follow a fixed template, so reasoning tokens are near-pure overhead.
+	thinkingLevel?: ThinkingLevel; // default: "off"
+	// Reuse the live message array for summarization instead of flattening it into a
+	// single serialized user turn, so the prefix stays byte-identical to the main
+	// conversation and can hit the provider's prompt cache. Set to false on providers
+	// that do not support prefix caching, where the larger prompt is pure overhead.
+	reuseMessages?: boolean; // default: true
 }
 
 export interface BranchSummarySettings {
@@ -791,14 +799,30 @@ export class SettingsManager {
 	}
 
 	getCompactionKeepRecentTokens(): number {
-		return this.settings.compaction?.keepRecentTokens ?? 20000;
+		return this.settings.compaction?.keepRecentTokens ?? 8000;
 	}
 
-	getCompactionSettings(): { enabled: boolean; reserveTokens: number; keepRecentTokens: number } {
+	getCompactionThinkingLevel(): ThinkingLevel {
+		return this.settings.compaction?.thinkingLevel ?? "off";
+	}
+
+	getCompactionReuseMessages(): boolean {
+		return this.settings.compaction?.reuseMessages ?? true;
+	}
+
+	getCompactionSettings(): {
+		enabled: boolean;
+		reserveTokens: number;
+		keepRecentTokens: number;
+		thinkingLevel: ThinkingLevel;
+		reuseMessages: boolean;
+	} {
 		return {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(),
+			thinkingLevel: this.getCompactionThinkingLevel(),
+			reuseMessages: this.getCompactionReuseMessages(),
 		};
 	}
 

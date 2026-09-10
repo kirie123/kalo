@@ -6,7 +6,14 @@
  */
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { contentText, type RetryCallbacks, type RetryPolicy, retryAssistantCall, uuidv7 } from "@earendil-works/pi-ai";
+import {
+	contentText,
+	type Message,
+	type RetryCallbacks,
+	type RetryPolicy,
+	retryAssistantCall,
+	uuidv7,
+} from "@earendil-works/pi-ai";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
@@ -127,12 +134,27 @@ export interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
+	/**
+	 * Thinking level for summarization requests. Deliberately independent of the session
+	 * thinking level: summaries follow a fixed template (extract and rewrite, no decisions),
+	 * so reasoning tokens are near-pure latency overhead. Defaults to "off".
+	 */
+	thinkingLevel: ThinkingLevel;
+	/**
+	 * Reuse the live message array for summarization instead of flattening it into a single
+	 * serialized user turn. Keeps the request prefix byte-identical to the main conversation
+	 * so the provider's prompt cache can serve it. On providers without prefix caching the
+	 * larger prompt is pure overhead, so this can be turned off. Defaults to true.
+	 */
+	reuseMessages: boolean;
 }
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	enabled: true,
 	reserveTokens: 16384,
-	keepRecentTokens: 20000,
+	keepRecentTokens: 8000,
+	thinkingLevel: "off",
+	reuseMessages: true,
 };
 
 // ============================================================================
@@ -597,13 +619,14 @@ export async function completeSummarization(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	reuseMessages?: boolean,
 ): Promise<AssistantMessage> {
-	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
-	const requestOptions: SimpleStreamOptions = {
-		...options,
-		cacheRetention: "none",
-		sessionId: uuidv7(),
-	};
+	// When reusing the live message array the prefix matches the main conversation, so let
+	// the provider cache it and keep the caller's routing session. Otherwise the serialized
+	// prompt is a one-off shape: isolate routing and avoid cache writes that cannot be reused.
+	const requestOptions: SimpleStreamOptions = reuseMessages
+		? { ...options }
+		: { ...options, cacheRetention: "none", sessionId: uuidv7() };
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()
@@ -629,6 +652,7 @@ export async function generateSummary(
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	reuseMessages?: boolean,
 ): Promise<string> {
 	return (
 		await generateSummaryWithUsage(
@@ -645,8 +669,68 @@ export async function generateSummary(
 			env,
 			retry,
 			callbacks,
+			reuseMessages,
 		)
 	).text;
+}
+
+/**
+ * Build the summarization request as a single flattened user turn.
+ *
+ * The conversation is serialized to text so the model treats it as data to summarize
+ * rather than a conversation to continue. This shape shares no prefix with the main
+ * conversation, so it can never hit the provider's prompt cache.
+ */
+function buildSerializedSummarizationMessages(
+	llmMessages: Message[],
+	basePrompt: string,
+	previousSummary: string | undefined,
+): Message[] {
+	const conversationText = serializeConversation(llmMessages);
+
+	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+	if (previousSummary) {
+		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+	}
+	promptText += basePrompt;
+
+	return [
+		{
+			role: "user" as const,
+			content: [{ type: "text" as const, text: promptText }],
+			timestamp: Date.now(),
+		},
+	];
+}
+
+/**
+ * Build the summarization request by reusing the live message array and appending the
+ * instruction as a trailing user turn.
+ *
+ * The leading messages stay byte-identical to the main conversation, so the provider's
+ * prompt cache can serve the whole prefix and only the trailing instruction is new.
+ * `previousSummary` rides along in the trailing turn rather than being spliced into the
+ * history, which would break prefix alignment.
+ */
+function buildReusedSummarizationMessages(
+	llmMessages: Message[],
+	basePrompt: string,
+	previousSummary: string | undefined,
+): Message[] {
+	let instruction = "";
+	if (previousSummary) {
+		instruction += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+	}
+	instruction += basePrompt;
+
+	return [
+		...llmMessages,
+		{
+			role: "user" as const,
+			content: [{ type: "text" as const, text: instruction }],
+			timestamp: Date.now(),
+		},
+	];
 }
 
 /** Generate or update a conversation summary and return its provider usage. */
@@ -664,6 +748,7 @@ export async function generateSummaryWithUsage(
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	reuseMessages?: boolean,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -676,25 +761,12 @@ export async function generateSummaryWithUsage(
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
-	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
 	const llmMessages = convertToLlm(currentMessages);
-	const conversationText = serializeConversation(llmMessages);
 
-	// Build the prompt with conversation wrapped in tags
-	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-	if (previousSummary) {
-		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-	}
-	promptText += basePrompt;
-
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
+	const summarizationMessages = reuseMessages
+		? buildReusedSummarizationMessages(llmMessages, basePrompt, previousSummary)
+		: buildSerializedSummarizationMessages(llmMessages, basePrompt, previousSummary);
 
 	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel);
 
@@ -705,6 +777,7 @@ export async function generateSummaryWithUsage(
 		streamFn,
 		retry,
 		callbacks,
+		reuseMessages,
 	);
 
 	if (response.stopReason === "error") {
@@ -842,6 +915,9 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
  * Generate summaries for compaction using prepared data.
  * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
  *
+ * The thinking level comes from `preparation.settings.thinkingLevel`, not from the session:
+ * summarization is template-driven, so reasoning tokens only add latency.
+ *
  * @param preparation - Pre-calculated preparation from prepareCompaction()
  * @param customInstructions - Optional custom focus for the summary
  */
@@ -852,7 +928,6 @@ export async function compact(
 	headers?: Record<string, string>,
 	customInstructions?: string,
 	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
@@ -869,6 +944,8 @@ export async function compact(
 		fileOps,
 		settings,
 	} = preparation;
+	const thinkingLevel = settings.thinkingLevel;
+	const reuseMessages = settings.reuseMessages;
 
 	// Generate summaries and merge into one
 	let summary: string;
@@ -892,6 +969,7 @@ export async function compact(
 				env,
 				retry,
 				callbacks,
+				reuseMessages,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -908,6 +986,7 @@ export async function compact(
 			streamFn,
 			retry,
 			callbacks,
+			reuseMessages,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -928,6 +1007,7 @@ export async function compact(
 			env,
 			retry,
 			callbacks,
+			reuseMessages,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -976,21 +1056,17 @@ async function generateTurnPrefixSummary(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	reuseMessages?: boolean,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
 	); // Smaller budget for turn prefix
 	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	const summarizationMessages = [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
+
+	const summarizationMessages = reuseMessages
+		? buildReusedSummarizationMessages(llmMessages, TURN_PREFIX_SUMMARIZATION_PROMPT, undefined)
+		: buildSerializedSummarizationMessages(llmMessages, TURN_PREFIX_SUMMARIZATION_PROMPT, undefined);
 
 	const response = await completeSummarization(
 		model,
@@ -999,6 +1075,7 @@ async function generateTurnPrefixSummary(
 		streamFn,
 		retry,
 		callbacks,
+		reuseMessages,
 	);
 
 	if (response.stopReason === "error") {

@@ -265,7 +265,13 @@ describe("cut-point priority: oldest region is summarized first", () => {
 describe("compaction trigger threshold", () => {
 	// There is no percentage gate (e.g. 95%); the trigger is a strict reserve
 	// margin: contextTokens > contextWindow - reserveTokens.
-	const settings: CompactionSettings = { enabled: true, reserveTokens: 10_000, keepRecentTokens: 20_000 };
+	const settings: CompactionSettings = {
+		enabled: true,
+		reserveTokens: 10_000,
+		keepRecentTokens: 20_000,
+		thinkingLevel: "off",
+		reuseMessages: false,
+	};
 
 	it("does not trigger at or below the reserve boundary", () => {
 		expect(shouldCompact(89_999, 100_000, settings)).toBe(false);

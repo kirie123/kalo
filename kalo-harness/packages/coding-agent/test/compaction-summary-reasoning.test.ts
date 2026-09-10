@@ -150,7 +150,13 @@ describe("generateSummary reasoning options", () => {
 			isSplitTurn: true,
 			tokensBefore: 600000,
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
+			settings: {
+				enabled: true,
+				reserveTokens: 500000,
+				keepRecentTokens: 20000,
+				thinkingLevel: "off",
+				reuseMessages: false,
+			},
 		};
 
 		const result = await compact(preparation, createModel(false, 128000), "test-key");
@@ -163,5 +169,131 @@ describe("generateSummary reasoning options", () => {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		});
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+	});
+
+	it("takes the compaction thinking level from settings, not the session", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 1000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: {
+				enabled: true,
+				reserveTokens: 2000,
+				keepRecentTokens: 20000,
+				thinkingLevel: "medium",
+				reuseMessages: false,
+			},
+		};
+
+		await compact(preparation, createModel(true), "test-key");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ reasoning: "medium" });
+	});
+
+	it("sends no reasoning option when the compaction thinking level is off", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 1000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: {
+				enabled: true,
+				reserveTokens: 2000,
+				keepRecentTokens: 20000,
+				thinkingLevel: "off",
+				reuseMessages: false,
+			},
+		};
+
+		await compact(preparation, createModel(true), "test-key");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+	});
+});
+
+describe("compaction message reuse", () => {
+	const history: AgentMessage[] = [
+		{ role: "user", content: "First question.", timestamp: Date.now() },
+		{
+			role: "assistant",
+			content: [{ type: "text", text: "First answer." }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			usage: mockSummaryResponse.usage,
+			stopReason: "stop",
+			timestamp: Date.now(),
+		},
+	];
+
+	function createPreparation(reuseMessages: boolean): CompactionPreparation {
+		return {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: history,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 1000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 8000, thinkingLevel: "off", reuseMessages },
+		};
+	}
+
+	beforeEach(() => {
+		completeSimpleMock.mockReset();
+		completeSimpleMock.mockResolvedValue(mockSummaryResponse);
+	});
+
+	it("keeps the original messages and appends the instruction as a trailing turn", async () => {
+		await compact(createPreparation(true), createModel(false), "test-key");
+
+		const context = completeSimpleMock.mock.calls[0][1];
+		// Original history is preserved verbatim so the prefix matches the main conversation.
+		expect(context.messages).toHaveLength(history.length + 1);
+		expect(context.messages[0].content).toEqual("First question.");
+		const trailing = context.messages[context.messages.length - 1];
+		expect(trailing.role).toBe("user");
+		expect(trailing.content[0].text).toContain("## Goal");
+		// The serialized wrapper must not appear in reuse mode.
+		expect(trailing.content[0].text).not.toContain("<conversation>");
+	});
+
+	it("lets the provider cache the prefix and keeps the caller's routing session", async () => {
+		await compact(createPreparation(true), createModel(false), "test-key");
+
+		const options = completeSimpleMock.mock.calls[0][2];
+		expect(options.cacheRetention).toBeUndefined();
+		expect(options.sessionId).toBeUndefined();
+	});
+
+	it("flattens into one serialized turn and isolates routing when reuse is off", async () => {
+		await compact(createPreparation(false), createModel(false), "test-key");
+
+		const context = completeSimpleMock.mock.calls[0][1];
+		expect(context.messages).toHaveLength(1);
+		expect(context.messages[0].content[0].text).toContain("<conversation>");
+
+		const options = completeSimpleMock.mock.calls[0][2];
+		expect(options.cacheRetention).toBe("none");
+		expect(options.sessionId).toEqual(expect.any(String));
+	});
+
+	it("carries the previous summary in the trailing turn, not spliced into history", async () => {
+		const preparation = { ...createPreparation(true), previousSummary: "## Goal\nEarlier work." };
+		await compact(preparation, createModel(false), "test-key");
+
+		const context = completeSimpleMock.mock.calls[0][1];
+		// Prefix alignment requires history to stay untouched.
+		expect(context.messages).toHaveLength(history.length + 1);
+		expect(context.messages[0].content).toEqual("First question.");
+		const trailing = context.messages[context.messages.length - 1];
+		expect(trailing.content[0].text).toContain("<previous-summary>");
+		expect(trailing.content[0].text).toContain("Earlier work.");
 	});
 });
