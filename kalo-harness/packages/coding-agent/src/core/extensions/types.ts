@@ -112,11 +112,9 @@ export interface AskUserOption {
 export interface AskUserQuestion {
 	/** Stable question id, echoed in the answer so answers route without matching text. */
 	id: string;
-	/** The question to display. */
+	/** The full question text. The only free-text slot: supporting detail belongs in option descriptions. */
 	question: string;
-	/** Supporting detail rendered with the question, kept out of option labels. */
-	detail?: string;
-	/** Short heading for the question, e.g. "确认" or "选择方案". */
+	/** Short category tag for the question, e.g. "鉴权" or "代码风格". Never a substitute for `question`. */
 	header?: string;
 	/** Choices the UI renders as a menu. Absent means free-text only. */
 	options?: AskUserOption[];

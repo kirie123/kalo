@@ -33,6 +33,7 @@ import type {
 	ExtensionContext,
 } from "../../core/extensions/types.ts";
 import { AskUserError } from "./errors.ts";
+import { MAX_HEADER_CHARS, normalizeAskArguments } from "./normalize.ts";
 import { askFailureText } from "./prompt.ts";
 import { MAX_OPTIONS, MAX_QUESTIONS, validateQuestions } from "./validate.ts";
 
@@ -54,9 +55,20 @@ const AskUserParams = Type.Object({
 	questions: Type.Array(
 		Type.Object({
 			id: Type.String({ description: "本问的稳定 id，答案里会原样回传。" }),
-			question: Type.String({ description: "要问用户的具体问题，一句话。" }),
-			header: Type.Optional(Type.String({ description: "短标题，如「确认」「选择方案」。" })),
-			detail: Type.Optional(Type.String({ description: "补充说明；不要把它塞进选项 label。" })),
+			// The one and only free-text slot. An earlier version also had a
+			// `detail` field, and models routinely wrote the whole question into
+			// `header` + `detail` and then omitted this required field, failing the
+			// entire batch. Supporting text now belongs in the option descriptions.
+			question: Type.String({
+				description: "完整的问题正文，必填，以问号结尾。补充说明写进选项的 description，不要另起字段。",
+			}),
+			header: Type.Optional(
+				Type.String({
+					description:
+						`分类标签，最多 ${MAX_HEADER_CHARS} 字，如「鉴权」「代码风格」。` +
+						"它只是个标签，不能代替 question。",
+				}),
+			),
 			options: Type.Optional(
 				Type.Array(
 					Type.Object({
@@ -80,7 +92,6 @@ type RawQuestion = {
 	id: string;
 	question: string;
 	header?: string;
-	detail?: string;
 	options?: { label: string; description?: string }[];
 	multi_select?: boolean;
 };
@@ -91,7 +102,6 @@ function toQuestions(raw: RawQuestion[]): AskUserQuestion[] {
 		id: item.id.trim(),
 		question: item.question,
 		...(item.header !== undefined ? { header: item.header } : {}),
-		...(item.detail !== undefined ? { detail: item.detail } : {}),
 		...(item.options !== undefined
 			? {
 					options: item.options.map((option) => ({
@@ -125,8 +135,10 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 			"Do NOT use it for anything you can determine yourself by reading files or running commands. " +
 			`Send all related questions in ONE call (max ${MAX_QUESTIONS}); each needs a stable id that is ` +
 			"echoed in the answer. Prefer offering options with a one-sentence description of each tradeoff; " +
-			"omit options only when the answer is genuinely free-form. The answer comes back as this tool's " +
-			"result: selected option labels per question, plus free text when the user typed their own.",
+			"omit options only when the answer is genuinely free-form. Every question needs its own full " +
+			"`question` text ending in a question mark; `header` is a short category tag and never a " +
+			"substitute for it. The answer comes back as this tool's result: selected option labels per " +
+			"question, plus free text when the user typed their own.",
 		promptSnippet: "ask_user(questions) — 需要用户确认/选择/补充信息时提问，答案作为工具结果返回",
 		promptGuidelines: [
 			"自己能查清的事不要问用户：先读文件、跑命令确认，只有取决于用户意图的岔路才用 ask_user",
@@ -134,6 +146,9 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 			"用户关掉提问（ASK_CANCELLED）后不要重新提问，停下来等他说话",
 		],
 		parameters: AskUserParams,
+		// Runs before schema validation: promotes an overloaded `header` into the
+		// missing `question` instead of failing a whole batch over one field.
+		prepareArguments: normalizeAskArguments as (args: unknown) => never,
 		// Serial so two questions never contend for the same input area: the
 		// second call starts only after the first is answered, which is why a
 		// surface only ever has one pending request.

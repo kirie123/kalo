@@ -300,9 +300,9 @@ export interface AskUserOption {
 export interface AskUserQuestion {
   /** Stable id, echoed in the answer. */
   id: string;
+  /** Full question text. The only free-text slot; supporting detail lives in option descriptions. */
   question: string;
-  /** Supporting detail shown with the question, kept out of the option labels. */
-  detail?: string;
+  /** Short category tag. Never a substitute for `question`. */
   header?: string;
   /** Absent means free-text only. */
   options?: AskUserOption[];

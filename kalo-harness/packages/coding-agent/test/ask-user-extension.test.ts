@@ -32,7 +32,10 @@ function load(options: { ask?: AskFn } = {}) {
 		run(questions: unknown[], signal?: AbortSignal) {
 			const tool = tools[0];
 			if (!tool) throw new Error("ask_user was not registered");
-			return tool.execute("call-1", { questions } as never, signal, undefined, ctx);
+			// Through prepareArguments, exactly as the agent loop calls it, so
+			// these tests exercise the repair path the model actually hits.
+			const args = tool.prepareArguments?.({ questions }) ?? { questions };
+			return tool.execute("call-1", args as never, signal, undefined, ctx);
 		},
 	};
 }
@@ -97,6 +100,34 @@ describe("ask_user execution", () => {
 		const { run } = load({ ask });
 
 		await expect(run([])).rejects.toThrow("至少 1 个");
+		expect(ask).not.toHaveBeenCalled();
+	});
+
+	it("asks anyway when the model wrote the question into header and detail", async () => {
+		// Without the repair this batch fails schema validation on the missing
+		// `question`, and the user is asked nothing at all.
+		const seen: AskUserRequest[] = [];
+		const ask = vi.fn(async (request: AskUserRequest): Promise<AskUserAnswer> => {
+			seen.push(request);
+			return { answers: [{ id: "backend", selected: ["改 A"] }] };
+		});
+		const { run } = load({ ask });
+
+		await run([{ id: "backend", header: "后端跑不起来", detail: "本机没有 3.12。", options: OPTIONS }]);
+
+		expect(seen[0].questions).toEqual([
+			{ id: "backend", question: "后端跑不起来\n本机没有 3.12。", options: OPTIONS },
+		]);
+	});
+
+	it("tells the model to move a long header into the question", async () => {
+		const ask = vi.fn(async (_request: AskUserRequest): Promise<AskUserAnswer> => ({ answers: [] }));
+		const { run } = load({ ask });
+
+		const batch = [
+			{ id: "q1", question: "改哪个？", header: "这个标题写得实在是太长了根本不像标签", options: OPTIONS },
+		];
+		await expect(run(batch)).rejects.toThrow(/header .*把正文写进 question/);
 		expect(ask).not.toHaveBeenCalled();
 	});
 

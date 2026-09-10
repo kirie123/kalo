@@ -13,6 +13,7 @@
  */
 
 import type { AskUserAnswerItem, AskUserQuestion } from "../../core/extensions/types.ts";
+import { MAX_HEADER_CHARS } from "./normalize.ts";
 
 /** Most questions one batch may carry; more than this is offloading a whole design onto the user. */
 export const MAX_QUESTIONS = 5;
@@ -40,6 +41,13 @@ export function validateQuestions(questions: AskUserQuestion[]): string | undefi
 		seenIds.add(id);
 
 		if (question.question.trim() === "") return `问题 ${id} 的 question 为空。`;
+
+		// A long header means the model is writing the question there instead of
+		// in `question`, which is the shape that used to fail the whole batch.
+		const header = question.header;
+		if (header !== undefined && header.trim().length > MAX_HEADER_CHARS) {
+			return `问题 ${id} 的 header 超过 ${MAX_HEADER_CHARS} 字。header 只是分类标签，把正文写进 question。`;
+		}
 
 		const options = question.options;
 		if (options === undefined) continue;

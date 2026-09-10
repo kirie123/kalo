@@ -216,14 +216,12 @@ export default function AskUserPanel() {
                 {question.header}
               </span>
             )}
-            <p className="text-sm font-medium leading-snug text-body">
+            {/* The question is the only free-text slot; it may carry a second
+                line when the engine folded a legacy `detail` into it, so it
+                wraps on newlines. */}
+            <p className="whitespace-pre-wrap text-sm font-medium leading-snug text-body">
               {question.question}
             </p>
-            {question.detail && (
-              <p className="mt-1 whitespace-pre-wrap text-xs text-dim leading-relaxed">
-                {question.detail}
-              </p>
-            )}
           </div>
           <ProgressDots state={effectiveState} onGoTo={(i) => update(goTo(effectiveState, i))} />
         </div>
