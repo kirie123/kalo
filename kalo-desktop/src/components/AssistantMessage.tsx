@@ -8,6 +8,7 @@ import { formatApiError } from "../lib/error-format";
 import type { AssistantMessage as AssistantMessageType } from "../types";
 import { formatK } from "./ContextRing";
 import CopyButton from "./CopyButton";
+import InterruptDivider from "./InterruptDivider";
 import ThinkingBlock from "./ThinkingBlock";
 import type { TurnUsage } from "../lib/timeline";
 
@@ -110,7 +111,12 @@ export default function AssistantMessage({
   /** Error already shown by the retry notice; don't render a second banner. */
   errorRetried?: boolean;
 }) {
-  const failed = message.stopReason === "error" && message.errorMessage && !errorRetried;
+  // Stopping a run is a deliberate act, not a failure: mark it with the wave
+  // divider and swallow the engine's raw "Request was aborted" instead of
+  // dropping a red error block into the transcript
+  // (doc/2026-09-10-打断提示波浪分割线.md).
+  const interrupted = message.stopReason === "aborted";
+  const failed = !interrupted && message.stopReason === "error" && message.errorMessage && !errorRetried;
   const lastIdx = message.content.length - 1;
   // Cache hit rate = cache reads over all input-side tokens (fresh + cached).
   const inputSide = usage ? usage.input + usage.cacheRead : 0;
@@ -132,6 +138,7 @@ export default function AssistantMessage({
         return null;
       })}
       {failed && <ErrorBanner raw={message.errorMessage!} />}
+      {interrupted && <InterruptDivider />}
       {!streaming && (usage || copyText) && (
         <div className="group/msg mt-2 flex items-end justify-between gap-2 text-xs text-dim">
           <span>
