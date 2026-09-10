@@ -42,6 +42,47 @@ export function mergeSessionRows(groups: ProjectGroup[], pending: PendingSession
   return rows.sort((a, b) => b.modifiedMs - a.modifiedMs);
 }
 
+/**
+ * Frozen sort keys: normalized session path → the `modifiedMs` the row had
+ * when its run started. See doc/2026-09-10-运行中会话排序冻结.md.
+ */
+export type FreezeTable = Record<string, number>;
+
+/**
+ * Incrementally update the freeze table against the current rows:
+ * a row that just started running gets its current sort key pinned, a row that
+ * stopped running (or vanished from the list) is released. Returns `prev`
+ * unchanged when nothing moved, so callers can skip re-sorting.
+ */
+export function updateFreeze(
+  prev: FreezeTable,
+  rows: SessionRow[],
+  isRunning: (path: string) => boolean,
+): FreezeTable {
+  const next: FreezeTable = {};
+  for (const row of rows) {
+    if (!isRunning(row.path)) continue;
+    const key = normPath(row.path);
+    // Already frozen → keep the original snapshot, don't re-pin to a newer mtime.
+    next[key] = prev[key] ?? row.modifiedMs;
+  }
+  const prevKeys = Object.keys(prev);
+  const same =
+    prevKeys.length === Object.keys(next).length && prevKeys.every((k) => prev[k] === next[k]);
+  return same ? prev : next;
+}
+
+/**
+ * Order rows newest-first by their frozen key when they have one, and by their
+ * live `modifiedMs` otherwise. Ties keep the input order (Array#sort is stable),
+ * so a running session stays put while its file keeps growing.
+ */
+export function orderRows(rows: SessionRow[], freeze: FreezeTable): SessionRow[] {
+  if (Object.keys(freeze).length === 0) return rows;
+  const keyOf = (row: SessionRow) => freeze[normPath(row.path)] ?? row.modifiedMs;
+  return [...rows].sort((a, b) => keyOf(b) - keyOf(a));
+}
+
 /** How many session rows a sidebar list shows before「显示更多」. */
 export const SESSION_PAGE_SIZE = 10;
 

@@ -1,7 +1,15 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useRef, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
-import { mergeSessionRows, SESSION_PAGE_SIZE, visibleRows, type SessionRow } from "../lib/session-rows";
+import {
+  mergeSessionRows,
+  orderRows,
+  SESSION_PAGE_SIZE,
+  updateFreeze,
+  visibleRows,
+  type FreezeTable,
+  type SessionRow,
+} from "../lib/session-rows";
 import type { PendingSession, ProjectGroup, SessionSummary } from "../types";
 import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import NewProjectModal from "./NewProjectModal";
@@ -121,6 +129,9 @@ export default memo(function Sidebar({
   const [chatLimit, setChatLimit] = useState(SESSION_PAGE_SIZE);
   // Which session row is showing its inline rename input (path + prefilled title).
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null);
+  // Pinned sort keys for running sessions; derived cache, not state — it is
+  // recomputed from the rows on every render and never triggers one.
+  const freezeRef = useRef<FreezeTable>({});
 
   const startRename = (s: SessionRow) => setRenaming({ path: s.path, value: s.title || "" });
   const cancelRename = () => setRenaming(null);
@@ -145,18 +156,22 @@ export default memo(function Sidebar({
     isRunning(row.path) ||
     renaming?.path === row.path;
 
-  // Every row, on-disk and optimistic, newest first.
-  const allRows = mergeSessionRows(sessionGroups, pendingSessions);
+  // Every row, on-disk and optimistic. Rows with a run in flight keep the
+  // position they had when the run started, so a streaming session doesn't
+  // hop around as its file's mtime keeps ticking
+  // (doc/2026-09-10-运行中会话排序冻结.md).
+  const merged = mergeSessionRows(sessionGroups, pendingSessions);
+  freezeRef.current = updateFreeze(freezeRef.current, merged, isRunning);
+  const allRows = orderRows(merged, freezeRef.current);
 
   const sessionsOf = (cwd: string): SessionRow[] =>
     allRows.filter((s) => normalizeCwd(s.cwd) === normalizeCwd(cwd));
 
-  // Flat history, newest first. Sessions under a pinned project live in that
-  // project's row, so they're excluded here to avoid showing up twice.
+  // Flat history. Sessions under a pinned project live in that project's row,
+  // so they're excluded here to avoid showing up twice. Order comes from
+  // allRows (freeze-aware) — re-sorting here would undo it.
   const projectCwds = new Set(projects.map((p) => normalizeCwd(p.cwd)));
-  const looseSessions = allRows
-    .filter((s) => !projectCwds.has(normalizeCwd(s.cwd)))
-    .sort((a, b) => b.modifiedMs - a.modifiedMs);
+  const looseSessions = allRows.filter((s) => !projectCwds.has(normalizeCwd(s.cwd)));
   const looseVisible = visibleRows(looseSessions, chatLimit, mustShow);
   // Clicking a project starts a fresh chat in its directory. The cwd is passed
   // up front (rather than newChat + setCwd) so no engine is ever spawned in the

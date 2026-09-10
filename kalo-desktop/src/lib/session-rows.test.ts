@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mergeSessionRows, visibleRows, type SessionRow } from "./session-rows";
+import {
+  mergeSessionRows,
+  orderRows,
+  updateFreeze,
+  visibleRows,
+  type FreezeTable,
+  type SessionRow,
+} from "./session-rows";
 import type { PendingSession, ProjectGroup } from "../types";
 
 const disk = (path: string, title: string, modifiedMs: number, cwd = "d:\\proj"): ProjectGroup => ({
@@ -108,5 +115,73 @@ describe("visibleRows", () => {
   it("does not duplicate a marked row already inside the limit", () => {
     const visible = visibleRows(rows(25), 10, (r) => r.id === "id-3");
     expect(visible).toHaveLength(10);
+  });
+});
+
+// doc/2026-09-10-运行中会话排序冻结.md — a session with a run in flight keeps
+// the position it had when the run started, so it doesn't hop around the
+// sidebar as its file's mtime keeps ticking.
+describe("updateFreeze / orderRows", () => {
+  const row = (path: string, modifiedMs: number): SessionRow => ({
+    path,
+    id: `id-${path}`,
+    timestamp: modifiedMs,
+    title: path,
+    modifiedMs,
+    cwd: "d:\proj",
+  });
+  const running = (...paths: string[]) => (p: string) => paths.includes(p);
+  const order = (rows: SessionRow[], freeze: FreezeTable) => orderRows(rows, freeze).map((r) => r.path);
+
+  it("keeps a running session in place while its mtime climbs", () => {
+    const before = [row("b.jsonl", 200), row("a.jsonl", 100)];
+    const freeze = updateFreeze({}, before, running("a.jsonl"));
+    // a.jsonl streams past b.jsonl's mtime — it must not jump to the top.
+    const after = [row("a.jsonl", 500), row("b.jsonl", 200)];
+    expect(order(after, freeze)).toEqual(["b.jsonl", "a.jsonl"]);
+  });
+
+  it("releases the row once the run ends, back to real mtime order", () => {
+    const rows = [row("a.jsonl", 500), row("b.jsonl", 200)];
+    let freeze = updateFreeze({}, [row("b.jsonl", 200), row("a.jsonl", 100)], running("a.jsonl"));
+    freeze = updateFreeze(freeze, rows, running());
+    expect(freeze).toEqual({});
+    expect(order(rows, freeze)).toEqual(["a.jsonl", "b.jsonl"]);
+  });
+
+  it("does not let two running sessions swap places", () => {
+    const start = [row("a.jsonl", 300), row("b.jsonl", 200)];
+    const freeze = updateFreeze({}, start, running("a.jsonl", "b.jsonl"));
+    // b produces far more output than a; order must still be a, b.
+    const later = [row("b.jsonl", 900), row("a.jsonl", 310)];
+    expect(order(later, freeze)).toEqual(["a.jsonl", "b.jsonl"]);
+  });
+
+  it("still sorts non-running rows by mtime around a frozen one", () => {
+    const freeze = updateFreeze({}, [row("a.jsonl", 100)], running("a.jsonl"));
+    const rows = [row("a.jsonl", 999), row("c.jsonl", 300), row("b.jsonl", 50)];
+    expect(order(rows, freeze)).toEqual(["c.jsonl", "a.jsonl", "b.jsonl"]);
+  });
+
+  it("normalizes paths like the pool keys do (Windows)", () => {
+    const freeze = updateFreeze({}, [row("D:\\S\\A.jsonl", 100)], running("D:\\S\\A.jsonl"));
+    expect(freeze).toEqual({ "d:/s/a.jsonl": 100 });
+  });
+
+  it("returns the same table when nothing changed", () => {
+    const rows = [row("a.jsonl", 100)];
+    const first = updateFreeze({}, rows, running("a.jsonl"));
+    const second = updateFreeze(first, [row("a.jsonl", 400)], running("a.jsonl"));
+    expect(second).toBe(first);
+  });
+
+  it("drops entries for rows that disappeared (deleted session)", () => {
+    const freeze = updateFreeze({}, [row("a.jsonl", 100)], running("a.jsonl"));
+    expect(updateFreeze(freeze, [], running("a.jsonl"))).toEqual({});
+  });
+
+  it("returns the input array untouched when nothing is frozen", () => {
+    const rows = [row("a.jsonl", 100)];
+    expect(orderRows(rows, {})).toBe(rows);
   });
 });
