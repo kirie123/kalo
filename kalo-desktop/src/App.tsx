@@ -47,7 +47,8 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarW, setSidebarW] = useState(() => loadWidth("kalo.layout.sidebarW", 260));
-  const [panelOpen, setPanelOpen] = useState(false);
+  // 文件浏览默认展开；是否有打开文件只决定面板内是否出现预览列。
+  const [panelOpen, setPanelOpen] = useState(true);
   const [projects, setProjects] = useState<ProjectGroup[]>([]);
   const [theme, setTheme] = useState<ThemePref>(() => loadTheme());
   // null = 还没问过 ~/.kalo/onboarding.json；"first" 首次自动弹，
