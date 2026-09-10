@@ -69,6 +69,8 @@
 ## 运行时与平台
 
 - [P0-1 Job Runtime + P0-2 Channel 设计文档](2026-08-17-p0-job-runtime-channel.md)
+- [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
+- [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
 - [版本号管理](2026-08-19-版本号管理.md)
 - [Agent 引擎可靠性改进](2026-01-01-harness-reliability-improvements.md)
 - [客户端会话元数据 SQLite 持久化](2026-01-01-客户端会话元数据SQLite持久化.md)

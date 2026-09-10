@@ -6,6 +6,8 @@
  * only the webfetch extension) and returns its final answer to the parent run.
  * Parallelism comes from the model issuing several `agent` tool calls in one
  * assistant turn; a process-wide semaphore caps concurrent children.
+ *
+ * Liveness and transcripts: doc/2026-09-10-子agent-idle-watchdog与转录落盘.md
  */
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -26,6 +28,7 @@ import { SettingsManager } from "../../core/settings-manager.ts";
 // Imported directly rather than via ../index.ts: that module also pulls in this
 // one, and going through it would be a circular import.
 import webFetchExtension from "../webfetch/index.ts";
+import { renderTranscript, writeTranscript } from "./transcript.ts";
 
 /**
  * Read-only exploration tools a child may use unless the call opts out.
@@ -35,8 +38,17 @@ import webFetchExtension from "../webfetch/index.ts";
 const DEFAULT_TOOLS = ["read", "grep", "glob", "ls", "web_fetch"];
 /** Hard ceiling on the child's final text handed back to the parent model. */
 const MAX_RESULT_CHARS = 16_000;
-/** Watchdog so a wedged child cannot pin a parent tool call forever. */
-const HARD_TIMEOUT_MS = 10 * 60_000;
+/**
+ * Liveness watchdog: abort only after this long with NO child activity at all.
+ *
+ * This is deliberately not a total-duration cap. A healthy research task that
+ * fetches thirty pages legitimately runs for twenty minutes while emitting a
+ * steady stream of message/tool events; killing it on wall-clock time throws
+ * away all of that work. What actually needs guarding against is a wedged child
+ * (provider hung, tool never returning) pinning the parent's tool call forever,
+ * and silence is the signal for that. Every child event resets the timer.
+ */
+const IDLE_TIMEOUT_MS = 5 * 60_000;
 /** Max concurrent child agents per engine process (local models queue anyway). */
 const MAX_CONCURRENCY = 3;
 /** Per-entry and total caps for the live activity feed pushed to the UI. */
@@ -63,8 +75,11 @@ interface SubagentDetails {
 	steps?: number;
 	/** Live activity feed: child assistant texts and tool calls, newest last. */
 	activity?: ChildActivity[];
-	timedOut?: boolean;
+	/** Set when the liveness watchdog aborted a silent child. */
+	stalled?: boolean;
 	aborted?: boolean;
+	/** Markdown transcript of the child's run, when one was written. */
+	transcriptPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,9 +156,10 @@ interface ChildOutcome {
 	turns: number;
 	tokens: number;
 	truncated: boolean;
-	timedOut: boolean;
+	stalled: boolean;
 	aborted: boolean;
 	activity: ChildActivity[];
+	transcriptPath: string | undefined;
 }
 
 /** Short human label for a child tool call row, e.g. the path or pattern. */
@@ -212,6 +228,9 @@ async function runChild(opts: {
 		});
 	};
 	const unsubscribe = session.subscribe((event) => {
+		// Any event at all counts as liveness, including the stream deltas and
+		// tool progress updates not handled below.
+		resetIdleTimer();
 		if (event.type === "message_start" && event.message.role === "assistant") {
 			steps++;
 			emit();
@@ -250,18 +269,23 @@ async function runChild(opts: {
 		}
 	});
 
-	let timedOut = false;
-	const timer = setTimeout(() => {
-		timedOut = true;
-		void session.abort();
-	}, HARD_TIMEOUT_MS);
+	let stalled = false;
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	function resetIdleTimer(): void {
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = setTimeout(() => {
+			stalled = true;
+			void session.abort();
+		}, IDLE_TIMEOUT_MS);
+	}
+	resetIdleTimer();
 	const onAbort = () => void session.abort();
 	opts.signal?.addEventListener("abort", onAbort, { once: true });
 
 	try {
 		await session.prompt(opts.prompt);
 	} finally {
-		clearTimeout(timer);
+		if (idleTimer) clearTimeout(idleTimer);
 		opts.signal?.removeEventListener("abort", onAbort);
 		unsubscribe();
 	}
@@ -282,15 +306,29 @@ async function runChild(opts: {
 	const text = truncated
 		? `${raw.slice(0, MAX_RESULT_CHARS)}\n…[truncated ${raw.length - MAX_RESULT_CHARS} chars]`
 		: raw;
+	const aborted = opts.signal?.aborted ?? false;
+
+	// Written for every ending, not just the bad ones: the parent may also want
+	// the full process behind a truncated but successful answer.
+	const transcriptPath = writeTranscript(
+		agentDir,
+		renderTranscript(messages, {
+			prompt: opts.prompt,
+			description: opts.description,
+			tools: opts.tools,
+			outcome: stalled ? `静默超过 ${IDLE_TIMEOUT_MS / 60_000} 分钟被中止` : aborted ? "被用户中止" : "正常结束",
+		}),
+	);
 
 	return {
 		text,
 		turns,
 		tokens,
 		truncated,
-		timedOut,
-		aborted: opts.signal?.aborted ?? false,
+		stalled,
+		aborted,
 		activity,
+		transcriptPath,
 	};
 }
 
@@ -316,7 +354,8 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 			"派生一个独立的子 agent 执行一项自包含的任务，并把它的最终答复带回来。" +
 			"子 agent 看不到当前对话，prompt 必须完整自包含（含目标、路径、输出要求）。" +
 			"适合独立的调研、多文件探索、批量验证等可以并行的工作：在一条消息里发起多个 agent 调用即可并行执行。" +
-			"默认工具集为只读探索 + 联网抓取（read/grep/glob/ls/web_fetch），结果文本超长会截断。",
+			"默认工具集为只读探索 + 联网抓取（read/grep/glob/ls/web_fetch），结果文本超长会截断；" +
+			"截断或中途停下时，返回文本里会附上完整过程转录的文件路径，可用 read/grep 自行查看。",
 		promptSnippet: "agent(prompt, description?, tools?) — 派生子 agent 执行独立任务并回传结果；可并行",
 		parameters: Type.Object({
 			prompt: Type.String({
@@ -356,30 +395,44 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 					turns: outcome.turns,
 					tokens: outcome.tokens,
 					truncated: outcome.truncated,
-					timedOut: outcome.timedOut,
+					stalled: outcome.stalled,
 					activity: outcome.activity,
+					transcriptPath: outcome.transcriptPath,
 				};
+				// A cut-short or truncated child still did real work. Returning an
+				// error here makes the parent model discard all of it and retry from
+				// scratch, so hand back the partial answer plus a pointer to the full
+				// transcript and let the parent decide what to do.
+				const pointer = outcome.transcriptPath
+					? `\n\n（完整过程转录：${outcome.transcriptPath}，可用 read/grep 自行查看）`
+					: "";
 				if (outcome.aborted) {
 					return {
 						content: [
 							{
 								type: "text",
-								text: `子 agent 已中止（已运行 ${outcome.turns} 轮）。部分结果：\n${outcome.text}`,
+								text: `子 agent 已中止（已运行 ${outcome.turns} 轮）。部分结果：\n${outcome.text}${pointer}`,
 							},
 						],
 						details: { ...details, aborted: true },
 					};
 				}
-				if (outcome.timedOut) {
-					throw new Error(`子 agent 超时（${HARD_TIMEOUT_MS / 60000} 分钟）被中止。部分结果：\n${outcome.text}`);
+				if (outcome.stalled) {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`子 agent 连续 ${IDLE_TIMEOUT_MS / 60_000} 分钟无任何动静，已按卡死处理中止（已运行 ${outcome.turns} 轮）。` +
+									`中止前的最后一段输出：\n${outcome.text}${pointer}`,
+							},
+						],
+						details,
+					};
 				}
+				const head = params.description ? `【${params.description}】\n` : "";
 				return {
-					content: [
-						{
-							type: "text",
-							text: params.description ? `【${params.description}】\n${outcome.text}` : outcome.text,
-						},
-					],
+					content: [{ type: "text", text: `${head}${outcome.text}${outcome.truncated ? pointer : ""}` }],
 					details,
 				};
 			} catch (err) {

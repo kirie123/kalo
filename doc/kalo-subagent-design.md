@@ -38,14 +38,19 @@ agent(prompt: string, description?: string, tools?: string[])
 1. **派生**：`createAgentSession({ cwd: 主会话 cwd, tools: 参数裁剪, sessionManager: in-memory, resourceLoader: noExtensions })`——同进程、独立消息历史、独立 system prompt；`noExtensions` loader 同时杜绝递归派生（子会话没有 `agent` 工具）与 MCP/memory 干扰。
 2. **历史隔离**：`SessionManager.inMemory()`——子会话消息只留在内存，不落盘、不污染主 sessions 目录（桌面端会话列表不受影响）；进程退出即释放。
 3. **执行**：`await sub.prompt(prompt)` 跑完整 agent loop（含其自己的工具调用与重试）。
-4. **回传**：取子会话最后一条 assistant 文本，按 16K 字符截断（`...[truncated N chars]`），附 tokens 用量；子 agent 失败/超时 → `isError` 结果，错误隔离不炸主 run。
+4. **回传**：取子会话最后一条 assistant 文本，按 16K 字符截断（`...[truncated N chars]`），附 tokens 用量；截断或中途停下时结果文本附带过程转录文件路径。
 5. **取消**：主 run 的 abort signal 传播到子 session（`sub.abort()`）。
-6. **并发上限**：进程级信号量 3；超限的调用排队等待（本地 Ollama 推理本身串行排队，语义一致）。
-7. **嵌套**：子会话不注册 `subagent` 扩展（通过 `excludeTools: ["agent"]` + 子会话不加载该扩展的守卫），防止递归派生。
+6. **活性看门狗**：连续 5 分钟无任何子会话事件才判为卡死并中止；不设总时长上限。中止不抛错，返回部分结果 + 转录路径。详见 [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)。
+7. **并发上限**：进程级信号量 3；超限的调用排队等待（本地 Ollama 推理本身串行排队，语义一致）。
+8. **嵌套**：子会话不注册 `subagent` 扩展（通过 `excludeTools: ["agent"]` + 子会话不加载该扩展的守卫），防止递归派生。
 
 ### 3.3 桌面端呈现
 
 复用现有 toolGroup 渲染：`agent` 工具调用显示为普通工具卡片（args 里带 description）。子会话过程明细（嵌套时间线）留 P2。
+
+### 3.4 过程转录
+
+子会话历史只在内存，中途停下或结果被截断时父 agent 无从追查，因此每次子 agent 结束都把过程序列化为 markdown 写到 `~/.kalo/agent/subagent-transcripts/`（不在 `sessions/` 下，避免混进桌面端会话列表）。实现见 `extensions/subagent/transcript.ts`。
 
 ## 4. 测试计划
 
