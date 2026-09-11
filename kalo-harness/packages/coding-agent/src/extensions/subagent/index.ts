@@ -1,19 +1,27 @@
 /**
- * Subagent extension — kalo's single-shot task delegation tool.
+ * Subagent extension — kalo's task delegation tool.
  *
- * Design: doc/kalo-subagent-design.md. One `agent` tool call spawns an
- * independent AgentSession in-process (in-memory history, trimmed toolset,
- * only the webfetch extension) and returns its final answer to the parent run.
- * Parallelism comes from the model issuing several `agent` tool calls in one
- * assistant turn; a process-wide semaphore caps concurrent children.
+ * Design: doc/kalo-subagent-design.md and
+ * doc/2026-09-11-可续写子agent与主agent派生.md. One `agent` tool call spawns an
+ * independent AgentSession in-process (trimmed toolset, only the webfetch
+ * extension) and returns its final answer to the parent run. Parallelism comes
+ * from the model issuing several `agent` tool calls in one assistant turn; a
+ * process-wide semaphore caps concurrent children.
+ *
+ * A child stays resident after its turn ends and can be handed another message
+ * with `resume`, which is what makes an interrupted child recoverable instead
+ * of a total loss. History is a real session file, so resume also survives
+ * eviction and engine restarts.
  *
  * Liveness and transcripts: doc/2026-09-10-子agent-idle-watchdog与转录落盘.md
  */
 
+import { dirname } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
 import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
@@ -28,7 +36,17 @@ import { SettingsManager } from "../../core/settings-manager.ts";
 // Imported directly rather than via ../index.ts: that module also pulls in this
 // one, and going through it would be a circular import.
 import webFetchExtension from "../webfetch/index.ts";
-import { renderTranscript, writeTranscript } from "./transcript.ts";
+import {
+	type ChildHandle,
+	childSessionDir,
+	childTranscriptPath,
+	findChildSessionFile,
+	hasPersisted,
+	lookup,
+	nextChildId,
+	register,
+} from "./children.ts";
+import { appendTranscript, renderTranscript } from "./transcript.ts";
 
 /**
  * Read-only exploration tools a child may use unless the call opts out.
@@ -100,8 +118,14 @@ interface SubagentDetails {
 	/** Set when the liveness watchdog aborted a silent child. */
 	stalled?: boolean;
 	aborted?: boolean;
+	/** Error message when the child's turn threw; it stays resumable. */
+	failed?: string;
 	/** Markdown transcript of the child's run, when one was written. */
 	transcriptPath?: string;
+	/** Child id the parent passes back to `resume`. */
+	childId?: string;
+	/** True when this call continued an existing child instead of creating one. */
+	resumed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +135,17 @@ interface SubagentDetails {
 let activeChildren = 0;
 const waiters: Array<() => void> = [];
 
-async function acquireSlot(): Promise<() => void> {
+/**
+ * Take a concurrency slot, or a no-op release when `skip` is set.
+ *
+ * Resuming a resident child skips the semaphore on purpose. Without that, a
+ * parent whose slots are all held by running children could not resume any of
+ * them: the resume would queue behind the very children it is trying to
+ * unstick, and nothing would ever release a slot. Resume adds no new provider
+ * connection beyond the one that child already accounts for.
+ */
+async function acquireSlot(skip = false): Promise<() => void> {
+	if (skip) return () => {};
 	if (activeChildren >= MAX_CONCURRENCY) {
 		await new Promise<void>((resolve) => waiters.push(resolve));
 	}
@@ -180,8 +214,17 @@ interface ChildOutcome {
 	truncated: boolean;
 	stalled: boolean;
 	aborted: boolean;
+	/**
+	 * Error message when the turn threw, else undefined.
+	 *
+	 * The parent has to be told why a child stopped: a provider outage and a
+	 * bad prompt both end the turn, but only one is worth resuming as-is.
+	 */
+	failed: string | undefined;
 	activity: ChildActivity[];
 	transcriptPath: string | undefined;
+	childId: string;
+	resumed: boolean;
 }
 
 /** Short human label for a child tool call row, e.g. the path or pattern. */
@@ -205,31 +248,152 @@ function childToolLabel(name: string, args: any): string {
 	}
 }
 
-async function runChild(opts: {
+/**
+ * Create a new child session backed by a file under the parent's cwd bucket.
+ *
+ * The session file is what makes `resume` work after eviction or an engine
+ * restart; `parentSession` records the link for anyone reading the file later.
+ */
+async function createChild(opts: {
 	cwd: string;
 	model: Model<any> | undefined;
 	thinkingLevel: ThinkingLevel | undefined;
-	prompt: string;
 	tools: string[];
-	signal: AbortSignal | undefined;
-	/** Task summary echoed back in every progress update. */
+	parentSessionId: string;
+	childId: string;
 	description?: string;
-	/** Progress sink: called on each child step, tool call and assistant text. */
-	onUpdate?: AgentToolUpdateCallback<SubagentDetails>;
-}): Promise<ChildOutcome> {
+}): Promise<ChildHandle> {
 	const agentDir = getAgentDir();
 	const { settingsManager, loader, modelRuntime } = await getChildResources(opts.cwd, agentDir);
+	// SessionManager picks the file name itself (`<timestamp>_<id>.jsonl`); we
+	// only choose the directory. findChildSessionFile recognises it later.
+	const sessionDir = childSessionDir(opts.cwd, opts.parentSessionId, agentDir);
 
 	const { session } = await createAgentSession({
 		cwd: opts.cwd,
 		model: opts.model,
 		thinkingLevel: opts.thinkingLevel,
 		tools: opts.tools,
-		sessionManager: SessionManager.inMemory(opts.cwd),
+		sessionManager: SessionManager.create(opts.cwd, sessionDir, {
+			id: opts.childId,
+			parentSession: opts.parentSessionId,
+		}),
 		settingsManager,
 		resourceLoader: loader,
 		modelRuntime,
 	});
+
+	const now = Date.now();
+	const handle: ChildHandle = {
+		id: opts.childId,
+		session,
+		status: "running",
+		cwd: opts.cwd,
+		ownerSession: opts.parentSessionId,
+		description: opts.description,
+		tools: opts.tools,
+		turns: 0,
+		createdAt: now,
+		lastActiveAt: now,
+	};
+	register(handle);
+	return handle;
+}
+
+/**
+ * Rebuild a child whose handle is gone but whose session file remains (evicted,
+ * or left by a previous engine process).
+ */
+async function reviveChild(opts: {
+	cwd: string;
+	model: Model<any> | undefined;
+	thinkingLevel: ThinkingLevel | undefined;
+	tools: string[];
+	parentSessionId: string;
+	childId: string;
+	description?: string;
+}): Promise<ChildHandle> {
+	const agentDir = getAgentDir();
+	const { settingsManager, loader, modelRuntime } = await getChildResources(opts.cwd, agentDir);
+	const sessionPath = findChildSessionFile(opts.cwd, opts.parentSessionId, opts.childId, agentDir);
+	if (!sessionPath) throw new Error(`子 agent 会话文件已消失：${opts.childId}`);
+
+	const { session } = await createAgentSession({
+		cwd: opts.cwd,
+		model: opts.model,
+		thinkingLevel: opts.thinkingLevel,
+		tools: opts.tools,
+		sessionManager: SessionManager.open(sessionPath, dirname(sessionPath), opts.cwd),
+		settingsManager,
+		resourceLoader: loader,
+		modelRuntime,
+	});
+
+	let priorTurns = 0;
+	for (const m of session.agent.state.messages) {
+		if (m.role === "assistant") priorTurns++;
+	}
+	const now = Date.now();
+	const handle: ChildHandle = {
+		id: opts.childId,
+		session,
+		status: "running",
+		cwd: opts.cwd,
+		ownerSession: opts.parentSessionId,
+		description: opts.description,
+		tools: opts.tools,
+		turns: priorTurns,
+		createdAt: now,
+		lastActiveAt: now,
+	};
+	register(handle);
+	return handle;
+}
+
+/**
+ * Resolve once the child's agent loop has gone idle.
+ *
+ * `followUp` returns as soon as the message is queued, so a resume of a running
+ * child has to wait for completion explicitly. `agent_end` fires at the end of
+ * each loop, but a retrying turn emits it with `willRetry: true` — treating
+ * that as done would cut the answer off mid-retry.
+ */
+function waitForIdle(session: AgentSession, signal: AbortSignal | undefined): Promise<void> {
+	if (!session.isStreaming) return Promise.resolve();
+	return new Promise<void>((resolve) => {
+		const finish = () => {
+			unsubscribe();
+			signal?.removeEventListener("abort", finish);
+			resolve();
+		};
+		const unsubscribe = session.subscribe((event) => {
+			if (event.type === "agent_end" && !(event as { willRetry?: boolean }).willRetry) finish();
+		});
+		signal?.addEventListener("abort", finish, { once: true });
+		// The loop can finish between the isStreaming check and subscribing.
+		if (!session.isStreaming) finish();
+	});
+}
+
+async function runTurn(opts: {
+	handle: ChildHandle;
+	parentSessionId: string;
+	prompt: string;
+	signal: AbortSignal | undefined;
+	resumed: boolean;
+	/** Task summary echoed back in every progress update. */
+	description?: string;
+	/** Progress sink: called on each child step, tool call and assistant text. */
+	onUpdate?: AgentToolUpdateCallback<SubagentDetails>;
+}): Promise<ChildOutcome> {
+	const agentDir = getAgentDir();
+	const { handle } = opts;
+	const session = handle.session;
+	// Messages already on record before this turn: the transcript only renders
+	// the new slice, and the final answer must come from this turn alone.
+	const baseline = session.agent.state.messages.length;
+	handle.status = "running";
+	handle.lastActiveAt = Date.now();
 
 	// Track the child's activity (steps, tokens, texts, tool calls) and push
 	// it to the parent's UI as partial tool results.
@@ -304,25 +468,55 @@ async function runChild(opts: {
 	const onAbort = () => void session.abort();
 	opts.signal?.addEventListener("abort", onAbort, { once: true });
 
+	let thrown: unknown;
 	try {
-		await session.prompt(opts.prompt);
+		// followUp queues behind work already in flight; prompt starts a fresh
+		// turn on a stopped session. Picking the wrong one either drops the
+		// message or double-drives the loop, so the caller never chooses —
+		// status does.
+		if (opts.resumed && session.isStreaming) {
+			// followUp only enqueues and returns at once, so we must wait for the
+			// agent loop to go idle ourselves. Returning here instead would hand
+			// the parent "(子 agent 未产生回复)" while the child is mid-answer.
+			await session.followUp(opts.prompt);
+			await waitForIdle(session, opts.signal);
+		} else {
+			await session.prompt(opts.prompt);
+		}
+	} catch (err) {
+		// A failed turn still leaves usable history behind, and the child stays
+		// resumable. Record it and fall through to build a partial outcome
+		// rather than losing the work to an exception.
+		thrown = err;
 	} finally {
 		if (idleTimer) clearTimeout(idleTimer);
 		opts.signal?.removeEventListener("abort", onAbort);
 		unsubscribe();
 	}
 
-	const messages = session.agent.state.messages;
+	const allMessages = session.agent.state.messages;
+	const turnMessages = allMessages.slice(baseline);
 	let turns = 0;
 	let tokens = 0;
-	for (const m of messages) {
+	for (const m of allMessages) {
 		if (m.role === "assistant") {
 			turns++;
 			tokens += m.usage?.input ?? 0;
 			tokens += m.usage?.output ?? 0;
 		}
 	}
-	const last = [...messages].reverse().find((m) => m.role === "assistant");
+	const last = [...turnMessages].reverse().find((m) => m.role === "assistant");
+	// A failing turn almost never throws: the session records it as an assistant
+	// message with stopReason "error" and resolves normally. Reading only the
+	// thrown value made every provider fault look like a silent empty reply.
+	const erroredMessage = [...turnMessages].reverse().find((m) => m.role === "assistant" && m.stopReason === "error");
+	const failed = thrown
+		? thrown instanceof Error
+			? thrown.message
+			: String(thrown)
+		: erroredMessage
+			? ((erroredMessage as { errorMessage?: string }).errorMessage ?? "provider 报错（未提供详细信息）")
+			: undefined;
 	const raw = last ? assistantText(last) : "(子 agent 未产生回复)";
 	const truncated = raw.length > MAX_RESULT_CHARS;
 	const text = truncated
@@ -330,15 +524,28 @@ async function runChild(opts: {
 		: raw;
 	const aborted = opts.signal?.aborted ?? false;
 
+	handle.turns += 1;
+	handle.lastActiveAt = Date.now();
+	handle.status = failed ? "failed" : stalled ? "stalled" : "idle";
+
+	const outcome = failed
+		? `报错中断：${failed}`
+		: stalled
+			? `静默超过 ${IDLE_TIMEOUT_MS / 60_000} 分钟被中止`
+			: aborted
+				? "被用户中止"
+				: "正常结束";
+
 	// Written for every ending, not just the bad ones: the parent may also want
 	// the full process behind a truncated but successful answer.
-	const transcriptPath = writeTranscript(
-		agentDir,
-		renderTranscript(messages, {
+	const transcriptPath = appendTranscript(
+		childTranscriptPath(handle.cwd, opts.parentSessionId, handle.id, agentDir),
+		renderTranscript(turnMessages, {
 			prompt: opts.prompt,
-			description: opts.description,
-			tools: opts.tools,
-			outcome: stalled ? `静默超过 ${IDLE_TIMEOUT_MS / 60_000} 分钟被中止` : aborted ? "被用户中止" : "正常结束",
+			description: opts.description ?? handle.description,
+			tools: handle.tools,
+			outcome,
+			turn: handle.turns,
 		}),
 	);
 
@@ -349,8 +556,11 @@ async function runChild(opts: {
 		truncated,
 		stalled,
 		aborted,
+		failed,
 		activity,
 		transcriptPath,
+		childId: handle.id,
+		resumed: opts.resumed,
 	};
 }
 
@@ -376,39 +586,88 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 			"派生一个独立的子 agent 执行一项自包含的任务，并把它的最终答复带回来。" +
 			"子 agent 看不到当前对话，prompt 必须完整自包含（含目标、路径、输出要求）。" +
 			"适合独立的调研、多文件探索、批量验证等可以并行的工作：在一条消息里发起多个 agent 调用即可并行执行。" +
+			"返回结果带一个子 agent id（如 subagent-2）：把它传给 resume 可以给同一个子 agent 追加消息、让它接着干，" +
+			"它会保留之前的全部上下文。子 agent 因报错或卡死中断时，用 resume 唤醒它继续，比重新派一个从头跑便宜得多。" +
 			"默认工具集为只读探索 + 联网抓取（read/grep/glob/ls/web_fetch），结果文本超长会截断；" +
 			"截断或中途停下时，返回文本里会附上完整过程转录的文件路径，可用 read/grep 自行查看。",
-		promptSnippet: "agent(prompt, description?, tools?) — 派生子 agent 执行独立任务并回传结果；可并行",
+		promptSnippet:
+			"agent(prompt, description?, tools?, resume?) — 派生子 agent 执行独立任务；可并行；resume=子agent id 可续写/唤醒",
+		promptGuidelines: ["子 agent 中途报错或卡死时，用 agent(resume=它的 id) 唤醒继续，不要重新派一个从头跑"],
 		parameters: Type.Object({
 			prompt: Type.String({
-				description: "完整自包含的任务描述：目标、相关路径、期望的输出格式。子 agent 看不到本次对话的任何内容。",
+				description:
+					"完整自包含的任务描述：目标、相关路径、期望的输出格式。子 agent 看不到本次对话的任何内容。" +
+					"搭配 resume 时，这里写要追加给它的新指令（它记得之前的上下文，不用重复）。",
 			}),
 			description: Type.Optional(Type.String({ description: "3-5 个词的任务摘要，用于展示。" })),
 			tools: Type.Optional(
 				Type.Array(Type.String(), {
 					description:
 						`子 agent 可用的工具名列表，默认 ${DEFAULT_TOOLS.join("/")}。` +
-						"可选值：read/grep/glob/find/ls/bash/edit/write/web_fetch。",
+						"可选值：read/grep/glob/find/ls/bash/edit/write/web_fetch。resume 时忽略（沿用创建时的工具集）。",
+				}),
+			),
+			resume: Type.Optional(
+				Type.String({
+					description: "要继续的子 agent id（如 subagent-2，来自之前的返回结果）。缺省则新建一个子 agent。",
 				}),
 			),
 		}),
 		async execute(
 			_toolCallId: string,
-			params: { prompt: string; description?: string; tools?: string[] },
+			params: { prompt: string; description?: string; tools?: string[]; resume?: string },
 			signal: AbortSignal | undefined,
 			onUpdate: AgentToolUpdateCallback<SubagentDetails> | undefined,
 			ctx: ExtensionContext,
 		): Promise<AgentToolResult<SubagentDetails>> {
 			const tools = params.tools?.length ? params.tools : DEFAULT_TOOLS;
-			const release = await acquireSlot();
+			const parentSessionId = ctx.sessionManager.getSessionId();
+			const resumeId = params.resume?.trim();
+			// Resolve the child before taking a slot: a resident resume must not
+			// queue behind the children already holding every slot.
+			const resident = resumeId ? lookup(resumeId, parentSessionId) : undefined;
+			const release = await acquireSlot(resident !== undefined);
 			try {
-				const outcome = await runChild({
-					cwd: ctx.cwd,
-					model: ctx.model,
-					thinkingLevel: ctx.thinkingLevel,
+				let handle: ChildHandle;
+				if (resumeId) {
+					if (resident) {
+						handle = resident;
+					} else if (hasPersisted(ctx.cwd, parentSessionId, resumeId, getAgentDir())) {
+						// Evicted, or left by a previous engine process: the session
+						// file is the real record, so rebuild from it.
+						handle = await reviveChild({
+							cwd: ctx.cwd,
+							model: ctx.model,
+							thinkingLevel: ctx.thinkingLevel,
+							tools,
+							parentSessionId,
+							childId: resumeId,
+							description: params.description,
+						});
+					} else {
+						// Unknown and not-yours are one error on purpose: ids are
+						// guessable, so distinguishing them would leak whether another
+						// conversation owns that child.
+						throw new Error(`未知子 agent：${resumeId}`);
+					}
+				} else {
+					handle = await createChild({
+						cwd: ctx.cwd,
+						model: ctx.model,
+						thinkingLevel: ctx.thinkingLevel,
+						tools,
+						parentSessionId,
+						childId: nextChildId(),
+						description: params.description,
+					});
+				}
+
+				const outcome = await runTurn({
+					handle,
+					parentSessionId,
 					prompt: params.prompt,
-					tools,
 					signal,
+					resumed: Boolean(resumeId),
 					description: params.description,
 					onUpdate,
 				});
@@ -420,6 +679,9 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 					stalled: outcome.stalled,
 					activity: outcome.activity,
 					transcriptPath: outcome.transcriptPath,
+					childId: outcome.childId,
+					resumed: outcome.resumed,
+					failed: outcome.failed,
 				};
 				// A cut-short or truncated child still did real work. Returning an
 				// error here makes the parent model discard all of it and retry from
@@ -428,12 +690,31 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 				const pointer = outcome.transcriptPath
 					? `\n\n（完整过程转录：${outcome.transcriptPath}，可用 read/grep 自行查看）`
 					: "";
+				// Every ending repeats the id: a stalled or truncated child is exactly
+				// when the parent most needs to know it can resume instead of restart.
+				const resumeHint = `\n\n（子 agent id：${outcome.childId}，用 agent(resume="${outcome.childId}", prompt="…") 可让它接着干）`;
+				// A thrown turn is the case the parent most needs spelled out: without
+				// the reason it only sees "no reply" and cannot tell a provider blip
+				// (resume as-is) from a bad instruction (change the prompt first).
+				if (outcome.failed) {
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`子 agent 本轮报错中断：${outcome.failed}\n` +
+									`已完成 ${outcome.turns} 轮，之前的上下文没有丢。中断前的最后一段输出：\n${outcome.text}${pointer}${resumeHint}`,
+							},
+						],
+						details,
+					};
+				}
 				if (outcome.aborted) {
 					return {
 						content: [
 							{
 								type: "text",
-								text: `子 agent 已中止（已运行 ${outcome.turns} 轮）。部分结果：\n${outcome.text}${pointer}`,
+								text: `子 agent 已中止（已运行 ${outcome.turns} 轮）。部分结果：\n${outcome.text}${pointer}${resumeHint}`,
 							},
 						],
 						details: { ...details, aborted: true },
@@ -446,7 +727,7 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 								type: "text",
 								text:
 									`子 agent 连续 ${IDLE_TIMEOUT_MS / 60_000} 分钟无任何动静，已按卡死处理中止（已运行 ${outcome.turns} 轮）。` +
-									`中止前的最后一段输出：\n${outcome.text}${pointer}`,
+									`中止前的最后一段输出：\n${outcome.text}${pointer}${resumeHint}`,
 							},
 						],
 						details,
@@ -454,7 +735,12 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 				}
 				const head = params.description ? `【${params.description}】\n` : "";
 				return {
-					content: [{ type: "text", text: `${head}${outcome.text}${outcome.truncated ? pointer : ""}` }],
+					content: [
+						{
+							type: "text",
+							text: `${head}${outcome.text}${outcome.truncated ? pointer : ""}${resumeHint}`,
+						},
+					],
 					details,
 				};
 			} catch (err) {

@@ -1,20 +1,20 @@
 /**
  * Subagent transcript rendering and persistence.
  *
- * A child agent's history lives in an in-memory SessionManager, so when the run
- * is cut short (stalled watchdog, user abort) or its final text gets truncated,
- * the parent has no way to see what actually happened. This module serializes
- * the child's messages to a standalone markdown file the parent can `read`.
+ * When a run is cut short (stalled watchdog, user abort) or its final text gets
+ * truncated, the parent has no way to see what actually happened. This module
+ * serializes the child's messages to a markdown file the parent can `read`.
  *
- * The file deliberately does NOT go under the sessions directory: the desktop
- * lists every `.jsonl` there as a user-visible conversation, and child runs must
- * not show up in that list.
+ * The transcript now sits beside the child's session file, under the parent's
+ * cwd bucket (see children.ts for why), and is appended to once per turn: a
+ * resumable child has a history spanning several turns, and overwriting would
+ * leave only the last one readable.
  *
- * Design: doc/2026-09-10-子agent-idle-watchdog与转录落盘.md
+ * Design: doc/2026-09-11-可续写子agent与主agent派生.md
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 /** Per-block cap inside the transcript. Generous: this file is the fallback. */
 const MAX_BLOCK_CHARS = 4_000;
@@ -51,25 +51,34 @@ export interface TranscriptContext {
 	tools: string[];
 	/** Why the run ended, rendered verbatim into the header. */
 	outcome: string;
+	/** 1-based turn number; a resumed child appends turn 2, 3, ... */
+	turn: number;
 }
 
 /**
- * Render a child's message list as markdown: one section per message, with tool
- * calls and their results inline. Blocks are clipped so a runaway tool result
- * cannot produce a multi-megabyte file.
+ * Render one turn of a child's run as a markdown section.
+ *
+ * `messages` is the slice belonging to this turn only, not the whole history —
+ * the caller tracks where the previous turn ended, so a resumed child does not
+ * re-render everything it already wrote.
  */
 export function renderTranscript(messages: readonly unknown[], ctx: TranscriptContext): string {
 	const lines: string[] = [];
-	lines.push(`# 子 agent 转录${ctx.description ? `：${ctx.description}` : ""}`);
+	if (ctx.turn <= 1) {
+		lines.push(`# 子 agent 转录${ctx.description ? `：${ctx.description}` : ""}`);
+		lines.push("");
+		lines.push(`- 可用工具：${ctx.tools.join(", ")}`);
+		lines.push("");
+	}
+	lines.push(`## 第 ${ctx.turn} 轮`);
 	lines.push("");
 	lines.push(`- 结束原因：${ctx.outcome}`);
-	lines.push(`- 可用工具：${ctx.tools.join(", ")}`);
 	lines.push("");
-	lines.push("## 任务 prompt");
+	lines.push(`### 本轮 prompt`);
 	lines.push("");
 	lines.push(clip(ctx.prompt));
 	lines.push("");
-	lines.push("## 过程");
+	lines.push("### 过程");
 	lines.push("");
 
 	let step = 0;
@@ -78,7 +87,7 @@ export function renderTranscript(messages: readonly unknown[], ctx: TranscriptCo
 		if (message.role === "assistant") {
 			step++;
 			const text = blocksText(message.content).trim();
-			lines.push(`### 第 ${step} 步 · assistant`);
+			lines.push(`#### 第 ${step} 步 · assistant`);
 			lines.push("");
 			if (text) {
 				lines.push(clip(text));
@@ -117,28 +126,19 @@ function safeJson(value: unknown): string {
 }
 
 /**
- * Timestamped, collision-resistant file name.
- *
- * `:` and `.` are stripped from the ISO timestamp: Windows forbids `:` in file
- * names, and this product ships on Windows first.
+ * Append one turn's transcript section to `path`, creating it on the first
+ * turn. Returns the path, or undefined on any failure: a transcript problem
+ * (full disk, read-only profile) must never turn a usable child result into an
+ * error.
  */
-export function transcriptFileName(now: Date = new Date()): string {
-	const stamp = now.toISOString().replaceAll(":", "-").replaceAll(".", "-");
-	const suffix = Math.random().toString(36).slice(2, 8);
-	return `${stamp}-${suffix}.md`;
-}
-
-/**
- * Write a transcript under `<agentDir>/subagent-transcripts/` and return its
- * path. Returns undefined on any failure: a transcript problem (full disk,
- * read-only profile) must never turn a usable child result into an error.
- */
-export function writeTranscript(agentDir: string, content: string): string | undefined {
+export function appendTranscript(path: string, content: string): string | undefined {
 	try {
-		const dir = join(agentDir, "subagent-transcripts");
-		mkdirSync(dir, { recursive: true });
-		const path = join(dir, transcriptFileName());
-		writeFileSync(path, content, "utf8");
+		mkdirSync(dirname(path), { recursive: true });
+		if (existsSync(path)) {
+			appendFileSync(path, content, "utf8");
+		} else {
+			writeFileSync(path, content, "utf8");
+		}
 		return path;
 	} catch {
 		return undefined;
