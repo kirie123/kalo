@@ -42,9 +42,12 @@
 ### 桌面端（kalo-desktop）
 - [cargo check 报 os error 32（文件被运行中的 kalo 锁住）](cargo-file-locked-os-error-32.md)
 - [ContextRing 加载历史会话后始终显示「–」（上下文长度不刷新）](context-ring-shows-dash-on-history-session.md)
+- [自定义 Provider 的模型「读不到图」（模型定义没声明 image）](custom-provider-image-input.md)
+- [从 UI 建的模型不思考、读不到图、输出被截短、手工字段被抹（模型定义缺能力字段）](custom-provider-model-capabilities.md)
 
 ### 引擎（kalo-harness / sidecar）
-- [OpenAI-compat 代理的缓存命中率始终显示 0%（Anthropic 原生字段未映射）](openai-compat-proxy-cache-hit-always-zero.md)
+- [OpenAI-compat 代理的缓存命中率始终显示 0%（Anthropic 原生字段未映射 / OpenAI 兼容层不报缓存）](openai-compat-proxy-cache-hit-always-zero.md)
+- [Anthropic 协议网关返回 401（网关只认 Authorization: Bearer）或直接拒绝 pi 内核](anthropic-gateway-401-bearer-auth.md)
 
 ### 工具链
 - [npm registry 证书过期导致 npx 失败](npm-registry-cert-expired.md)
