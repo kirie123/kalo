@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "bun build --compile --target=bun-windows-x64 --outfile ../src-tauri/binaries/kalo-gateway-x86_64-pc-windows-msvc src/main.ts"
+    "build": "bash ../../scripts/build-gateway.sh"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.51.0",

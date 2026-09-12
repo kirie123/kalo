@@ -31,13 +31,13 @@ kalo-desktop/
 
 - 前端通过 `src/lib/pi-bridge.ts` 与引擎 sidecar 通信。
 - 改动桥接协议（新增命令、改参数/返回结构）前：先写 `doc/YYYY-MM-DD-<主题>.md` 说明契约变化，并同步 `kalo-harness` 侧的扩展实现。
-- 引擎 exe 重建后必须同步 `src-tauri/binaries/pi-x86_64-pc-windows-msvc.exe`（见根 AGENTS.md）。
+- 引擎重建走 `scripts/build-engine.sh`，产物名为 `src-tauri/binaries/pi-<target-triple>[.exe]`，由 `src-tauri/src/sidecar.rs` 按编译期 target triple 定位（见根 AGENTS.md）。
 
 ## Rust 侧约定
 
 - 每文件 `#[cfg(test)] mod tests` 就近放单测；`cargo test` 只跑 `src-tauri` 下的测试。
 - 错误处理：返回 `Result<T, E>`，用户可见错误带可操作提示。
-- 涉及路径/进程/权限的改动，默认按 Windows 行为评估。
+- 涉及路径/进程/权限的改动，默认同时按 Windows 与 macOS 行为评估（根 AGENTS.md 的双平台等价契约）。OS 差异收敛在窄适配层：`sidecar.rs`、`proc.rs`、`files.rs::open_path`、`market_env.rs::resolve_bash`；home 目录一律 `USERPROFILE` 回退 `HOME`。
 
 ## 检查命令
 

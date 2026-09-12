@@ -26,10 +26,13 @@ npm run tauri dev
 重新构建网关：
 
 ```bash
-cd gateway && bun install && bun run build   # 产出 ../src-tauri/binaries/kalo-gateway-x86_64-pc-windows-msvc.exe
+bash ../scripts/build-gateway.sh                      # 按宿主平台构建
+bash ../scripts/build-gateway.sh --platform windows-x64   # 交叉构建
 ```
 
-也可用 `KALO_GATEWAY_PATH=/path/to/kalo-gateway.exe` 指向外部网关。
+产出 `src-tauri/binaries/kalo-gateway-<target-triple>[.exe]`（如 macOS arm64 上是
+`kalo-gateway-aarch64-apple-darwin`）。也可用 `KALO_GATEWAY_PATH=/path/to/kalo-gateway`
+指向外部网关。
 
 ## 定时任务（Scheduler）
 
@@ -76,28 +79,37 @@ cd gateway && bun install && bun run build   # 产出 ../src-tauri/binaries/kalo
   `KALO_INTERNAL_SKILLS_DIR` 可指向任意目录覆盖两者。
 
 
-## 重新构建引擎（pi.exe）
+## 重新构建引擎
 
 ```bash
-cd ../kalo-harness
-npm ci --ignore-scripts
-npm run build            # 或 npm run build:offline
-bash scripts/build-binaries.sh --platform windows-x64 --skip-install --skip-build --offline-model-data
-# 拷贝到 sidecar 目录（exe 需按 Tauri 三元组命名）
-SRC=packages/coding-agent/binaries/windows-x64
-DST=../kalo-desktop/src-tauri/binaries
-mkdir -p "$DST" && cd "$SRC"
-cp -r pi.exe photon_rs_bg.wasm package.json theme assets export-html native node_modules "$DST/"
-mv "$DST/pi.exe" "$DST/pi-x86_64-pc-windows-msvc.exe"
+bash ../scripts/build-engine.sh                      # 按宿主平台构建
+bash ../scripts/build-engine.sh --platform windows-x64   # 交叉构建
 ```
 
-也可用 `KALO_PI_PATH=/path/to/pi.exe` 指向外部引擎（此时引擎自带的资源需与 exe 同目录）。
+脚本会构建 harness、编译引擎、把产物和运行时资源 staging 到
+`src-tauri/binaries/pi-<target-triple>[.exe]`。
+
+`src-tauri/src/sidecar.rs` 按**编译期 target triple**定位 sidecar，所以文件名里的三元组
+必须与 `cargo` 的 `TARGET` 一致——两侧都由 `scripts/platform.sh` 的同一份映射推导。
+不同平台的产物在 `binaries/` 下扁平共存：可执行文件按三元组区分，平台相关资源本身
+已按名字隔离（`native/darwin` vs `native/win32`、`clipboard.darwin-arm64.node` vs
+`clipboard.win32-x64-msvc.node`），其余（`theme`、`assets`、`export-html`、wasm）平台中立。
+
+也可用 `KALO_PI_PATH=/path/to/pi` 指向外部引擎（此时引擎自带的资源需与可执行文件同目录）。
 
 ## 打包
 
 ```bash
-npm run tauri build   # 产出 src-tauri/target/release/bundle/nsis/ 安装包
+npm run tauri build   # Windows：产出 src-tauri/target/release/bundle/nsis/ 安装包
 ```
+
+平台相关的 bundle 配置拆在 `src-tauri/tauri.windows.conf.json` 与
+`tauri.macos.conf.json`，由 Tauri 按宿主平台自动合并。
+
+> macOS 目前只验证到 `npm run tauri dev`。`.app` 打包**未验证**：app bundle 把资源放在
+> `Contents/Resources/` 而非可执行文件旁，`sidecar::resolve()` 的「exe 旁 binaries/」
+> 这一步届时需要改用 Tauri 的 `path().resource_dir()`。详见
+> [doc/2026-09-12-macos-平台支持.md](../doc/2026-09-12-macos-平台支持.md)。
 
 ## IPC 契约
 

@@ -11,13 +11,13 @@
 - `kalo-desktop/`：Tauri 桌面端（React + Rust），引擎通过 sidecar 子进程通信
 - `kalo-harness/`：vendored pi 引擎（改动需遵守 `kalo-harness/AGENTS.md`，如 `npm run check`、erasable TS、不擅自跑全量测试）
 - `internal-skills/`：随安装包分发的内置 skill（纯 markdown，入库）
-- `scripts/build-engine.sh`：重建引擎 sidecar exe
+- `scripts/build-engine.sh` / `scripts/build-gateway.sh`：重建 sidecar（默认按宿主平台，`--platform` 可交叉构建）；命名映射在 `scripts/platform.sh`
 - `doc/`：设计文档 + `README.md` 索引 + `troubleshooting/` 剧本库（全部入库）
 
 ## 引擎定制点
 
 - 内置扩展：`kalo-harness/packages/coding-agent/src/extensions/<name>/`，注册进同目录 `index.ts` 的 `builtInExtensions`
-- 重建 exe 后需同步到 `kalo-desktop/src-tauri/binaries/pi-x86_64-pc-windows-msvc.exe`
+- 重建后由 `scripts/build-engine.sh` 自动 staging 到 `kalo-desktop/src-tauri/binaries/pi-<target-triple>[.exe]`；多平台产物在该目录扁平共存，互不覆盖
 
 ## 内置 skill
 
@@ -40,7 +40,7 @@
 - **文件行数上限**：业务代码文件建议 ≤800 行（不含空行/注释）；超过是重构信号，先拆分再加逻辑。
 - **测试纪律**：写/改/删测试前先看 `kalo-desktop/AGENTS.md` 的测试边界；纯逻辑（折叠/解析/gate 检查）必须可单测，够到 Tauri IPC 的部分要隔离。
 - **提交规范**：Conventional Commits：`<type>(<scope>): <中文或英文描述>`，type 限 `feat/fix/docs/refactor/test/chore`，一次提交聚焦一件事。例：`fix(desktop): 文件预览全屏可退出`、`feat(skills): 新增 glassnode-research 内置技能`。
-- **Windows 是默认契约**：本产品是 Windows 桌面应用，所有改动默认评估 Windows 行为，不能只按 POSIX 上下文写码。改动可能触及路径/文件系统语义、临时目录、可执行文件发现与后缀、命令引用、shell 选择、环境变量、进程创建、信号、权限、符号链接、socket、打包或原生依赖时，先评估 Windows 侧影响（桌面端细化见 `kalo-desktop/AGENTS.md` 的 Rust 侧约定）；OS 差异收敛在窄适配层，业务逻辑保持平台中立。
+- **Windows / macOS 双平台等价契约**：两个平台一等公民，所有改动默认同时评估两侧行为，既不能只按 POSIX 写码，也不能只按 Win32 写码。改动可能触及路径/文件系统语义（分隔符、大小写敏感性）、临时目录、可执行文件发现与后缀、命令引用、shell 选择、环境变量（`USERPROFILE` vs `HOME`）、进程创建与终止、信号、权限位、符号链接、socket、打包或原生依赖时，先评估两平台影响（桌面端细化见 `kalo-desktop/AGENTS.md` 的 Rust 侧约定）。**OS 差异收敛在窄适配层，业务逻辑保持平台中立**——现成样板：`src-tauri/src/sidecar.rs`（按 target triple 定位 sidecar）、`proc.rs`（`no_window`/`kill_tree`）、`files.rs::open_path`、`market_env.rs::resolve_bash`。sidecar 二进制一律由 `scripts/platform.sh` 的映射命名，不要在代码里写死某个平台的文件名。发行安装包目前仍只出 Windows（nsis）；macOS 走 `npm run tauri dev`，`.app` 打包未验证。
 
 ## Self-Evolution（文档影响检查）
 

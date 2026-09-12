@@ -17,6 +17,7 @@ mod memory;
 mod onboarding;
 mod session;
 mod session_paging;
+mod sidecar;
 mod sessions_store;
 mod workspace;
 mod pi_config;

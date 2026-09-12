@@ -40,7 +40,6 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::session::{NdjsonFramer, PiProcess, SessionManager};
 
-const SIDECAR: &str = "kalo-gateway-x86_64-pc-windows-msvc.exe";
 /// Auto-restart budget for a crashed gateway that should be connected.
 const MAX_RESTARTS: u32 = 5;
 
@@ -935,38 +934,10 @@ fn on_gateway_exit(app: &AppHandle, code: Option<i32>) {
     }
 }
 
-/// Resolve the gateway executable, mirroring `resolve_pi_path()`:
-/// 1. `KALO_GATEWAY_PATH` env var,
-/// 2. `binaries/kalo-gateway-<triple>.exe` next to the app exe,
-/// 3. `src-tauri/binaries/` dev layout.
+/// Resolve the gateway executable. Lookup order and platform naming live in
+/// [`crate::sidecar`], shared with the engine so the two cannot drift apart.
 fn resolve_gateway_path() -> Result<PathBuf, String> {
-    if let Ok(override_path) = std::env::var("KALO_GATEWAY_PATH") {
-        let p = PathBuf::from(override_path);
-        if p.is_file() {
-            return Ok(p);
-        }
-        return Err(format!("KALO_GATEWAY_PATH does not point to a file: {}", p.display()));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join("binaries").join(SIDECAR);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(SIDECAR);
-    if p.is_file() {
-        return Ok(p);
-    }
-
-    Err(format!(
-        "gateway binary not found; set KALO_GATEWAY_PATH or place {SIDECAR} under a binaries/ directory"
-    ))
+    crate::sidecar::resolve("kalo-gateway", "KALO_GATEWAY_PATH")
 }
 
 // ============================================================================

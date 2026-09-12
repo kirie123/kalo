@@ -7,8 +7,8 @@
  * Fast path: binaries present → exits immediately.
  * Slow path (first run, or FORCE_ENGINE_BUILD=1):
  *   1. install kalo-harness dependencies if node_modules is missing
- *   2. scripts/build-engine.sh  → pi.exe + runtime resources
- *   3. compile the gateway sidecar with bun
+ *   2. scripts/build-engine.sh  → engine + runtime resources
+ *   3. scripts/build-gateway.sh → gateway sidecar
  *
  * Run via bun at the repo root: `bun scripts/ensure-engine.mjs`
  */
@@ -20,8 +20,6 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const BINARIES = join(ROOT, "kalo-desktop", "src-tauri", "binaries");
-const PI_EXE = join(BINARIES, "pi-x86_64-pc-windows-msvc.exe");
-const GATEWAY_EXE = join(BINARIES, "kalo-gateway-x86_64-pc-windows-msvc.exe");
 const HARNESS = join(ROOT, "kalo-harness");
 const GATEWAY_DIR = join(ROOT, "kalo-desktop", "gateway");
 
@@ -59,6 +57,34 @@ function findBash() {
   }
   return { cmd: "bash", shell: false }; // PATH lookup (macOS / Linux / Git-Bash-first PATH)
 }
+
+/**
+ * Ask scripts/platform.sh for this platform's sidecar naming, so the staleness
+ * check looks for exactly the files the build scripts produce. Hard-coding the
+ * names here would reintroduce the bug this whole naming scheme exists to
+ * prevent: on a foreign platform the check passes on a binary that cannot run
+ * (or fails on one that was just built successfully).
+ */
+function sidecarNames() {
+  const bash = findBash();
+  const res = spawnSync(
+    bash.cmd,
+    ["-c", 'source "$0/scripts/platform.sh" && kalo_platform_init && printf "%s\\n%s\\n" "$KALO_TRIPLE" "$KALO_EXE_SUFFIX"', ROOT],
+    { cwd: ROOT, shell: bash.shell, encoding: "utf8" },
+  );
+  if (res.status !== 0) {
+    console.error("[ensure-engine] cannot resolve target platform via scripts/platform.sh");
+    console.error(res.stderr ?? "");
+    process.exit(res.status ?? 1);
+  }
+  const [triple = "", suffix = ""] = res.stdout.split("\n");
+  return {
+    pi: join(BINARIES, `pi-${triple}${suffix}`),
+    gateway: join(BINARIES, `kalo-gateway-${triple}${suffix}`),
+  };
+}
+
+const { pi: PI_EXE, gateway: GATEWAY_EXE } = sidecarNames();
 
 const newerThan = (file, reference) => statSync(file).mtimeMs > statSync(reference).mtimeMs;
 
@@ -164,7 +190,10 @@ if (FORCE || engineStale()) {
 if (FORCE || gatewayStale()) {
   console.log("[ensure-engine] building kalo-gateway...");
   ensureGatewayDeps();
-  run("bun", ["run", "build"], GATEWAY_DIR);
+  // Via findBash() rather than `bun run build`: the package script shells out
+  // to build-gateway.sh, and on Windows a bare `bash` is often WSL's.
+  const gwBash = findBash();
+  run(gwBash.cmd, ["scripts/build-gateway.sh", "--skip-typecheck"], ROOT, gwBash.shell);
   if (!existsSync(GATEWAY_EXE)) {
     console.error(`[ensure-engine] gateway build finished but ${GATEWAY_EXE} is still missing`);
     process.exit(1);

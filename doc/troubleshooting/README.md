@@ -46,14 +46,12 @@
 - [从 UI 建的模型不思考、读不到图、输出被截短、手工字段被抹（模型定义缺能力字段）](custom-provider-model-capabilities.md)
 
 ### 引擎（kalo-harness / sidecar）
+- [启动后提示「引擎未响应」（解析到了其他平台的 sidecar 二进制）](engine-unresponsive-wrong-platform-binary.md)
 - [OpenAI-compat 代理的缓存命中率始终显示 0%（Anthropic 原生字段未映射 / OpenAI 兼容层不报缓存）](openai-compat-proxy-cache-hit-always-zero.md)
 - [Anthropic 协议网关返回 401（网关只认 Authorization: Bearer）或直接拒绝 pi 内核](anthropic-gateway-401-bearer-auth.md)
 
 ### 工具链
 - [npm registry 证书过期导致 npx 失败](npm-registry-cert-expired.md)
-
-### 引擎（kalo-harness / sidecar）
-- （待补充）
 
 ### 构建/发布
 - （待补充）

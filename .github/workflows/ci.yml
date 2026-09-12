@@ -41,9 +41,17 @@ jobs:
       - run: npx vitest run
 
   # Rust 后端检查（src-tauri）
+  #
+  # 双平台矩阵：根 AGENTS.md 的「Windows / macOS 双平台等价契约」要求 sidecar
+  # 命名等平台相关逻辑两侧都成立。macOS job 会真正跑 sidecar.rs 的单测，挡住
+  # 「又把某个平台的二进制文件名写死进代码」这类回归。
   desktop-rust:
     name: Desktop Rust (check + test)
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     defaults:
       run:
         working-directory: kalo-desktop/src-tauri
@@ -53,5 +61,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: kalo-desktop/src-tauri
+          key: ${{ matrix.os }}
       - run: cargo check
-      - run: cargo test --no-run
+      - run: cargo test

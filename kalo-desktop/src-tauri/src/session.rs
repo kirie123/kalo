@@ -128,50 +128,16 @@ impl NdjsonFramer {
     }
 }
 
-/// Resolve the pi executable:
-/// 1. `KALO_PI_PATH` env var (explicit override),
-/// 2. `binaries/pi-<target-triple>.exe` next to the app exe (Tauri sidecar),
-/// 3. `src-tauri/binaries/pi-<target-triple>.exe` (dev layout).
 /// Public alias: the engine binary path, for callers that need to hand it to
 /// a child process (a tool that spawns its own agent, for instance).
 pub fn engine_binary_path() -> Result<PathBuf, String> {
     resolve_pi_path()
 }
 
+/// Lookup order and platform naming live in [`crate::sidecar`], shared with the
+/// gateway so the two cannot drift apart.
 fn resolve_pi_path() -> Result<PathBuf, String> {
-    const SIDECAR: &str = "pi-x86_64-pc-windows-msvc.exe";
-
-    if let Ok(override_path) = std::env::var("KALO_PI_PATH") {
-        let p = PathBuf::from(override_path);
-        if p.is_file() {
-            return Ok(p);
-        }
-        return Err(format!(
-            "KALO_PI_PATH does not point to a file: {}",
-            p.display()
-        ));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let p = dir.join("binaries").join(SIDECAR);
-            if p.is_file() {
-                return Ok(p);
-            }
-        }
-    }
-
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("binaries")
-        .join(SIDECAR);
-    if p.is_file() {
-        return Ok(p);
-    }
-
-    Err(format!(
-        "pi binary not found; set KALO_PI_PATH or place {} under a binaries/ directory",
-        SIDECAR
-    ))
+    crate::sidecar::resolve("pi", "KALO_PI_PATH")
 }
 
 fn engine_args(cwd: &Path) -> Vec<OsString> {
