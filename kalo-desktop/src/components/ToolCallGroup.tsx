@@ -162,14 +162,17 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
 }
 
 function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) {
-  // Call details start closed, except edits (inline diff), running subagents
-  // (live activity feed), and the newest todo_write. Consecutive todo_write
-  // calls collapse into one group, so expanding every row would stack the same
-  // list over and over; only the current plan is worth showing unfolded.
+  // Call details start closed, except edits (inline diff) and the newest
+  // todo_write. Consecutive todo_write calls collapse into one group, so
+  // expanding every row would stack the same list over and over; only the
+  // current plan is worth showing unfolded.
+  //
+  // Subagents stay collapsed even while running: their live activity feed is
+  // long and re-expands on every session switch (rows remount), which buries
+  // the surrounding conversation. Progress stays visible in the row itself via
+  // the spinner and the "第 N 步" chip; click to open the feed on demand.
   const [open, setOpen] = useState(
-    rec.toolName === "edit" ||
-      (rec.toolName === "agent" && rec.status === "running") ||
-      (rec.toolName === "todo_write" && isLast),
+    rec.toolName === "edit" || (rec.toolName === "todo_write" && isLast),
   );
   const diff = extractDiff(rec.result) ?? extractDiff(rec.partialResult);
   const stats = diff ? diffStats(diff) : null;
