@@ -10,13 +10,16 @@ import ToolCallGroup from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
 
 export default function MessageList() {
-  const { timeline, history, loadingOlder, isStreaming, isCompacting } = useChatSelector((s) => ({
-    timeline: s.timeline,
-    history: s.history,
-    loadingOlder: s.loadingOlder,
-    isStreaming: s.isStreaming,
-    isCompacting: s.isCompacting,
-  }));
+  const { timeline, history, loadingOlder, isStreaming, isCompacting, activeSessionKey } = useChatSelector(
+    (s) => ({
+      timeline: s.timeline,
+      history: s.history,
+      loadingOlder: s.loadingOlder,
+      isStreaming: s.isStreaming,
+      isCompacting: s.isCompacting,
+      activeSessionKey: s.activeSessionKey,
+    }),
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const zoom = useChatZoom();
   // Stick to bottom unless the user scrolled up.
@@ -50,6 +53,30 @@ export default function MessageList() {
     const el = scrollRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [timeline, zoom]);
+
+  // Switching sessions always lands on the newest message: the stick-to-bottom
+  // flag is per-view, so without this reset a session left scrolled up would
+  // pin the next session's timeline mid-history. Layout for the incoming
+  // timeline is not measured yet on this pass, so the jump is deferred a frame
+  // (and repeated once more for late-measuring content such as images).
+  useEffect(() => {
+    stickToBottom.current = true;
+    setShowJump(false);
+    prependHeight.current = null;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      second = requestAnimationFrame(() => {
+        const el2 = scrollRef.current;
+        if (el2 && stickToBottom.current) el2.scrollTop = el2.scrollHeight;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      if (second) cancelAnimationFrame(second);
+    };
+  }, [activeSessionKey]);
 
   // After an older page is prepended, keep the viewport on the same message.
   useEffect(() => {

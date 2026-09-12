@@ -172,6 +172,13 @@ export interface ChatState {
    * the sidebar list, deduped by path.
    */
   pendingSessions: PendingSession[];
+  /**
+   * Pool key of the runtime currently rendered. Not session-scoped (it names
+   * *which* session is active), so it lives on the composed snapshot only.
+   * Views use it to reset per-session UI state (e.g. MessageList's
+   * stick-to-bottom flag) when the user switches sessions.
+   */
+  activeSessionKey: string;
 }
 
 /**
@@ -440,6 +447,7 @@ export class ChatStore {
       ...this.active.view,
       runningByFile: stableFlags,
       pendingSessions: stablePending,
+      activeSessionKey: this.active.key,
     };
     this.listeners.forEach((l) => l());
   }
