@@ -265,6 +265,79 @@ body {
   color: #c9d1d9;
 }
 
+/* SVG figure in the transcript (doc/2026-09-12-对话区svg渲染.md). Same card
+   chrome as .md-codeblock. The canvas gets a light backdrop by default —
+   figures assume a white page, and dark strokes would vanish on a dark card —
+   unless the figure paints its own background (`--own-bg`), where an extra
+   light frame around a dark card just looks like a printing error. */
+.svg-block {
+  margin: 0.7em 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0d1117;
+  overflow: hidden;
+}
+.svg-block-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 6px 2px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.svg-block-label {
+  font-size: 11px;
+  color: #8b949e;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.svg-block-bar button {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #8b949e;
+  opacity: 0.75;
+}
+.svg-block-bar button:hover {
+  color: #e6edf3;
+  opacity: 1;
+}
+.svg-block-canvas {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  background: #f6f8fa;
+  overflow-x: auto;
+}
+.svg-block-canvas--own-bg {
+  padding: 0;
+  background: transparent;
+}
+.svg-block-canvas svg {
+  max-width: 100%;
+  height: auto;
+}
+.svg-block-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: #8b949e;
+}
+.svg-block-source {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.svg-block-source code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: transparent;
+  color: #c9d1d9;
+}
+
 /* Whole-file code view (FilePreview): same github-dark hljs palette as
    .md-codeblock, but edge-to-edge without the chat bubble's card chrome. */
 .file-code {

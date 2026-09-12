@@ -292,6 +292,13 @@ fn read_file_text(path: String, max_bytes: Option<usize>) -> Result<FileText, St
     files::read_file_text(&path, max_bytes)
 }
 
+/// Save UTF-8 text to a user-picked path ("save as" in the transcript, e.g.
+/// exporting a rendered SVG figure).
+#[tauri::command(async)]
+fn write_file_text(path: String, contents: String) -> Result<(), String> {
+    files::write_file_text(&path, &contents)
+}
+
 /// Read a whole file as base64, for previews that need raw bytes (images,
 /// docx/xlsx, pdf). Over-cap files answer `truncated` with no data.
 #[tauri::command(async)]
@@ -667,6 +674,7 @@ fn main() {
             delete_memory,
             list_dir,
             read_file_text,
+            write_file_text,
             read_file_bytes,
             git_status,
             git_diff,

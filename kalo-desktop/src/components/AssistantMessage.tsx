@@ -1,53 +1,19 @@
-import hljs from "highlight.js";
 import { memo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { formatApiError } from "../lib/error-format";
+import { highlight } from "../lib/highlight";
+import { htmlToMarkdown } from "../lib/html-downgrade";
+import { splitSvgSegments } from "../lib/svg-render";
 import type { AssistantMessage as AssistantMessageType } from "../types";
 import { formatK } from "./ContextRing";
 import CopyButton from "./CopyButton";
 import InterruptDivider from "./InterruptDivider";
+import SvgBlock from "./SvgBlock";
 import ThinkingBlock from "./ThinkingBlock";
 import type { TurnUsage } from "../lib/timeline";
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/**
- * Highlight cache. A streaming message re-renders ~20 times a second, and
- * `highlightAuto` (used for fenced blocks without a language) is by far the
- * most expensive step in that path — without a cache it runs on every frame
- * for every code block already on screen. Exported for the file preview,
- * which highlights whole source files through the same pipeline.
- */
-const HL_CACHE = new Map<string, string>();
-const HL_CACHE_MAX = 200;
-
-export function highlight(code: string, lang?: string): string {
-  const key = `${lang ?? ""}${code}`;
-  const cached = HL_CACHE.get(key);
-  if (cached !== undefined) return cached;
-  let html: string;
-  try {
-    html =
-      lang && hljs.getLanguage(lang)
-        ? hljs.highlight(code, { language: lang }).value
-        : hljs.highlightAuto(code).value;
-  } catch {
-    html = escapeHtml(code);
-  }
-  // Crude FIFO trim: streaming produces a new key per frame, so the map must
-  // not be allowed to grow without bound.
-  if (HL_CACHE.size >= HL_CACHE_MAX) {
-    const oldest = HL_CACHE.keys().next().value;
-    if (oldest !== undefined) HL_CACHE.delete(oldest);
-  }
-  HL_CACHE.set(key, html);
-  return html;
-}
 
 /** Code renderer: inline code vs fenced block (highlight.js for blocks). */
 export function CodeRenderer({ className, children }: { className?: string; children?: ReactNode }) {
@@ -55,6 +21,9 @@ export function CodeRenderer({ className, children }: { className?: string; chil
   const lang = /language-([\w-]+)/.exec(className ?? "")?.[1];
   const isInline = !lang && !code.includes("\n");
   if (isInline) return <code className="md-inline-code">{code}</code>;
+
+  // ```svg draws the figure; the source stays one toggle away.
+  if (lang === "svg") return <SvgBlock source={code} />;
 
   const html = highlight(code, lang);
   return (
@@ -75,23 +44,36 @@ export function CodeRenderer({ className, children }: { className?: string; chil
  * of a streaming message grows, the earlier (finished) blocks skip remark/
  * rehype parsing entirely.
  *
+ * Inline `<svg>…</svg>` spans are carved out first and drawn as figures, and
+ * whitelisted HTML (`<h3>`, `<br>`, `<table>`…) is rewritten as markdown. We
+ * deliberately do not enable rehype-raw: no raw HTML is ever executed
+ * (doc/2026-09-12-对话区svg渲染.md).
+ *
  * Exported because the file preview renders markdown files through the same
  * pipeline — a `.md` file and the agent's prose should look identical.
  */
 export const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
+  const segments = splitSvgSegments(text);
   return (
     <div className="markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        components={{
-          code: CodeRenderer as any,
-          // CodeRenderer renders its own <pre>; avoid a double wrapper.
-          pre: ({ children }) => <>{children}</>,
-        }}
-      >
-        {text}
-      </ReactMarkdown>
+      {segments.map((segment, i) =>
+        segment.type === "svg" ? (
+          <SvgBlock key={i} source={segment.source} complete={segment.complete} />
+        ) : (
+          <ReactMarkdown
+            key={i}
+            remarkPlugins={[remarkGfm, remarkMath]}
+            rehypePlugins={[rehypeKatex]}
+            components={{
+              code: CodeRenderer as any,
+              // CodeRenderer renders its own <pre>; avoid a double wrapper.
+              pre: ({ children }) => <>{children}</>,
+            }}
+          >
+            {htmlToMarkdown(segment.text)}
+          </ReactMarkdown>
+        ),
+      )}
     </div>
   );
 });

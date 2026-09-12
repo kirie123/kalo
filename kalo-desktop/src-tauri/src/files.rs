@@ -148,6 +148,23 @@ pub fn read_file_text(path: &str, max_bytes: Option<usize>) -> Result<FileText, 
     })
 }
 
+/// Write UTF-8 text to an arbitrary path chosen by the user (the "save as"
+/// dialog picks it, so no allow-list here). Missing parent directories are
+/// created; errors carry the path so the toast is actionable.
+pub fn write_file_text(path: &str, contents: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    if p.as_os_str().is_empty() {
+        return Err("save path is empty".into());
+    }
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        }
+    }
+    fs::write(p, contents).map_err(|e| format!("cannot write {path}: {e}"))
+}
+
 /// Extension-based MIME guess, for `data:` URLs in the preview. Only formats
 /// the preview can actually show are listed; everything else is opaque bytes
 /// as far as this function is concerned.
@@ -661,5 +678,28 @@ fn same_bytes(a: &Path, b: &Path) -> bool {
     match (fs::read(a), fs::read(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_file_text_creates_missing_parents() {
+        let dir = std::env::temp_dir().join(format!("kalo-files-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let target = dir.join("nested").join("figure.svg");
+        write_file_text(&target.to_string_lossy(), "<svg/>").expect("write");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "<svg/>");
+        // Overwrites rather than appends.
+        write_file_text(&target.to_string_lossy(), "<svg></svg>").expect("rewrite");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "<svg></svg>");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_file_text_rejects_an_empty_path() {
+        assert!(write_file_text("", "x").is_err());
     }
 }

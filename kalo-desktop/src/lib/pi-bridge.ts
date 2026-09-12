@@ -28,6 +28,7 @@
  *   job_start / job_list / job_snapshot / job_logs / job_stop / job_metrics
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
+ *   write_file_text { path, contents } -> void   ("save as" target)
  *   read_text_since { path, offset, maxBytes? } -> { text, offset, size, reset }
  *   dir_diff_names { a, b, ignore? } -> { changed, added, removed, truncated }
  *   read_attachment { path } -> AttachmentDraft (image base64, or a path ref)
@@ -264,6 +265,11 @@ export function readFileText(path: string, maxBytes?: number): Promise<FileTextC
   const args: Record<string, unknown> = { path };
   if (maxBytes !== undefined) args.maxBytes = maxBytes;
   return invoke<FileTextContent>("read_file_text", args);
+}
+
+/** Save UTF-8 text to a user-picked path ("save as"), creating parent dirs. */
+export function writeFileText(path: string, contents: string): Promise<void> {
+  return invoke<void>("write_file_text", { path, contents });
 }
 
 /** Whole file as base64, for image / office / pdf previews. */

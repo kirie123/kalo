@@ -3,10 +3,11 @@ import hljs from "highlight.js";
 import { docxToMarkdown } from "../lib/docx";
 import { codeLanguage, fileKind, formatBytes, needsBytes, type FileKind } from "../lib/file-kind";
 import { chatStore } from "../lib/chat-store";
+import { highlight } from "../lib/highlight";
 import { openPath, readFileBytes, readFileText } from "../lib/pi-bridge";
 import { MAX_COLS, MAX_ROWS, readXlsx, type XlsxWorkbook } from "../lib/xlsx";
 import { openZip } from "../lib/zip";
-import { highlight, MarkdownBlock } from "./AssistantMessage";
+import { MarkdownBlock } from "./AssistantMessage";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 
 /**
