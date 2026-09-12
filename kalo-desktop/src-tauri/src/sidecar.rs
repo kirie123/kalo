@@ -149,13 +149,20 @@ mod tests {
     }
 
     /// The regression this module exists for: a sidecar built for another
-    /// platform must not answer to this platform's name.
+    /// platform must not answer to this platform's name. Pick the foreign
+    /// name per host — on Windows the name *is* the Windows name, so the
+    /// original assertion would trivially fail there.
     #[test]
     fn foreign_platform_binary_does_not_match() {
         let name = file_name("pi");
+        let foreign = if cfg!(windows) {
+            "pi-aarch64-apple-darwin"
+        } else {
+            "pi-x86_64-pc-windows-msvc.exe"
+        };
         assert_ne!(
-            name, "pi-x86_64-pc-windows-msvc.exe",
-            "a darwin/linux build must not resolve the Windows engine"
+            name, foreign,
+            "a build for this platform must not resolve a foreign engine"
         );
     }
 
