@@ -12,6 +12,37 @@ export interface ParsedError {
   status?: number;
 }
 
+/**
+ * Is this "error" really the user pressing stop?
+ *
+ * `stopReason: "aborted"` only covers aborts that land while the model is
+ * streaming. Abort a turn while a tool is running and the engine settles it as
+ * a plain error whose message is the AbortError text ("The operation was
+ * aborted") — same user action, different shape. Neither should show up as a
+ * red crash block (doc/2026-09-10-打断提示波浪分割线.md).
+ *
+ * Matched on the message rather than an error code because the string is what
+ * crosses the sidecar boundary. Kept to whole-message equality so a provider
+ * payload that merely mentions aborting is still reported as a failure.
+ */
+export function isAbortError(raw: string | undefined): boolean {
+  if (!raw) return false;
+  const core = raw
+    .trim()
+    // Leading "AbortError:" / "Error:" prefixes, and a trailing period.
+    .replace(/^(?:[A-Za-z]*Error)\s*:\s*/i, "")
+    .replace(/\.\s*$/, "")
+    .trim()
+    .toLowerCase();
+  return (
+    core === "aborted" ||
+    core === "operation was aborted" ||
+    core === "the operation was aborted" ||
+    core === "this operation was aborted" ||
+    core === "request was aborted"
+  );
+}
+
 /** Drop the noisy trailing "Request id: xxx" from provider messages. */
 function cleanMessage(msg: string): string {
   return msg.replace(/\s*Request id:\s*\S+\s*$/i, "").trim();

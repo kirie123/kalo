@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import { formatApiError } from "../lib/error-format";
+import { formatApiError, isAbortError } from "../lib/error-format";
 import { highlight } from "../lib/highlight";
 import { htmlToMarkdown } from "../lib/html-downgrade";
 import { splitSvgSegments } from "../lib/svg-render";
@@ -99,8 +99,10 @@ export default function AssistantMessage({
   // Stopping a run is a deliberate act, not a failure: mark it with the wave
   // divider and swallow the engine's raw "Request was aborted" instead of
   // dropping a red error block into the transcript
-  // (doc/2026-09-10-打断提示波浪分割线.md).
-  const interrupted = message.stopReason === "aborted";
+  // (doc/2026-09-10-打断提示波浪分割线.md). An abort during a tool call
+  // arrives as stopReason "error" carrying the AbortError text, so the message
+  // has to be inspected too — same user action, same divider.
+  const interrupted = message.stopReason === "aborted" || isAbortError(message.errorMessage);
   const failed = !interrupted && message.stopReason === "error" && message.errorMessage && !errorRetried;
   const lastIdx = message.content.length - 1;
   // Cache hit rate = cache reads over all input-side tokens (fresh + cached).
