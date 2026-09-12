@@ -225,12 +225,32 @@ body {
   background: #0d1117; /* matches the github-dark hljs theme */
   overflow: hidden;
 }
+/* Header strip: language label on the left, copy button on the right. It is
+   rendered even when the fence has no language so the copy affordance never
+   overlaps the first line of code. */
+.md-codeblock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 6px 2px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
 .md-codeblock-lang {
-  padding: 4px 12px;
   font-size: 11px;
   color: #8b949e;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+/* The block keeps the github-dark palette in every theme, so the button can't
+   inherit the theme's ink/dim tokens. */
+.md-codeblock-bar button {
+  color: #8b949e;
+  opacity: 0.75;
+}
+.md-codeblock-bar button:hover {
+  color: #e6edf3;
+  opacity: 1;
 }
 .md-codeblock pre {
   margin: 0;

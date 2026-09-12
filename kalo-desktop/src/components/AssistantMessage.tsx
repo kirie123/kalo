@@ -59,7 +59,10 @@ export function CodeRenderer({ className, children }: { className?: string; chil
   const html = highlight(code, lang);
   return (
     <div className="md-codeblock">
-      {lang && <div className="md-codeblock-lang">{lang}</div>}
+      <div className="md-codeblock-bar">
+        <span className="md-codeblock-lang">{lang ?? ""}</span>
+        <CopyButton text={code} title="复制代码" />
+      </div>
       <pre>
         <code dangerouslySetInnerHTML={{ __html: html }} />
       </pre>
