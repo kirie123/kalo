@@ -601,8 +601,12 @@ export interface ProviderModelDef {
   id: string;
   name?: string;
   reasoning?: boolean;
+  input?: Array<"text" | "image">;
   contextWindow?: number;
+  maxTokens?: number;
   compat?: ProviderCompat;
+  /** Untouched by the UI; preserved so hand-written entries survive an edit. */
+  [key: string]: unknown;
 }
 
 export interface ProviderCompat {
@@ -616,7 +620,11 @@ export interface ProviderConfig {
   api: ProviderApi;
   apiKey?: string;
   compat?: ProviderCompat;
+  /** Send the key as `Authorization: Bearer` instead of the API's default header. */
+  authHeader?: boolean;
   models: ProviderModelDef[];
+  /** Untouched by the UI; preserved so hand-written entries survive an edit. */
+  [key: string]: unknown;
 }
 
 /** Contents of ~/.kalo/agent/models.json. */

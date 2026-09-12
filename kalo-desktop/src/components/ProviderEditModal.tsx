@@ -1,7 +1,17 @@
 import { useEffect, useState } from "react";
 import { chatStore } from "../lib/chat-store";
 import { readModelsConfig, writeModelsConfig } from "../lib/pi-bridge";
-import type { ProviderApi, ProviderConfig, ProviderModelDef } from "../types";
+import {
+  applyProviderEntry,
+  buildProviderEntry,
+  defaultContextK,
+  defaultMaxOutK,
+  LOCAL_KEY_PLACEHOLDER,
+  previousEntryFor,
+  readAuthHeader,
+  readCapability,
+} from "../lib/provider-config";
+import type { ProviderApi, ProviderConfig } from "../types";
 
 const API_OPTIONS: Array<{ value: ProviderApi; label: string }> = [
   { value: "openai-completions", label: "OpenAI Completions（/v1/chat/completions）" },
@@ -14,28 +24,6 @@ export interface ProviderEditTarget {
   /** Existing provider id when editing; undefined for a new provider. */
   id?: string;
   config: ProviderConfig;
-}
-
-/**
- * Local services (Ollama, LM Studio, llama.cpp, …) accept any bearer token.
- * The engine refuses set_model when a provider has no key configured, so an
- * empty key is persisted as this placeholder instead.
- */
-const LOCAL_KEY_PLACEHOLDER = "anonymous";
-
-/**
- * Normalize a provider base URL:
- * - trim whitespace and trailing slashes,
- * - for OpenAI-compatible APIs on a bare localhost host (no path), append
- *   `/v1` — Ollama/LM Studio users usually paste `http://localhost:11434`.
- */
-function normalizeBaseUrl(raw: string, api: ProviderApi): string {
-  let url = raw.trim().replace(/\/+$/, "");
-  if (api === "openai-completions" || api === "openai-responses") {
-    const m = url.match(/^(https?:\/\/[^/]+)$/i);
-    if (m && /localhost|127\.0\.0\.1|\[::1\]/i.test(m[1])) url += "/v1";
-  }
-  return url;
 }
 
 /** Quick-fill presets for common local model services. */
@@ -61,19 +49,6 @@ const PRESETS: Array<{ label: string; apply: () => Partial<Record<string, string
   },
 ];
 
-/**
- * Shared context window (in K tokens) implied by a provider's model list —
- * the modal edits one value for all of the provider's models.
- */
-function contextKOf(id: string, cfg: ProviderConfig): string {
-  const w = cfg.models.find((m) => m.contextWindow)?.contextWindow;
-  if (w) return String(Math.round(w / 1000));
-  // The engine caps Ollama context windows at 128K (num_ctx); larger values
-  // would desynchronize compaction from the real server window.
-  if (/ollama/i.test(id)) return "128";
-  return "200";
-}
-
 interface Props {
   /** Pre-filled values when editing an existing provider. */
   editing?: ProviderEditTarget;
@@ -94,12 +69,31 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
   );
   // Shared context window for all models of this provider, in K tokens.
   const [contextK, setContextK] = useState(() =>
-    editing ? contextKOf(editing.id ?? "", editing.config) : "200",
+    editing ? defaultContextK(editing.id ?? "", editing.config) : "200",
   );
+  // Shared max output for all models, in K tokens; empty = engine default.
+  const [maxOutK, setMaxOutK] = useState(() =>
+    editing ? defaultMaxOutK(editing.config) : "",
+  );
+  // Capability switches apply to every model of this provider. A provider
+  // whose models disagree starts unchecked and is unified on save.
+  const [reasoning, setReasoning] = useState(
+    () => editing !== undefined && readCapability(editing.config.models, "reasoning") === "all",
+  );
+  const [images, setImages] = useState(
+    () => editing !== undefined && readCapability(editing.config.models, "images") === "all",
+  );
+  const [authHeader, setAuthHeader] = useState(() => readAuthHeader(editing?.config));
+  const [capabilityMixed] = useState(() => {
+    if (!editing) return { reasoning: false, images: false };
+    return {
+      reasoning: readCapability(editing.config.models, "reasoning") === "mixed",
+      images: readCapability(editing.config.models, "images") === "mixed",
+    };
+  });
   const [noDeveloperRole, setNoDeveloperRole] = useState(
     editing?.config.compat?.supportsDeveloperRole === false,
-  );
-  const [noReasoningEffort, setNoReasoningEffort] = useState(
+  );  const [noReasoningEffort, setNoReasoningEffort] = useState(
     editing?.config.compat?.supportsReasoningEffort === false,
   );
   const [saving, setSaving] = useState(false);
@@ -132,7 +126,11 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
     setBaseUrl(cfg.baseUrl);
     setApiKey(cfg.apiKey ?? "");
     setModelLines(cfg.models.map((m) => m.id).join("\n"));
-    setContextK(contextKOf(id, cfg));
+    setContextK(defaultContextK(id, cfg));
+    setMaxOutK(defaultMaxOutK(cfg));
+    setReasoning(readCapability(cfg.models, "reasoning") === "all");
+    setImages(readCapability(cfg.models, "images") === "all");
+    setAuthHeader(readAuthHeader(cfg));
     setNoDeveloperRole(cfg.compat?.supportsDeveloperRole === false);
     setNoReasoningEffort(cfg.compat?.supportsReasoningEffort === false);
   };
@@ -151,44 +149,32 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
     try {
       const modelsConfig = await readModelsConfig();
       const providers = { ...(modelsConfig.providers ?? {}) };
+      const target = name.trim();
 
-      // Renaming removes the old entry.
-      const editId = editing?.id;
-      if (editId !== undefined && editId !== name.trim()) delete providers[editId];
-
-      const compat: ProviderConfig["compat"] = {};
-      if (noDeveloperRole) compat.supportsDeveloperRole = false;
-      if (noReasoningEffort) compat.supportsReasoningEffort = false;
-
-      // Saving rewrites the provider's whole entry, so keep the per-model
-      // metadata (display name, reasoning flag, compat) of ids already there.
-      const prevModels = new Map(
-        (providers[name.trim()]?.models ?? []).map((m) => [m.id, m] as const),
+      // Merging with the stored entry keeps hand-written fields the form does
+      // not own (authHeader, headers, oauth, modelOverrides, per-model cost).
+      const entry = buildProviderEntry(
+        {
+          name: target,
+          api,
+          baseUrl,
+          apiKey,
+          modelLines,
+          contextK,
+          maxOutK,
+          reasoning,
+          images,
+          authHeader,
+          noDeveloperRole,
+          noReasoningEffort,
+        },
+        previousEntryFor(providers, target, editing?.id),
       );
 
-      providers[name.trim()] = {
-        baseUrl: normalizeBaseUrl(baseUrl, api),
-        api,
-        // The engine treats a provider without any key as unauthenticated and
-        // refuses set_model, so always persist one; local services ignore it.
-        apiKey: apiKey.trim() || LOCAL_KEY_PLACEHOLDER,
-        ...(Object.keys(compat).length > 0 ? { compat } : {}),
-        models: modelLines
-          .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean)
-          .map((id) => {
-            const def: ProviderModelDef = { ...prevModels.get(id), id };
-            // The context field is authoritative: emptying it drops the
-            // override and lets the engine fall back to its default.
-            const k = Number(contextK);
-            if (Number.isFinite(k) && k > 0) def.contextWindow = Math.round(k * 1000);
-            else delete def.contextWindow;
-            return def;
-          }),
-      };
-
-      await writeModelsConfig({ providers });
+      await writeModelsConfig({
+        ...modelsConfig,
+        providers: applyProviderEntry(providers, target, entry, editing?.id),
+      });
       await chatStore.loadCustomModels();
       chatStore.pushToast(isEdit || reusing ? "模型配置已更新" : "模型已添加", "info");
       onClose(true);
@@ -338,7 +324,46 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
             />
           </Field>
 
+          <Field label="最大输出（K）" hint="留空用引擎默认（16K）">
+            <input
+              value={maxOutK}
+              onChange={(e) => setMaxOutK(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder="64"
+              className="mono w-full rounded-md border border-edge bg-base px-3 py-2 text-sm outline-none focus:border-dim"
+            />
+          </Field>
+
           <div className="mt-1 flex flex-col gap-1.5">
+            <label className="flex items-center gap-2 text-xs text-dim">
+              <input
+                type="checkbox"
+                checked={reasoning}
+                onChange={(e) => setReasoning(e.target.checked)}
+              />
+              模型支持思考（reasoning）
+              {capabilityMixed.reasoning && (
+                <span className="text-[11px]">当前模型取值不一致，保存后统一写入</span>
+              )}
+            </label>
+            <label className="flex items-center gap-2 text-xs text-dim">
+              <input
+                type="checkbox"
+                checked={images}
+                onChange={(e) => setImages(e.target.checked)}
+              />
+              模型支持图片输入（vision）
+              {capabilityMixed.images && (
+                <span className="text-[11px]">当前模型取值不一致，保存后统一写入</span>
+              )}
+            </label>
+            <label className="flex items-center gap-2 text-xs text-dim">
+              <input
+                type="checkbox"
+                checked={authHeader}
+                onChange={(e) => setAuthHeader(e.target.checked)}
+              />
+              用 <span className="mono">Authorization: Bearer</span> 发送密钥
+            </label>
             <label className="flex items-center gap-2 text-xs text-dim">
               <input
                 type="checkbox"

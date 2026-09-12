@@ -74,6 +74,7 @@
 
 ## 运行时与平台
 
+- [自定义 Provider 的模型能力配置（思考 / 图片 / 最大输出 / Bearer 鉴权头）](2026-09-11-provider模型能力配置.md)
 - [P0-1 Job Runtime + P0-2 Channel 设计文档](2026-08-17-p0-job-runtime-channel.md)
 - [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
