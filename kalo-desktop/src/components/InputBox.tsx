@@ -7,6 +7,7 @@ import { cwdBasename } from "../lib/projects";
 import type { FileMatch } from "../types";
 import ContextRing from "./ContextRing";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
+import InputQueue from "./InputQueue";
 import ModelPicker from "./ModelPicker";
 import PermissionChip from "./PermissionChip";
 
@@ -241,8 +242,13 @@ export default function InputBox() {
     }
   };
 
+  const busy = chat.isStreaming || chat.isCompacting;
+  const hasContent = text.trim().length > 0 || chat.attachments.length > 0;
+
   return (
     <div className="mx-auto w-full max-w-3xl">
+      {/* 排队中的消息（doc/2026-09-13-输入队列.md），空队列时不渲染。 */}
+      <InputQueue />
       <div className="relative rounded-2xl border border-edge bg-elevated shadow-soft transition-shadow focus-within:shadow-lift">
         {/* Drop hint while a file is dragged over the window */}
         {dragging && (
@@ -347,8 +353,8 @@ export default function InputBox() {
           placeholder={
             chat.hasPendingAsk
               ? "请先回答上方的问题，或点\"我直接说\"…"
-              : chat.isStreaming
-                ? "输入引导消息，Enter 插入当前运行…"
+              : busy
+                ? "Enter 加入队列，本轮结束后自动发送（可在条目上改成立即插入）…"
                 : chat.connecting
                   ? "正在连接引擎，可先发消息…"
                   : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"
@@ -389,7 +395,20 @@ export default function InputBox() {
             </span>
           )}
 
-          {chat.isStreaming || chat.isCompacting ? (
+          {/* 运行中还能看到发送入口：否则只剩一个停止键，“敲了字怎么送进去”全靠猜。 */}
+          {busy && hasContent && (
+            <button
+              onClick={send}
+              title="加入队列（本轮结束后发送）"
+              className="rounded-full border border-edge p-2 text-dim hover:text-ink"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <path d="M2.5 4.5h11M2.5 8h7M2.5 11.5h4M11 9.5v5M8.8 12.3l2.2 2.2 2.2-2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+
+          {busy ? (
             <button
               onClick={() => {
                 if (isAborting) return;

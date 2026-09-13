@@ -18,10 +18,8 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import type {
   AgentMessage,
-  AssistantMessage,
   AssistantMessageEvent,
   AttachmentDraft,
-  ImageContent,
   ModelInfo,
   PendingSession,
   PermissionMode,
@@ -36,11 +34,19 @@ import type {
   ThinkingLevel,
   ThinkingContent,
   TextContent,
-  ToolCallContent,
   ToolResultMessage,
   UserMessage,
 } from "../types";
-import { formatAttachmentTag } from "./attachments";
+import { appendAttachment, readAttachmentDrafts, readFileDrafts } from "./attachment-intake";
+import { applyBlockEvent, isBlockEvent, seedMessage } from "./assistant-stream";
+import {
+  buildPromptPayload,
+  createQueuedInput,
+  removeQueuedInput,
+  shouldEnqueue,
+  takeQueuedInput,
+  type QueuedInput,
+} from "./input-queue";
 import {
   encodeAnswers,
   validateEncoded,
@@ -55,15 +61,13 @@ import {
 } from "./changed-files";
 import {
   errText,
-  fileToBase64,
   loadLastModel,
+  modelErrorHint,
   normPath,
-  pastedImageName,
   promptTitle,
   samePending,
   sameFlags,
   saveLastModel,
-  uniqueAttachmentName,
 } from "./chat-store-helpers";
 import {
   createSession,
@@ -71,13 +75,11 @@ import {
   onPiEvent,
   onPiExit,
   onPiStderr,
-  readAttachment,
   readModelsConfig,
   readSessionPage,
   rejectSessionPending,
   renameSessionFile,
   resolveResponse,
-  saveAttachmentBytes,
   sendCommand,
   sendRawCommand,
 } from "./pi-bridge";
@@ -156,6 +158,12 @@ export interface ChatState {
   inputDraft?: string;
   /** Pending attachments, consumed by the next sendPrompt. */
   attachments: AttachmentDraft[];
+  /**
+   * 运行中敲下的消息排在这里（doc/2026-09-13-输入队列.md）：默认等本轮结束后依次
+   * 自动发送，也可以逐条改成「立即插入」。条目在被投递出去之前完全归桌面端管，
+   * 可删、可回填编辑。
+   */
+  inputQueue: QueuedInput[];
   /** Context-window usage from get_session_stats; null fields right after compaction. */
   contextUsage?: { tokens: number | null; contextWindow: number | null; percent: number | null };
   /** On-disk session file of the live engine session, used for crash recovery. */
@@ -207,6 +215,7 @@ type SessionView = Pick<
   | "pendingAsk"
   | "inputDraft"
   | "attachments"
+  | "inputQueue"
   | "contextUsage"
   | "sessionFile"
   | "connecting"
@@ -234,6 +243,7 @@ const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
   "pendingAsk",
   "inputDraft",
   "attachments",
+  "inputQueue",
   "contextUsage",
   "sessionFile",
   "connecting",
@@ -262,6 +272,7 @@ function freshView(cwd = ""): SessionView {
     extensionQueue: [],
     pendingAsk: undefined,
     attachments: [],
+    inputQueue: [],
     contextUsage: undefined,
   };
 }
@@ -309,6 +320,14 @@ class SessionRuntime {
   lastActive = Date.now();
   /** Per-runtime lock: prevents concurrent get_session_stats IPC calls. */
   contextInflight = false;
+  /**
+   * A prompt is on its way to the engine but `agent_start` has not come back
+   * yet. Counts as "running" for the input queue, so a message typed inside
+   * that window queues instead of racing the run that is about to start.
+   */
+  dispatching = false;
+  /** 用户刚按了停止：本次 settled 不自动发队列（停止 = 别再自己动）。 */
+  queueHold = false;
   // Per-runtime stream batching (20fps clone flush).
   flushTimer: ReturnType<typeof setTimeout> | null = null;
   pendingClones = new Set<string>();
@@ -950,83 +969,56 @@ export class ChatStore {
 
   /** Read each path via the backend; unreadable files are skipped with a toast. */
   async addAttachments(paths: string[]) {
-    for (const path of paths) {
-      try {
-        const draft = await readAttachment(path);
-        // A file draft already carries its path; only images need the origin
-        // recorded separately for the chip tooltip.
-        this.pushAttachment(draft.kind === "image" ? { ...draft, sourcePath: path } : draft);
-      } catch (err) {
-        this.pushToast(`无法添加附件 ${path}：${errText(err)}`, "warning");
-      }
-    }
+    const warn = (m: string) => this.pushToast(m, "warning");
+    this.pushAttachments(await readAttachmentDrafts(paths, warn));
   }
 
-  /**
-   * Add attachments from webview File objects (clipboard paste). These carry
-   * bytes but no path, so images are kept in memory and everything else is
-   * written to `~/.kalo/attachments` to get a path the model can read.
-   */
+  /** Add attachments from webview File objects (clipboard paste / drag-drop). */
   async addFiles(files: File[]) {
-    for (const file of files) {
-      try {
-        const base64 = await fileToBase64(file);
-        if (file.type.startsWith("image/")) {
-          this.pushAttachment({
-            kind: "image",
-            name: pastedImageName(file),
-            mimeType: file.type,
-            dataBase64: base64,
-          });
-        } else {
-          this.pushAttachment(await saveAttachmentBytes(file.name, base64));
-        }
-      } catch (err) {
-        this.pushToast(`无法添加附件 ${file.name}：${errText(err)}`, "warning");
-      }
-    }
+    const warn = (m: string) => this.pushToast(m, "warning");
+    this.pushAttachments(await readFileDrafts(files, warn));
   }
 
   removeAttachment(name: string) {
     this.set({ attachments: this.rt.view.attachments.filter((a) => a.name !== name) });
   }
 
-  /** Append one draft, renaming on collision — `name` is the chip's identity.
-   *  The same path twice is a no-op: it would put one file in the
-   *  `<attachments>` tag twice under two chip names. */
-  private pushAttachment(draft: AttachmentDraft) {
-    const existing = this.rt.view.attachments;
-    if (draft.kind === "file" && existing.some((a) => a.kind === "file" && a.path === draft.path)) {
-      return;
-    }
-    const name = uniqueAttachmentName(draft.name, existing);
-    this.set({ attachments: [...existing, name === draft.name ? draft : { ...draft, name }] });
-  }
-
-  clearAttachments() {
-    if (this.rt.view.attachments.length > 0) this.set({ attachments: [] });
+  /** Append drafts onto the composer, deduping paths and renaming collisions. */
+  private pushAttachments(drafts: AttachmentDraft[]) {
+    if (drafts.length === 0) return;
+    let next = this.rt.view.attachments;
+    for (const d of drafts) next = appendAttachment(next, d);
+    if (next !== this.rt.view.attachments) this.set({ attachments: next });
   }
 
   // --------------------------------------------------------------------------
   // User actions (always target the active runtime)
   // --------------------------------------------------------------------------
 
-  async sendPrompt(text: string) {
-    const rt = this.rt;
-    // Consume pending attachments: images ride the prompt's images field,
-    // every other file is listed by path in an <attachments> tag so the model
-    // reads it on demand instead of having its contents inlined here.
-    const attachments = rt.view.attachments;
-    const images: ImageContent[] = [];
-    const paths: string[] = [];
-    for (const a of attachments) {
-      if (a.kind === "image") images.push({ type: "image", data: a.dataBase64, mimeType: a.mimeType });
-      else paths.push(a.path);
+  /**
+   * Send (or queue) one user message.
+   *
+   * `drafts` names the attachments explicitly — that is how a queued item is
+   * delivered with its own snapshot instead of whatever sits in the composer
+   * right now. Without it the composer's attachments are consumed (and cleared
+   * on success), and a running session queues the message instead of steering
+   * it (doc/2026-09-13-输入队列.md).
+   *
+   * Returns false when the message never reached the engine, so the queue can
+   * put it back rather than silently lose it.
+   */
+  async sendPrompt(text: string, rt: SessionRuntime = this.rt, drafts?: AttachmentDraft[]): Promise<boolean> {
+    const busy = rt.view.isStreaming || rt.dispatching;
+    if (!drafts && shouldEnqueue({ isStreaming: busy, isCompacting: rt.view.isCompacting, queueLength: rt.view.inputQueue.length })) {
+      return this.enqueueInput(text, rt);
     }
+    // Attachments: images ride the prompt's images field, every other file is
+    // listed by path in an <attachments> tag so the model reads it on demand
+    // instead of having its contents inlined here.
+    const attachments = drafts ?? rt.view.attachments;
+    const payload = buildPromptPayload(text, attachments);
+    if (!payload) return false;
     const typed = text.trim();
-    const tag = formatAttachmentTag(paths);
-    const message = tag ? (typed ? `${typed}\n\n${tag}` : tag) : typed;
-    if (!message && images.length === 0) return;
     // A genuinely new question retires the previous run's plan. Deliberately
     // NOT done on agent_start: the session loop re-enters that event on retry,
     // after a compaction, and for queued messages, so clearing there would
@@ -1045,23 +1037,87 @@ export class ChatStore {
     }
     // A resumed session may still be connecting its engine in the background.
     if (rt.resumePromise) await rt.resumePromise;
+    rt.dispatching = true;
     try {
       const sid = await this.ensureSession(rt);
       const resp = await sendCommand(sid, {
         type: "prompt",
-        message,
-        images: images.length > 0 ? images : undefined,
+        message: payload.message,
+        images: payload.images.length > 0 ? payload.images : undefined,
         streamingBehavior: rt.view.isStreaming ? "steer" : undefined,
       });
-      this.clearAttachments();
+      if (!drafts) this.setRt(rt, { attachments: [] });
       if (!resp.success) this.pushToast(`发送失败：${resp.error}`, "error");
       else void this.syncSessionFile(rt);
+      return resp.success;
     } catch (err) {
       // The prompt never reached the engine, so nothing will ever persist:
       // drop the optimistic row instead of leaving a ghost in the sidebar.
       this.dropPending(rt);
       this.pushToast(`发送失败：${errText(err)}`, "error");
+      return false;
+    } finally {
+      rt.dispatching = false;
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // 输入队列（doc/2026-09-13-输入队列.md）
+  // --------------------------------------------------------------------------
+
+  /** 运行中的回车：消息连同 composer 上的附件快照进队列。 */
+  private enqueueInput(text: string, rt: SessionRuntime): boolean {
+    const item = createQueuedInput(text, rt.view.attachments);
+    if (!item) return false;
+    this.setRt(rt, { inputQueue: [...rt.view.inputQueue, item], attachments: [] });
+    // 空闲却还在排队（上一条投递失败遗留的）：立刻抽队首，只要不是刚按过停止。
+    if (!rt.view.isStreaming && !rt.view.isCompacting && !rt.dispatching && !rt.queueHold) {
+      void this.flushInputQueue(rt);
+    }
+    return true;
+  }
+
+  /** 删掉一条排队消息。 */
+  dropQueuedInput(id: string) {
+    this.set({ inputQueue: removeQueuedInput(this.rt.view.inputQueue, id) });
+  }
+
+  /** 「立即插入」：出队并立刻投递（运行中即 steer，已空闲则直接发）。 */
+  async sendQueuedInput(id: string) {
+    const rt = this.rt;
+    const { item, rest } = takeQueuedInput(rt.view.inputQueue, id);
+    if (!item) return;
+    rt.queueHold = false;
+    this.setRt(rt, { inputQueue: rest });
+    await this.dispatchQueued(rt, item);
+  }
+
+  /** 点条目正文：回填输入框继续编辑（条目出队，附件回到 composer）。 */
+  editQueuedInput(id: string) {
+    const rt = this.rt;
+    const { item, rest } = takeQueuedInput(rt.view.inputQueue, id);
+    if (!item) return;
+    this.setRt(rt, { inputQueue: rest, inputDraft: item.text });
+    this.pushAttachments(item.attachments);
+  }
+
+  /** 本轮真正结束：发队首一条，其余等下一次 settled。 */
+  private async flushInputQueue(rt: SessionRuntime) {
+    const [item, ...rest] = rt.view.inputQueue;
+    if (!item || rt.view.isStreaming || rt.view.isCompacting || rt.view.pendingAsk || rt.dispatching) return;
+    if (rt.queueHold) {
+      rt.queueHold = false;
+      this.pushToast(`已停止，队列里还有 ${rt.view.inputQueue.length} 条，请在条目上选「立即发送」`, "info");
+      return;
+    }
+    this.setRt(rt, { inputQueue: rest });
+    await this.dispatchQueued(rt, item);
+  }
+
+  /** 投递一条已出队的消息；失败则放回队首，不静默丢消息。 */
+  private async dispatchQueued(rt: SessionRuntime, item: QueuedInput) {
+    if (await this.sendPrompt(item.text, rt, item.attachments)) return;
+    this.setRt(rt, { inputQueue: [item, ...rt.view.inputQueue] });
   }
 
   /**
@@ -1135,6 +1191,7 @@ export class ChatStore {
     if (rt.view.pendingAsk !== undefined || rt.view.extensionQueue.length > 0) {
       this.setRt(rt, { pendingAsk: undefined, extensionQueue: [] });
     }
+    rt.queueHold = rt.view.inputQueue.length > 0;
     try {
       await sendCommand(sid, { type: "abort" });
     } catch (err) {
@@ -1189,16 +1246,6 @@ export class ChatStore {
   }
 
   async setModel(provider: string, modelId: string) {
-    const friendlyError = (raw: string): string => {
-      if (/^Model not found/i.test(raw)) {
-        return "引擎未识别该模型。若刚添加 Provider，请编辑保存一次（本地服务需任意占位 API Key）后重试";
-      }
-      if (/^No API key/i.test(raw)) {
-        return "该 Provider 未配置 API Key。本地服务（Ollama 等）请在设置中编辑并填入任意占位 Key";
-      }
-      return raw;
-    };
-
     // Optimistic: the picker updates now, the engine catches up. Reverted
     // below if the engine rejects the model.
     const previous = this.rt.view.currentModel;
@@ -1246,11 +1293,11 @@ export class ChatStore {
           return;
         }
         revert();
-        this.pushToast(`切换模型失败：${friendlyError(retry.error)}`, "error");
+        this.pushToast(`切换模型失败：${modelErrorHint(retry.error)}`, "error");
         return;
       }
       revert();
-      this.pushToast(`切换模型失败：${friendlyError(resp.error)}`, "error");
+      this.pushToast(`切换模型失败：${modelErrorHint(resp.error)}`, "error");
     } catch (err) {
       revert();
       this.pushToast(`切换模型失败：${errText(err)}`, "error");
@@ -1450,6 +1497,8 @@ export class ChatStore {
         // New run: discard any stale accumulator from a run that never settled.
         rt.runUsage = null;
         rt.runChanges = createAccumulator();
+        // 上一次「停止」的暂停只管那一次：新一轮开跑了，队列恢复自动投递。
+        rt.queueHold = false;
         this.setRt(rt, { isStreaming: true });
         break;
       case "agent_end":
@@ -1460,6 +1509,8 @@ export class ChatStore {
         this.setRt(rt, { isStreaming: false, isCompacting: false });
         this.attachRunUsage(rt);
         this.pushRunChanges(rt);
+        // 本轮结束 → 把排队的下一条发出去（doc/2026-09-13-输入队列.md）。
+        void this.flushInputQueue(rt);
         break;
 
       case "message_start":
@@ -1647,66 +1698,19 @@ export class ChatStore {
       return;
     }
 
+    if (!isBlockEvent(ev)) return;
     const t = rt.view.timeline;
     const idx = this.findStreamingAssistant(t);
     if (idx === -1) {
       // No message_start seen; seed from the partial carried by the event.
-      const partial = "partial" in ev ? (ev.partial as AssistantMessage) : "message" in ev ? (ev as { message: AssistantMessage }).message : undefined;
-      if (partial) {
-        this.mutateTimeline(
-          (tl) =>
-            tl.push({
-              id: nextEntryId(),
-              kind: "assistant",
-              message: { ...partial, content: [...partial.content] },
-              streaming: true,
-            }),
-          rt,
-        );
+      const message = seedMessage(ev);
+      if (message) {
+        this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "assistant", message, streaming: true }), rt);
       }
       return;
     }
-
     const entry = t[idx] as AssistantEntry;
-    const content = entry.message.content as any[];
-    const i = ev.contentIndex;
-    switch (ev.type) {
-      case "text_start":
-        content[i] = { type: "text", text: "" };
-        break;
-      case "text_delta": {
-        const b = content[i];
-        if (b?.type === "text") b.text += ev.delta;
-        break;
-      }
-      case "text_end":
-        content[i] = { type: "text", text: ev.content };
-        break;
-      case "thinking_start":
-        content[i] = { type: "thinking", thinking: "" };
-        break;
-      case "thinking_delta": {
-        const b = content[i];
-        if (b?.type === "thinking") b.thinking += ev.delta;
-        break;
-      }
-      case "thinking_end":
-        // _done marks the block finished so its spinner stops even while
-        // later blocks of the same message are still streaming.
-        content[i] = { type: "thinking", thinking: ev.content, _done: true };
-        break;
-      case "toolcall_start":
-        content[i] = { type: "toolCall", id: "", name: "", arguments: {}, _rawArgs: "" };
-        break;
-      case "toolcall_delta": {
-        const b = content[i];
-        if (b?.type === "toolCall") b._rawArgs = (b._rawArgs ?? "") + ev.delta;
-        break;
-      }
-      case "toolcall_end":
-        content[i] = ev.toolCall as ToolCallContent;
-        break;
-    }
+    applyBlockEvent(entry.message.content as any[], ev);
     this.queueTimelineFlush(entry.id, rt);
   }
 

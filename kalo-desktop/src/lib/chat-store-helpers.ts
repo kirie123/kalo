@@ -40,6 +40,17 @@ export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** 引擎的 set_model 报错翻译成用户能照着做的提示。 */
+export function modelErrorHint(raw: string): string {
+  if (/^Model not found/i.test(raw)) {
+    return "引擎未识别该模型。若刚添加 Provider，请编辑保存一次（本地服务需任意占位 API Key）后重试";
+  }
+  if (/^No API key/i.test(raw)) {
+    return "该 Provider 未配置 API Key。本地服务（Ollama 等）请在设置中编辑并填入任意占位 Key";
+  }
+  return raw;
+}
+
 /** Base64 payload of a File, without the `data:...;base64,` prefix. */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
