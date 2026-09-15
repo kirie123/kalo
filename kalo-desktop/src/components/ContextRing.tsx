@@ -1,15 +1,14 @@
 import { useChatSelector, chatStore } from "../lib/chat-store";
+import { formatK } from "../lib/run-usage";
 
 /**
  * Circular context-usage indicator. The ring fills with the used percentage;
  * the number in the middle is the integer 0-100 percent. Tokens are shown
  * in K units; hover shows exact usage.
+ *
+ * This is the current context snapshot (bounded by the window), not the run
+ * footer's cumulative traffic — see lib/run-usage.ts.
  */
-function formatK(n: number): string {
-  const k = n / 1000;
-  return `${k >= 10 ? Math.round(k) : k.toFixed(1)}K`;
-}
-export { formatK };
 
 export default function ContextRing() {
   const { contextUsage, isCompacting, sessionId } = useChatSelector((s) => ({

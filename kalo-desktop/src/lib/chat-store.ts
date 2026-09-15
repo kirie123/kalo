@@ -1622,6 +1622,9 @@ export class ChatStore {
           output: (rt.runUsage?.output ?? 0) + (u.output ?? 0),
           cacheRead: (rt.runUsage?.cacheRead ?? 0) + (u.cacheRead ?? 0),
           cacheWrite: (rt.runUsage?.cacheWrite ?? 0) + (u.cacheWrite ?? 0),
+          // One call per assistant message that reported usage, including the
+          // ones that failed before emitting output (overflow/retry loops).
+          calls: (rt.runUsage?.calls ?? 0) + 1,
         };
       }
       // Replace the streaming partial with the authoritative message.

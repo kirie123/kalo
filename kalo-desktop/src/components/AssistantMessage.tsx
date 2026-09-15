@@ -8,7 +8,7 @@ import { highlight } from "../lib/highlight";
 import { htmlToMarkdown } from "../lib/html-downgrade";
 import { splitSvgSegments } from "../lib/svg-render";
 import type { AssistantMessage as AssistantMessageType } from "../types";
-import { formatK } from "./ContextRing";
+import { formatRunUsage } from "../lib/run-usage";
 import CopyButton from "./CopyButton";
 import InterruptDivider from "./InterruptDivider";
 import SvgBlock from "./SvgBlock";
@@ -105,9 +105,6 @@ export default function AssistantMessage({
   const interrupted = message.stopReason === "aborted" || isAbortError(message.errorMessage);
   const failed = !interrupted && message.stopReason === "error" && message.errorMessage && !errorRetried;
   const lastIdx = message.content.length - 1;
-  // Cache hit rate = cache reads over all input-side tokens (fresh + cached).
-  const inputSide = usage ? usage.input + usage.cacheRead : 0;
-  const hitRate = usage && inputSide > 0 ? Math.round((usage.cacheRead / inputSide) * 100) : null;
   return (
     <div className={`text-sm ${streaming ? "streaming-cursor" : ""}`}>
       {message.content.map((block, i) => {
@@ -129,10 +126,7 @@ export default function AssistantMessage({
       {!streaming && (usage || copyText) && (
         <div className="group/msg mt-2 flex items-end justify-between gap-2 text-xs text-dim">
           <span>
-            {usage &&
-              `本轮 tokens：输入 ${formatK(inputSide)} · 输出 ${formatK(usage.output)}${
-                hitRate !== null ? ` · 缓存命中 ${hitRate}%` : ""
-              }`}
+            {usage && formatRunUsage(usage)}
           </span>
           {copyText && (
             <span className="opacity-0 transition-opacity group-hover/msg:opacity-100">

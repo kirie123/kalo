@@ -35,6 +35,12 @@ export interface TurnUsage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  /**
+   * Number of LLM calls the totals were summed over. Shown in the footer so a
+   * total far above the context window reads as "N full resends" instead of a
+   * miscount.
+   */
+  calls: number;
 }
 
 export interface AssistantEntry {
