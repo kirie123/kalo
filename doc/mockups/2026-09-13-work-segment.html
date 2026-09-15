@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>工作段母气泡 · 效果图</title>
+<style>
+  :root {
+    --bg: #171717;
+    --bg-sidebar: #1e1e1e;
+    --bg-card: #212121;
+    --bg-elevated: #262626;
+    --bubble: #2b2b2b;
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #ececec;
+    --text-dim: #9b9b9b;
+    --ok: #4ac26b;
+    --danger: #ff6b6b;
+    --tone-blue: #6f9dff;
+    --tone-violet: #a794ff;
+    --diff-add-text: #7ee2a0;
+    --diff-del-text: #ff9d9d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Consolas, "Cascadia Mono", monospace; }
+  .dim { color: var(--text-dim); }
+
+  /* ── 顶栏 ────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar h1 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+  .topbar .spacer { flex: 1; }
+  .seg-switch { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .seg-switch button {
+    border: 0; background: transparent; color: var(--text-dim);
+    font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .seg-switch button.on { background: var(--bg-elevated); color: var(--text); }
+  .btn {
+    border: 1px solid var(--border); background: var(--bg-card); color: var(--text-dim);
+    font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer;
+  }
+  .btn:hover { color: var(--text); background: var(--bg-elevated); }
+
+  /* ── 对话区 ──────────────────────────────────────────── */
+  .chat { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; display: flex; flex-direction: column; gap: 6px; }
+  .user-bubble {
+    align-self: flex-end; max-width: 78%;
+    background: var(--bubble); border-radius: 14px; padding: 9px 14px; margin: 12px 0 6px;
+  }
+  .answer { padding: 4px 2px 10px; font-size: 14px; }
+  .answer p { margin: 0 0 8px; }
+  .answer code { background: var(--bg-card); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
+  .meta { font-size: 12px; color: var(--text-dim); padding: 2px 2px 8px; }
+
+  /* ── 单条过程行（两种模式共用） ─────────────────────── */
+  .row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  }
+  .row:hover { background: var(--bg-card); }
+  .row .mark { width: 16px; text-align: center; flex: none; font-size: 12px; }
+  .row .mark.ok { color: var(--ok); }
+  .row .label { color: var(--text-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.thought .label { font-style: italic; }
+  .row .grow { flex: 1; }
+  .row .chip {
+    flex: none; font-size: 10px; color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
+  }
+  .caret { flex: none; width: 10px; height: 10px; color: var(--text-dim); transition: transform .18s ease; }
+  .caret.closed { transform: rotate(-90deg); }
+
+  /* ── 母气泡 ──────────────────────────────────────────── */
+  .segment {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,.022), rgba(255,255,255,0));
+    margin: 2px 0;
+    transition: border-color .18s ease;
+  }
+  .segment:hover { border-color: rgba(255,255,255,.16); }
+  .segment.running { border-color: rgba(111,157,255,.35); }
+  .segment.open { background: var(--bg-card); }
+
+  .seg-head {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; text-align: left; border: 0; background: transparent; color: inherit;
+    font: inherit; padding: 9px 12px; cursor: pointer; border-radius: 9px 9px 0 0;
+  }
+  .segment:not(.open) .seg-head { border-radius: 9px; }
+  .seg-head:hover { background: rgba(255,255,255,.03); }
+  .segment.open .seg-head { position: sticky; top: 45px; z-index: 5; background: var(--bg-card); border-bottom: 1px solid var(--border); }
+  .seg-icon {
+    flex: none; width: 22px; height: 22px; border-radius: 7px;
+    display: grid; place-items: center;
+    background: rgba(255,255,255,.05); color: var(--text-dim); font-size: 12px;
+  }
+  .segment.running .seg-icon { background: rgba(111,157,255,.14); color: var(--tone-blue); }
+  .seg-title { font-size: 13px; font-weight: 500; flex: none; }
+  .segment.running .seg-title { color: var(--tone-blue); }
+  .seg-stats { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+  .stat {
+    font-size: 11px; color: var(--text-dim);
+    background: rgba(255,255,255,.04); border-radius: 5px; padding: 2px 7px; white-space: nowrap;
+  }
+  .seg-time { margin-left: auto; flex: none; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  .seg-preview {
+    padding: 0 12px 9px 44px; margin-top: -4px;
+    font-size: 11.5px; color: var(--text-dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .seg-preview b { font-weight: 500; color: #b9b9b9; }
+  .segment.open .seg-preview { display: none; }
+
+  .seg-body { padding: 4px 10px 8px 16px; }
+  .seg-rail { border-left: 1px solid var(--border); padding-left: 8px; display: flex; flex-direction: column; }
+  .segment:not(.open) .seg-body { display: none; }
+
+  .seg-foot {
+    display: flex; gap: 8px; align-items: center;
+    padding: 6px 12px 10px 22px; font-size: 11px; color: var(--text-dim);
+  }
+  .segment:not(.open) .seg-foot { display: none; }
+  .link { color: var(--text-dim); text-decoration: none; border-bottom: 1px dashed var(--border); cursor: pointer; }
+  .link:hover { color: var(--text); }
+
+  /* 详情：展开某一行工具 */
+  .detail {
+    margin: 2px 0 6px 24px; border: 1px solid var(--border); border-radius: 7px;
+    background: var(--bg); padding: 8px 10px; font-size: 12px; color: var(--text-dim);
+    white-space: pre-wrap; max-height: 180px; overflow: auto;
+  }
+  .detail .add { color: var(--diff-add-text); }
+  .detail .del { color: var(--diff-del-text); }
+
+  /* spinner */
+  .spinner {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 1.5px solid rgba(111,157,255,.3); border-top-color: var(--tone-blue);
+    animation: spin .7s linear infinite; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .live-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--tone-blue); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+
+  .hint {
+    max-width: 760px; margin: 0 auto; padding: 14px 16px 0;
+    font-size: 12px; color: var(--text-dim);
+  }
+  .hint b { color: var(--text); font-weight: 500; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>kalo · 工作段母气泡</h1>
+  <div class="seg-switch" id="modeSwitch">
+    <button data-mode="after" class="on">改造后</button>
+    <button data-mode="before">改造前</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="collapseAll">全部收起</button>
+  <button class="btn" id="expandAll">全部展开</button>
+</div>
+
+<div class="hint" id="hintAfter">
+  <b>一轮 = 一个母气泡。</b>运行中自动展开，本轮结束自动收起成一行；点段头展开/收起，手动点过的段不再被自动规则覆盖。
+</div>
+<div class="hint hidden" id="hintBefore">
+  <b>现状：</b>每条思考 / 工具调用各自一个气泡，一轮 30 步就是 30 行，回头找关键信息要翻很久。
+</div>
+
+<!-- ══════════════════ 改造后 ══════════════════ -->
+<div class="chat" id="viewAfter">
+
+  <div class="user-bubble">D:\project\TabTin 和 D:\agent-project\tutti 有啥区别，以及优劣势</div>
+
+  <!-- 已完成的工作段：默认折叠 -->
+  <div class="segment" id="seg1">
+    <button class="seg-head" onclick="toggleSeg('seg1')">
+      <span class="seg-icon" style="color:var(--ok)">✓</span>
+      <span class="seg-title">思考并执行 12 步</span>
+      <span class="seg-stats">
+        <span class="stat">读 5 个文件</span>
+        <span class="stat">跑 3 条命令</span>
+        <span class="stat">4 次思考</span>
+      </span>
+      <span class="seg-time">1m 12s</span>
+      <svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="seg-preview">最后一步：<b>读取</b> agent-runtime/packages/coding-agent/package.json</div>
+
+    <div class="seg-body"><div class="seg-rail">
+      <div class="row thought" onclick="toggleDetail(this)"><span class="mark dim">›</span><span class="label">Thought (856 chars)</span></div>
+      <div class="detail hidden">先看两个目录的结构和 package.json，判断它们是不是同一套内核的两个分支；再比对依赖与构建脚本，最后从「维护成本 / 可定制度 / 升级路径」三个角度给结论。</div>
+
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">ls D:\project\TabTin</span><span class="grow"></span><span class="chip">Bash</span></div>
+      <div class="detail hidden mono">AGENTS.md  dev.cmd  docs/  scripts/  src/  package.json  README.md</div>
+
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">读取 TabTin/package.json</span><span class="grow"></span><span class="chip">Read File</span></div>
+      <div class="detail hidden mono">{ "name": "tabtin", "version": "0.4.2", "workspaces": ["packages/*"] }</div>
+
+      <div class="row thought" onclick="toggleDetail(this)"><span class="mark dim">›</span><span class="label">Thought (288 chars)</span></div>
+      <div class="detail hidden">TabTin 是 workspace 多包，tutti 看起来是单包 —— 确认一下 tutti 的依赖来源。</div>
+
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">读取 2 个文件（tutti/package.json, tutti/AGENTS.md）</span><span class="grow"></span><span class="chip">Read File</span></div>
+      <div class="detail hidden mono">tutti 依赖 @tabtin/core ^0.4.0 —— 同内核，外壳不同。</div>
+
+      <div class="row thought" onclick="toggleDetail(this)"><span class="mark dim">›</span><span class="label">Thought (577 chars)</span></div>
+      <div class="detail hidden">结论成形：同内核 / 不同外壳。还差一个升级路径的证据，看下 tutti 有没有 vendor 目录。</div>
+
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">grep "@tabtin/core" -r tutti/</span><span class="grow"></span><span class="chip">Grep</span></div>
+      <div class="detail hidden mono">tutti/src/runtime.ts:3  import { Agent } from "@tabtin/core";</div>
+
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">编辑 notes/compare.md</span><span class="grow"></span><span class="chip">Edit</span><span class="chip"><span class="add">+18</span> <span class="del">-2</span></span></div>
+      <div class="detail hidden mono"><span class="add">+ TabTin：workspace 多包，内核自持，可深度改</span>
+<span class="add">+ tutti：单包薄壳，跟随上游升级省心</span>
+<span class="del">- （待补）</span></div>
+
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">读取 agent-runtime/packages/coding-agent/package.json</span><span class="grow"></span><span class="chip">Read File</span></div>
+      <div class="detail hidden mono">{ "name": "@tabtin/coding-agent", "private": true }</div>
+    </div></div>
+
+    <div class="seg-foot">
+      <span>本段 tokens：输入 18.4k · 输出 2.1k</span>
+      <span class="grow" style="flex:1"></span>
+      <span class="link" onclick="event.stopPropagation();toggleSeg('seg1')">收起本段 ⌃</span>
+    </div>
+  </div>
+
+  <div class="answer">
+    <p><b>一句话</b>：两者是同一内核的两种外壳 —— <code>TabTin</code> 是 workspace 多包、内核自持；<code>tutti</code> 是单包薄壳，依赖 <code>@tabtin/core</code>。</p>
+    <p>要深度改内核选 TabTin，要跟随上游省心选 tutti。</p>
+  </div>
+  <div class="meta">本轮 tokens：输入 18.4k · 输出 2.1k · 缓存命中 71%</div>
+
+  <div class="user-bubble">那把 tutti 的插件机制也对比一下</div>
+
+  <!-- 运行中的工作段：默认展开 -->
+  <div class="segment running open" id="seg2">
+    <button class="seg-head" onclick="toggleSeg('seg2')">
+      <span class="seg-icon"><span class="spinner"></span></span>
+      <span class="seg-title">正在工作 · 第 7 步</span>
+      <span class="seg-stats">
+        <span class="stat">读 3 个文件</span>
+        <span class="stat">跑 1 条命令</span>
+      </span>
+      <span class="seg-time">0:23</span>
+      <svg class="caret" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="seg-preview"><span class="live-dot"></span> 正在 <b>执行</b> npm run check …</div>
+
+    <div class="seg-body"><div class="seg-rail">
+      <div class="row thought" onclick="toggleDetail(this)"><span class="mark dim">›</span><span class="label">Thought (212 chars)</span></div>
+      <div class="detail hidden">先找两边的插件注册入口。</div>
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">glob **/extensions/index.ts</span><span class="grow"></span><span class="chip">Glob</span></div>
+      <div class="detail hidden mono">TabTin/packages/coding-agent/src/extensions/index.ts
+tutti/src/plugins/index.ts</div>
+      <div class="row" onclick="toggleDetail(this)"><span class="mark ok">✓</span><span class="label mono">读取 3 个文件</span><span class="grow"></span><span class="chip">Read File</span></div>
+      <div class="detail hidden mono">TabTin: builtInExtensions 数组注册；tutti: 目录扫描自动加载。</div>
+      <div class="row"><span class="mark"><span class="spinner"></span></span><span class="label mono">npm run check</span><span class="grow"></span><span class="chip">Bash</span></div>
+    </div></div>
+
+    <div class="seg-foot">
+      <span><span class="live-dot"></span> 运行中，本段实时更新</span>
+      <span class="grow" style="flex:1"></span>
+      <span class="link" onclick="event.stopPropagation();toggleSeg('seg2')">收起本段 ⌃</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ 改造前 ══════════════════ -->
+<div class="chat hidden" id="viewBefore">
+  <div class="user-bubble">D:\project\TabTin 和 D:\agent-project\tutti 有啥区别，以及优劣势</div>
+
+  <div class="row thought"><span class="mark dim">›</span><span class="label">Thought (856 chars)</span></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">执行了 1 条命令</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">读取了 1 个文件</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row thought"><span class="mark dim">›</span><span class="label">Thought (288 chars)</span></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">读取了 2 个文件</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row thought"><span class="mark dim">›</span><span class="label">Thought (577 chars)</span></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">搜索了 1 次</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">编辑了 1 个文件</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row thought"><span class="mark dim">›</span><span class="label">Thought (212 chars)</span></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">执行了 1 条命令</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">读取了 1 个文件</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+
+  <div class="answer">
+    <p><b>一句话</b>：两者是同一内核的两种外壳 —— <code>TabTin</code> 是 workspace 多包、内核自持；<code>tutti</code> 是单包薄壳。</p>
+  </div>
+
+  <div class="user-bubble">那把 tutti 的插件机制也对比一下</div>
+  <div class="row thought"><span class="mark dim">›</span><span class="label">Thought (212 chars)</span></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">查找了 1 次</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row"><span class="mark ok">✓</span><span class="label">读取了 3 个文件</span><span class="grow"></span><svg class="caret closed" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6l4 4 4-4"/></svg></div>
+  <div class="row"><span class="mark"><span class="spinner"></span></span><span class="label">执行 1 条命令…</span></div>
+</div>
+
+<script>
+  function toggleSeg(id) {
+    const el = document.getElementById(id);
+    const before = el.getBoundingClientRect().top;
+    el.classList.toggle("open");
+    el.querySelector(".caret").classList.toggle("closed");
+    // 折叠补偿：把段头钉回原来的视口位置
+    const after = el.getBoundingClientRect().top;
+    window.scrollBy(0, after - before);
+  }
+  function toggleDetail(rowEl) {
+    const d = rowEl.nextElementSibling;
+    if (d && d.classList.contains("detail")) d.classList.toggle("hidden");
+  }
+  document.getElementById("collapseAll").onclick = () =>
+    document.querySelectorAll("#viewAfter .segment.open").forEach((s) => toggleSeg(s.id));
+  document.getElementById("expandAll").onclick = () =>
+    document.querySelectorAll("#viewAfter .segment:not(.open)").forEach((s) => toggleSeg(s.id));
+  document.getElementById("modeSwitch").onclick = (e) => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    const after = btn.dataset.mode === "after";
+    document.querySelectorAll("#modeSwitch button").forEach((b) => b.classList.toggle("on", b === btn));
+    document.getElementById("viewAfter").classList.toggle("hidden", !after);
+    document.getElementById("viewBefore").classList.toggle("hidden", after);
+    document.getElementById("hintAfter").classList.toggle("hidden", !after);
+    document.getElementById("hintBefore").classList.toggle("hidden", after);
+  };
+</script>
+</body>
+</html>

@@ -1,13 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import type { TimelineEntry } from "../lib/timeline";
 import { useChatZoom } from "../lib/chat-zoom";
-import AssistantMessage, { assistantText } from "./AssistantMessage";
-import ChangedFilesCard from "./ChangedFilesCard";
-import CompactionBubble from "./CompactionBubble";
-import RetryNotice from "./RetryNotice";
-import ToolCallGroup from "./ToolCallGroup";
-import UserBubble from "./UserBubble";
+import { foldWorkSegments } from "../lib/work-segment";
+import { assistantText } from "./AssistantMessage";
+import TimelineItem from "./TimelineItem";
+import WorkSegment from "./WorkSegment";
 
 export default function MessageList() {
   const { timeline, history, loadingOlder, isStreaming, isCompacting, activeSessionKey } = useChatSelector(
@@ -36,6 +34,18 @@ export default function MessageList() {
     isStreaming,
     isCompacting,
   ]);
+
+  // Consecutive thinking/tool entries render under one collapsible parent
+  // bubble. Pure view-layer fold: the timeline itself (live or replayed from a
+  // session file) is untouched (doc/2026-09-13-工作段母气泡.md).
+  const rows = useMemo(() => foldWorkSegments(timeline), [timeline]);
+
+  // Collapsing a segment above the viewport shortens the page; keep the header
+  // where the user clicked it (same trick as the older-history prepend).
+  const adjustScroll = useCallback((deltaY: number) => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop += deltaY;
+  }, []);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -98,9 +108,26 @@ export default function MessageList() {
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div className="mx-auto flex max-w-3xl flex-col gap-1.5 px-4 py-4" style={{ zoom }}>
           {loadingOlder && <div className="text-center text-xs text-dim">加载更早的消息…</div>}
-          {timeline.map((entry) => (
-            <TimelineItem key={entry.id} entry={entry} copyText={turnCopyText.get(entry.id)} />
-          ))}
+          {rows.map((row, i) =>
+            row.kind === "segment" ? (
+              <WorkSegment
+                key={row.id}
+                entries={row.entries}
+                stats={row.stats}
+                // Follow the agent live: the running segment (and the trailing
+                // one of a run that hasn't settled) starts expanded, then folds
+                // itself once the run ends.
+                autoOpen={row.stats.running || (i === rows.length - 1 && (isStreaming || isCompacting))}
+                onScrollAdjust={adjustScroll}
+              />
+            ) : (
+              <TimelineItem
+                key={row.entry.id}
+                entry={row.entry}
+                copyText={turnCopyText.get(row.entry.id)}
+              />
+            ),
+          )}
           {/* Working indicator while the agent is running but nothing visible yet */}
           {(isStreaming || isCompacting) && (
             <div className="flex items-center gap-2 px-2 py-1 text-xs text-dim">
@@ -150,49 +177,15 @@ function buildTurnCopyText(timeline: TimelineEntry[], running: boolean): Map<str
     if (entry.kind === "user") flush();
     else if (entry.kind === "assistant") {
       const text = assistantText(entry.message);
-      if (text) parts.push(text);
-      lastId = entry.id;
+      // Only messages with prose can carry the button: a thinking-only trailing
+      // message lives inside a folded work segment, where the button would hide.
+      if (text) {
+        parts.push(text);
+        lastId = entry.id;
+      }
     }
   }
   if (!running) flush();
   return map;
 }
 
-// Memoized: the store's throttled flush clones only mutated entries, so
-// untouched timeline items skip re-rendering entirely during streaming.
-const TimelineItem = memo(function TimelineItem({ entry, copyText }: { entry: TimelineEntry; copyText?: string }) {
-  switch (entry.kind) {
-    case "user":
-      return <UserBubble message={entry.message} />;
-    case "assistant":
-      return (
-        <AssistantMessage
-          message={entry.message}
-          streaming={entry.streaming}
-          usage={entry.usage}
-          copyText={copyText}
-          errorRetried={entry.retriedError}
-        />
-      );
-    case "toolGroup":
-      return <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />;
-    case "retry":
-      return (
-        <RetryNotice
-          attempt={entry.attempt}
-          maxAttempts={entry.maxAttempts}
-          delayMs={entry.delayMs}
-          errorMessage={entry.errorMessage}
-          done={entry.done}
-        />
-      );
-    case "notice":
-      return <div className="text-center text-xs text-dim">{entry.text}</div>;
-    case "compaction":
-      return <CompactionBubble entry={entry} />;
-    case "changes":
-      return (
-        <ChangedFilesCard files={entry.files} totalAdded={entry.totalAdded} totalRemoved={entry.totalRemoved} />
-      );
-  }
-});

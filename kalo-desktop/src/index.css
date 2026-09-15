@@ -355,6 +355,30 @@ body {
 }
 
 /* ==========================================================================
+   Work segment (parent bubble over consecutive thinking / tool rows)
+   ========================================================================== */
+
+.work-segment {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.18s ease;
+}
+/* color-mix keeps the accent readable in both themes; browsers without it
+   simply keep the neutral --border above. */
+.work-segment:hover {
+  border-color: color-mix(in srgb, var(--text-dim) 40%, var(--border));
+}
+.work-segment.is-running {
+  border-color: color-mix(in srgb, var(--tone-blue) 45%, var(--border));
+}
+.work-segment-head:hover {
+  background: color-mix(in srgb, var(--text-dim) 8%, transparent);
+}
+.work-segment-stat {
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+}
+
+/* ==========================================================================
    Small helpers
    ========================================================================== */
 
