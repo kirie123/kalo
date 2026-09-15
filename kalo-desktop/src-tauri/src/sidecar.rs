@@ -2,7 +2,9 @@
 //! gateway.
 //!
 //! Both are staged by `scripts/build-engine.sh` / `scripts/build-gateway.sh`
-//! under a `binaries/` directory, named `<stem>-<target-triple>` plus the
+//! under a `binaries/` directory — next to the executable in the dev layout,
+//! under [`crate::resources::dir`] once bundled — named
+//! `<stem>-<target-triple>` plus the
 //! platform's executable suffix. The triple comes from `build.rs`, which
 //! forwards cargo's `TARGET` — so the name this module asks for and the name
 //! the build scripts wrote are derived from the same value and cannot drift.
@@ -54,13 +56,25 @@ fn usable(p: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve a sidecar executable:
-/// 1. the `env_override` env var (explicit path to an external build),
-/// 2. `binaries/<name>` next to the app executable (installed app),
-/// 3. `src-tauri/binaries/<name>` (dev layout).
-///
-/// `stem` is the base name without triple or suffix, e.g. `"pi"`.
+/// Resolve a sidecar executable. `stem` is the base name without triple or
+/// suffix, e.g. `"pi"`.
 pub fn resolve(stem: &str, env_override: &str) -> Result<PathBuf, String> {
+    resolve_in(stem, env_override, crate::resources::dir())
+}
+
+/// The lookup itself, with the resource root injected so it is testable:
+/// 1. the `env_override` env var (explicit path to an external build),
+/// 2. `<resource_dir>/binaries/<name>` — installed app (see [`crate::resources`]),
+/// 3. `binaries/<name>` next to the executable — fallback before `init()`,
+/// 4. `src-tauri/binaries/<name>` — dev layout, **debug builds only**.
+///
+/// Step 4 is gated because `CARGO_MANIFEST_DIR` is an absolute path baked in
+/// at compile time. In a release build it points at the repo on whichever
+/// machine produced the bundle: everywhere else it simply does not exist, but
+/// *on the build machine* it resolves, and a `.app` with no engine inside it
+/// runs perfectly. That makes the one machine able to test the bundle the one
+/// machine that cannot observe the bug.
+fn resolve_in(stem: &str, env_override: &str, resource_dir: Option<&Path>) -> Result<PathBuf, String> {
     let name = file_name(stem);
 
     if let Ok(over) = std::env::var(env_override) {
@@ -70,16 +84,21 @@ pub fn resolve(stem: &str, env_override: &str) -> Result<PathBuf, String> {
     }
 
     let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = resource_dir {
+        candidates.push(dir.join("binaries").join(&name));
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("binaries").join(&name));
         }
     }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("binaries")
-            .join(&name),
-    );
+    if cfg!(debug_assertions) {
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("binaries")
+                .join(&name),
+        );
+    }
 
     for p in &candidates {
         if p.is_file() {
@@ -176,6 +195,33 @@ mod tests {
         let got = resolve("pi", "KALO_TEST_OVERRIDE_WINS").unwrap();
         std::env::remove_var("KALO_TEST_OVERRIDE_WINS");
         assert_eq!(got, exe);
+    }
+
+    /// The `.app` layout: the engine lives under the resource root, not next
+    /// to the executable (`Contents/MacOS/`). Before this candidate existed,
+    /// a bundled app found nothing there and fell through to the dev layout.
+    #[test]
+    fn resource_dir_is_searched() {
+        let dir = TempDir::new("resource");
+        let bin = dir.0.join("binaries");
+        fs::create_dir_all(&bin).unwrap();
+        let exe = write_exe(&bin, &file_name("pi"));
+        let got = resolve_in("pi", "KALO_TEST_UNSET_RESOURCE", Some(&dir.0)).unwrap();
+        assert_eq!(got, exe);
+    }
+
+    /// A resource root without the sidecar must not silently satisfy the
+    /// lookup — the error has to name the build script, not point at whatever
+    /// else happens to sit in that directory.
+    #[test]
+    fn empty_resource_dir_falls_through_to_the_error() {
+        let dir = TempDir::new("resource-empty");
+        // The dev-layout candidate is compiled in for debug builds and would
+        // answer with a real staged engine, so assert only on the negative:
+        // nothing inside this resource root was accepted.
+        if let Ok(got) = resolve_in("pi", "KALO_TEST_UNSET_EMPTY", Some(&dir.0)) {
+            assert!(!got.starts_with(&dir.0), "resolved inside an empty resource root: {got:?}");
+        }
     }
 
     #[test]

@@ -37,7 +37,7 @@ kalo-desktop/
 
 - 每文件 `#[cfg(test)] mod tests` 就近放单测；`cargo test` 只跑 `src-tauri` 下的测试。
 - 错误处理：返回 `Result<T, E>`，用户可见错误带可操作提示。
-- 涉及路径/进程/权限的改动，默认同时按 Windows 与 macOS 行为评估（根 AGENTS.md 的双平台等价契约）。OS 差异收敛在窄适配层：`sidecar.rs`、`proc.rs`、`files.rs::open_path`、`market_env.rs::resolve_bash`；home 目录一律 `USERPROFILE` 回退 `HOME`。
+- 涉及路径/进程/权限的改动，默认同时按 Windows 与 macOS 行为评估（根 AGENTS.md 的双平台等价契约）。OS 差异收敛在窄适配层：`sidecar.rs`、`proc.rs`、`files.rs::open_path`、`market_env.rs::resolve_bash`；home 目录一律 `USERPROFILE` 回退 `HOME`；打包后的资源根一律 `resources.rs`（`resource_dir()`），**不要把 `CARGO_MANIFEST_DIR` 留在 release 查找链里**——它在打包机上会解析成功，让唯一能测试 bundle 的那台机器恰好测不出问题。
 
 ## 检查命令
 

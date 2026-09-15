@@ -15,6 +15,7 @@ mod market_env;
 mod mcp;
 mod memory;
 mod onboarding;
+mod resources;
 mod session;
 mod session_paging;
 mod sidecar;
@@ -619,6 +620,9 @@ fn main() {
         .manage(SessionManager::default())
         .manage(GatewayManager::default())
         .setup(|app| {
+            // Must come first: everything below resolves bundled resources
+            // (sidecars, internal-skills) through this.
+            resources::init(app.handle());
             // Auto-start the IM gateway when Feishu credentials already exist.
             gateway::autostart(app.handle());
             // First-run: knowledge base directory tree + INDEX.md stub.
