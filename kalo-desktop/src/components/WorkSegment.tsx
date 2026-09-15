@@ -104,7 +104,7 @@ function WorkSegment({
         <div className="py-1 pl-4 pr-2.5">
           <div className="flex flex-col border-l border-edge pl-2">
             {entries.map((entry) => (
-              <TimelineItem key={entry.id} entry={entry} />
+              <TimelineItem key={entry.id} entry={entry} inSegment />
             ))}
           </div>
           <button onClick={toggle} className="mt-1 pl-1 text-left text-[11px] text-dim hover:text-ink">

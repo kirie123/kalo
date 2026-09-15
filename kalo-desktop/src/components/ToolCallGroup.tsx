@@ -45,6 +45,26 @@ function StatusMark({ rec }: { rec: ToolCallRecord }) {
   return <span className="text-[var(--ok)]">✓</span>;
 }
 
+/**
+ * The call rows without the group shell, for use inside a work segment.
+ *
+ * The segment header already summarizes the same calls as chips ("读取了 2 个
+ * 文件"), and a segment is routinely cut into single-call groups by the
+ * thinking blocks between them — so the per-group header there degenerates
+ * into "读取了 1 个文件" stacked above the one row it describes. Dropping it
+ * removes a nesting level and restores strict chronological order inside the
+ * segment (doc/2026-09-13-工作段母气泡.md).
+ */
+export function ToolCallList({ calls }: { calls: ToolCallRecord[] }) {
+  return (
+    <div className="flex flex-col text-[13px]">
+      {calls.map((rec, i) => (
+        <ToolCallRow key={rec.toolCallId} rec={rec} isLast={i === calls.length - 1} />
+      ))}
+    </div>
+  );
+}
+
 export default function ToolCallGroup({ toolName, calls }: { toolName: string; calls: ToolCallRecord[] }) {
   // Groups start expanded so the user can follow what the agent is doing.
   const [open, setOpen] = useState(true);

@@ -4,13 +4,16 @@ import AssistantMessage from "./AssistantMessage";
 import ChangedFilesCard from "./ChangedFilesCard";
 import CompactionBubble from "./CompactionBubble";
 import RetryNotice from "./RetryNotice";
-import ToolCallGroup from "./ToolCallGroup";
+import ToolCallGroup, { ToolCallList } from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
 
 /**
  * Renders one timeline entry. Used both at top level (MessageList) and inside a
- * work segment (WorkSegment), so a folded process row looks exactly like it
- * does unfolded.
+ * work segment (WorkSegment).
+ *
+ * `inSegment` drops the tool-group shell: the segment header already carries
+ * the per-tool counts, so keeping the group header would stack two summaries
+ * over one row. Everything else renders identically in both places.
  *
  * Memoized: the store's throttled flush clones only mutated entries, so
  * untouched timeline items skip re-rendering entirely during streaming.
@@ -18,9 +21,11 @@ import UserBubble from "./UserBubble";
 const TimelineItem = memo(function TimelineItem({
   entry,
   copyText,
+  inSegment = false,
 }: {
   entry: TimelineEntry;
   copyText?: string;
+  inSegment?: boolean;
 }) {
   switch (entry.kind) {
     case "user":
@@ -36,7 +41,11 @@ const TimelineItem = memo(function TimelineItem({
         />
       );
     case "toolGroup":
-      return <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />;
+      return inSegment ? (
+        <ToolCallList calls={entry.calls} />
+      ) : (
+        <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />
+      );
     case "retry":
       return (
         <RetryNotice
