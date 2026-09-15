@@ -40,7 +40,7 @@
 - **文件行数上限**：业务代码文件建议 ≤800 行（不含空行/注释）；超过是重构信号，先拆分再加逻辑。
 - **测试纪律**：写/改/删测试前先看 `kalo-desktop/AGENTS.md` 的测试边界；纯逻辑（折叠/解析/gate 检查）必须可单测，够到 Tauri IPC 的部分要隔离。
 - **提交规范**：Conventional Commits：`<type>(<scope>): <中文或英文描述>`，type 限 `feat/fix/docs/refactor/test/chore`，一次提交聚焦一件事。例：`fix(desktop): 文件预览全屏可退出`、`feat(skills): 新增 glassnode-research 内置技能`。
-- **Windows / macOS 双平台等价契约**：两个平台一等公民，所有改动默认同时评估两侧行为，既不能只按 POSIX 写码，也不能只按 Win32 写码。改动可能触及路径/文件系统语义（分隔符、大小写敏感性）、临时目录、可执行文件发现与后缀、命令引用、shell 选择、环境变量（`USERPROFILE` vs `HOME`）、进程创建与终止、信号、权限位、符号链接、socket、打包或原生依赖时，先评估两平台影响（桌面端细化见 `kalo-desktop/AGENTS.md` 的 Rust 侧约定）。**OS 差异收敛在窄适配层，业务逻辑保持平台中立**——现成样板：`src-tauri/src/sidecar.rs`（按 target triple 定位 sidecar）、`proc.rs`（`no_window`/`kill_tree`）、`files.rs::open_path`、`market_env.rs::resolve_bash`。sidecar 二进制一律由 `scripts/platform.sh` 的映射命名，不要在代码里写死某个平台的文件名。发行安装包目前仍只出 Windows（nsis）；macOS 走 `npm run tauri dev`，`.app` 打包未验证。
+- **Windows / macOS 双平台等价契约**：两个平台一等公民，所有改动默认同时评估两侧行为，既不能只按 POSIX 写码，也不能只按 Win32 写码。改动可能触及路径/文件系统语义（分隔符、大小写敏感性）、临时目录、可执行文件发现与后缀、命令引用、shell 选择、环境变量（`USERPROFILE` vs `HOME`）、进程创建与终止、信号、权限位、符号链接、socket、打包或原生依赖时，先评估两平台影响（桌面端细化见 `kalo-desktop/AGENTS.md` 的 Rust 侧约定）。**OS 差异收敛在窄适配层，业务逻辑保持平台中立**——现成样板：`src-tauri/src/sidecar.rs`（按 target triple 定位 sidecar）、`proc.rs`（`no_window`/`kill_tree`）、`files.rs::open_path`、`market_env.rs::resolve_bash`。sidecar 二进制一律由 `scripts/platform.sh` 的映射命名，不要在代码里写死某个平台的文件名。打包后资源的定位一律走 `resources.rs`（封装 Tauri 的 `resource_dir()`），不要自己推算 `../Resources`，也不要依赖 `CARGO_MANIFEST_DIR` 在 release 里还成立。`bun run build` 按宿主平台出包：Windows → nsis，macOS → `.app` + `.dmg`（未签名未公证）。
 
 ## Self-Evolution（文档影响检查）
 

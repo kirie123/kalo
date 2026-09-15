@@ -77,6 +77,7 @@
 ## 运行时与平台
 
 - [macOS 平台支持（dev 可跑）与 sidecar 命名契约](2026-09-12-macos-平台支持.md)
+- [macOS `.app` / `.dmg` 打包与运行时资源定位](2026-09-15-macos-app-打包与资源定位.md)
 - [自定义 Provider 的模型能力配置（思考 / 图片 / 最大输出 / Bearer 鉴权头）](2026-09-11-provider模型能力配置.md)
 - [P0-1 Job Runtime + P0-2 Channel 设计文档](2026-08-17-p0-job-runtime-channel.md)
 - [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)

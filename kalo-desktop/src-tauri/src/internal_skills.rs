@@ -48,40 +48,50 @@ fn user_skills_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".kalo").join("skills"))
 }
 
-/// Locate the bundled skills directory, mirroring `session.rs`'s sidecar
-/// lookup: explicit override, then next to the executable (installed app),
-/// with the repo checkout as the fallback.
+/// Locate the bundled skills directory, mirroring [`crate::sidecar`]'s lookup.
 ///
-/// Debug builds check the checkout *first*: `tauri build`/`tauri dev` stage
-/// resources next to the exe at build-script time, so that copy goes stale
-/// when a skill file is added and cargo sees no reason to re-run. In dev the
-/// repo is the truth.
+/// The repo checkout is only offered to the lookup in debug builds.
+/// `CARGO_MANIFEST_DIR` is baked in at compile time, so in a bundled app it
+/// names the repo on the build machine — absent everywhere else, but present
+/// exactly where the bundle gets tested, where it would hide a `.app`
+/// shipping no skills at all.
 fn source_dir() -> Option<PathBuf> {
+    let repo = cfg!(debug_assertions).then(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("internal-skills")
+    });
+    source_dir_in(crate::resources::dir(), repo.as_deref())
+}
+
+/// The lookup itself, with both roots injected so it is testable: explicit
+/// override, the repo checkout, the bundled copy under the resource root,
+/// then next to the executable.
+///
+/// `repo` comes *first*: `tauri build`/`tauri dev` stage resources next to the
+/// exe at build-script time, so that copy goes stale when a skill file is
+/// added and cargo sees no reason to re-run. In dev the repo is the truth.
+fn source_dir_in(resource_dir: Option<&Path>, repo: Option<&Path>) -> Option<PathBuf> {
     if let Ok(over) = std::env::var("KALO_INTERNAL_SKILLS_DIR") {
         let p = PathBuf::from(over);
         if p.is_dir() {
             return Some(p);
         }
     }
-    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("internal-skills");
-    if cfg!(debug_assertions) && repo.is_dir() {
-        return Some(repo.clone());
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(repo) = repo {
+        candidates.push(repo.to_path_buf());
+    }
+    if let Some(dir) = resource_dir {
+        candidates.push(dir.join("internal-skills"));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let p = dir.join("internal-skills");
-            if p.is_dir() {
-                return Some(p);
-            }
+            candidates.push(dir.join("internal-skills"));
         }
     }
-    if repo.is_dir() {
-        return Some(repo);
-    }
-    None
+    candidates.into_iter().find(|p| p.is_dir())
 }
 
 /// FNV-1a (64-bit) over the raw bytes, hex-encoded. Not cryptographic — this
@@ -273,6 +283,28 @@ mod tests {
     fn write(path: &Path, text: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, text).unwrap();
+    }
+
+    /// The bundled layout: skills sit under the resource root, not next to the
+    /// executable. Also pins the precedence that makes dev work — a repo
+    /// checkout outranks the staged copy, which can be stale.
+    #[test]
+    fn source_dir_prefers_repo_then_resource_dir() {
+        let (base, _) = dirs("source-dir");
+        let base = base.parent().unwrap().to_path_buf();
+        let resources = base.join("Resources");
+        let repo = base.join("repo-internal-skills");
+        fs::create_dir_all(resources.join("internal-skills")).unwrap();
+        fs::create_dir_all(&repo).unwrap();
+
+        assert_eq!(
+            source_dir_in(Some(&resources), None),
+            Some(resources.join("internal-skills")),
+        );
+        assert_eq!(source_dir_in(Some(&resources), Some(&repo)), Some(repo));
+        // A release build with no resource root has nothing bundled to find;
+        // current_exe() is the test binary, which has no internal-skills dir.
+        assert_eq!(source_dir_in(None, None), None);
     }
 
     #[test]
