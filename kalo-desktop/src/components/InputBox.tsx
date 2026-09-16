@@ -58,6 +58,9 @@ export default function InputBox() {
   const [isAborting, setIsAborting] = useState(false);
   const [previewImage, setPreviewImage] = useState<LightboxImage | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Composer card, popup included — the popup is a child, so clicks on it count
+  // as inside and only elsewhere dismisses it.
+  const cardRef = useRef<HTMLDivElement>(null);
   // Autocomplete state: active token, highlighted row, @ search results.
   const [ac, setAc] = useState<AcToken | null>(null);
   const [acIndex, setAcIndex] = useState(0);
@@ -125,6 +128,27 @@ export default function InputBox() {
   const acItemCount = ac?.mode === "slash" ? slashItems.length : fileItems.length;
   const acOpen = ac !== null && acItemCount > 0;
 
+  // The ask_user panel takes over the composer and disables the textarea
+  // (doc/2026-09-07-ask-user-向用户提问工具.md). A disabled textarea fires no
+  // change/select/key event, so the token can never be recomputed and the popup
+  // — absolutely positioned above the card, i.e. right on top of the question
+  // panel it blocks — would stay open with no way out. Drop it on takeover.
+  useEffect(() => {
+    if (chat.hasPendingAsk) setAc(null);
+  }, [chat.hasPendingAsk]);
+
+  // Click anywhere outside the composer dismisses the popup. Without this the
+  // list also survived clicks into the message area, since nothing but the
+  // textarea's own events ever recomputed the token.
+  useEffect(() => {
+    if (!acOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!cardRef.current?.contains(e.target as Node)) setAc(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [acOpen]);
+
   /** Insert the chosen completion, replacing the token. */
   const applyCompletion = (insertion: string) => {
     if (!ac) return;
@@ -154,6 +178,7 @@ export default function InputBox() {
     const value = text.trim();
     if (!value && chat.attachments.length === 0) return;
     setText("");
+    setAc(null);
     void chatStore.sendPrompt(value);
   };
 
@@ -249,7 +274,10 @@ export default function InputBox() {
     <div className="mx-auto w-full max-w-3xl">
       {/* 排队中的消息（doc/2026-09-13-输入队列.md），空队列时不渲染。 */}
       <InputQueue />
-      <div className="relative rounded-2xl border border-edge bg-elevated shadow-soft transition-shadow focus-within:shadow-lift">
+      <div
+        ref={cardRef}
+        className="relative rounded-2xl border border-edge bg-elevated shadow-soft transition-shadow focus-within:shadow-lift"
+      >
         {/* Drop hint while a file is dragged over the window */}
         {dragging && (
           <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-elevated/90 text-xs text-dim">
