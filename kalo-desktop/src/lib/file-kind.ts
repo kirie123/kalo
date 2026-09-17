@@ -10,6 +10,10 @@
 export type FileKind =
   /** Rendered as markdown, with a source toggle. */
   | "markdown"
+  /** Rendered in a sandboxed frame, with a source toggle. */
+  | "html"
+  /** Rendered as a figure, with a source toggle. */
+  | "svg"
   /** Plain monospace text. */
   | "text"
   /** `<img>` from a data URL. */
@@ -24,6 +28,8 @@ export type FileKind =
   | "opaque";
 
 const MARKDOWN_EXTS = new Set(["md", "markdown", "mdx", "mdown", "mkd"]);
+
+const HTML_EXTS = new Set(["html", "htm", "xhtml"]);
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "avif"]);
 
@@ -54,13 +60,15 @@ export function extensionOf(path: string): string {
 export function fileKind(path: string): FileKind {
   const ext = extensionOf(path);
   if (MARKDOWN_EXTS.has(ext)) return "markdown";
+  if (HTML_EXTS.has(ext)) return "html";
+  if (ext === "svg") return "svg";
   if (IMAGE_EXTS.has(ext)) return "image";
   if (ext === "docx" || ext === "docm") return "docx";
   if (ext === "xlsx" || ext === "xlsm") return "xlsx";
   if (ext === "pdf") return "pdf";
   if (OPAQUE_EXTS.has(ext)) return "opaque";
-  // SVG is text first: source is more useful than a render in a code tool,
-  // and it lands here rather than in IMAGE_EXTS for that reason.
+  // `.svg` and `.html` are claimed above: both carry markup that is worth
+  // rendering, and both need a text read to do it.
   return "text";
 }
 

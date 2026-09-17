@@ -9,10 +9,13 @@ import { MAX_COLS, MAX_ROWS, readXlsx, type XlsxWorkbook } from "../lib/xlsx";
 import { openZip } from "../lib/zip";
 import { MarkdownBlock } from "./AssistantMessage";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
+import HtmlFrame from "./HtmlFrame";
+import SvgBlock from "./SvgBlock";
 
 /**
  * The one file renderer, shared by the changed-files modal and the file
- * panel's preview column: markdown renders as markdown, images as images,
+ * panel's preview column: markdown renders as markdown, HTML renders in a
+ * sandboxed frame (local assets inlined), SVG as a figure, images as images,
  * Word/Excel through the in-app OOXML readers, PDFs through the webview's own
  * viewer, and everything else as monospace text.
  *
@@ -23,7 +26,7 @@ import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 
 /** What the loader produced, discriminated the same way as `FileKind`. */
 type Loaded =
-  | { kind: "markdown" | "text"; text: string; truncated: boolean }
+  | { kind: "markdown" | "html" | "svg" | "text"; text: string; truncated: boolean }
   | { kind: "image"; dataUrl: string; name: string; mimeType: string; dataBase64: string }
   | { kind: "docx"; markdown: string; imageCount: number }
   | { kind: "xlsx"; workbook: XlsxWorkbook }
@@ -46,7 +49,9 @@ async function load(path: string, kind: FileKind): Promise<Loaded> {
     const res = await readFileText(path);
     // The extension said text but the bytes disagree; trust the bytes.
     if (res.binary) return { kind: "opaque", size: 0 };
-    return { kind: kind === "markdown" ? "markdown" : "text", text: res.text, truncated: res.truncated };
+    // Read as text: markdown, HTML and SVG all render from their source.
+    const asText: Loaded["kind"] = kind === "markdown" || kind === "html" || kind === "svg" ? kind : "text";
+    return { kind: asText, text: res.text, truncated: res.truncated };
   }
 
   const res = await readFileBytes(path);
@@ -77,14 +82,25 @@ async function load(path: string, kind: FileKind): Promise<Loaded> {
   return { kind: "xlsx", workbook: await readXlsx(zip) };
 }
 
-export default function FilePreview({ path, name }: { path: string; name?: string }) {
+export default function FilePreview({
+  path,
+  name,
+  onOpenPath,
+}: {
+  path: string;
+  name?: string;
+  /** Renders a link inside a previewed document as another preview. */
+  onOpenPath?: (path: string) => void;
+}) {
   const kind = useMemo(() => fileKind(path), [path]);
   /** highlight.js language for source views; undefined for genuine plain text. */
   const srcLang = useMemo(() => codeLanguage(path), [path]);
   const [data, setData] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Markdown and docx render by default; this shows the source instead. */
+  /** Markdown, HTML and docx render by default; this shows the source instead. */
   const [source, setSource] = useState(false);
+  /** HTML only: run the document's own scripts inside the sandbox. */
+  const [scripts, setScripts] = useState(false);
   // Blob URLs outlive the component unless revoked by hand.
   const blobUrl = useRef<string | null>(null);
 
@@ -93,6 +109,7 @@ export default function FilePreview({ path, name }: { path: string; name?: strin
     setData(null);
     setError(null);
     setSource(false);
+    setScripts(false);
     load(path, kind).then(
       (res) => {
         if (!alive) {
@@ -141,6 +158,55 @@ export default function FilePreview({ path, name }: { path: string; name?: strin
 
     case "text":
       return <CodeText text={data.text} lang={srcLang} truncated={data.truncated} />;
+
+    case "html":
+      return (
+        <div className="flex h-full min-h-[60vh] flex-col">
+          <div className="flex shrink-0 items-center gap-2 border-b border-edge px-2 py-1 text-[10px] text-dim">
+            <label
+              className="flex cursor-pointer items-center gap-1"
+              title="文档自带的脚本在无同源的沙箱里运行：拿不到应用数据，远端脚本也一律不跑"
+            >
+              <input
+                type="checkbox"
+                checked={scripts}
+                onChange={(e) => setScripts(e.target.checked)}
+                className="h-3 w-3 accent-[var(--accent)]"
+              />
+              运行文档脚本
+            </label>
+            <span className="flex-1" />
+            {data.truncated && <span>文件过长，已截断</span>}
+            <button
+              onClick={() => setSource((v) => !v)}
+              className="rounded border border-edge px-1.5 py-0.5 hover:text-ink"
+            >
+              {source ? "渲染" : "源码"}
+            </button>
+          </div>
+          {source ? (
+            <div className="min-h-0 flex-1 overflow-auto">
+              <CodeText text={data.text} lang={srcLang} truncated={data.truncated} />
+            </div>
+          ) : (
+            <HtmlFrame
+              path={path}
+              name={name}
+              text={data.text}
+              allowScripts={scripts}
+              onOpenPath={onOpenPath}
+            />
+          )}
+        </div>
+      );
+
+    case "svg":
+      return (
+        <div>
+          <SvgBlock source={data.text} />
+          {data.truncated && <div className="px-3 py-1 text-xs text-dim">（文件过长，已截断）</div>}
+        </div>
+      );
 
     case "image":
       return <ImagePreview image={data} />;

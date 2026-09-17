@@ -19,10 +19,17 @@ describe("extensionOf", () => {
 describe("fileKind", () => {
   it("routes the formats the preview renders", () => {
     expect(fileKind("a/b/巴菲特Checklist.md")).toBe("markdown");
+    expect(fileKind("docs/PR-25.html")).toBe("html");
     expect(fileKind("chart.PNG")).toBe("image");
     expect(fileKind("report.docx")).toBe("docx");
     expect(fileKind("book.xlsm")).toBe("xlsx");
     expect(fileKind("paper.pdf")).toBe("pdf");
+  });
+
+  it("routes markup that renders from its own source", () => {
+    // Both are read as text and rendered outside the `<img>` path.
+    expect(fileKind("index.htm")).toBe("html");
+    expect(fileKind("icon.svg")).toBe("svg");
   });
 
   it("sends legacy Office and archives to the opaque branch", () => {
@@ -32,9 +39,8 @@ describe("fileKind", () => {
     expect(fileKind("bundle.zip")).toBe("opaque");
   });
 
-  it("defaults to text, including for source and svg", () => {
+  it("defaults to text for source files", () => {
     expect(fileKind("main.rs")).toBe("text");
-    expect(fileKind("icon.svg")).toBe("text");
     expect(fileKind("Makefile")).toBe("text");
   });
 });
@@ -42,7 +48,7 @@ describe("fileKind", () => {
 describe("needsBytes", () => {
   it("marks exactly the kinds that cannot be read as text", () => {
     expect(["image", "docx", "xlsx", "pdf"].every((k) => needsBytes(k as never))).toBe(true);
-    expect(["markdown", "text", "opaque"].some((k) => needsBytes(k as never))).toBe(false);
+    expect(["markdown", "html", "svg", "text", "opaque"].some((k) => needsBytes(k as never))).toBe(false);
   });
 });
 

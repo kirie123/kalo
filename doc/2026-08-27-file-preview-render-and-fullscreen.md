@@ -9,7 +9,9 @@
    手段退出全屏"。（FileViewerModal 早有 Esc 逐级退出，FilePanel 漏了。）
 2. **代码文件渲染差**：`.py/.ts/.rs` 等所有文本文件走 `PlainText` 纯等宽文本，
    无语法高亮。其余格式此前已覆盖：markdown（react-markdown）、图片（data URL +
-   lightbox）、docx/xlsx（自研 OOXML reader）、pdf（webview 内置查看器）。
+   lightbox）、docx/xlsx（自研 OOXML reader）、pdf（webview 内置查看器）。（`.html`
+   与 `.svg` 的渲染是后来补的，见
+   [HTML 文件预览：沙箱渲染 + 本地资源内联](2026-09-17-html预览渲染.md)。）
 
 ## 方案
 
@@ -37,5 +39,7 @@
 
 - 不加 pdfjs/mammoth 等新依赖（pdf 走 webview 内置、docx 自研已可用；仓库约定
   离线可装，`zip.ts` 注释明确不引 npm 依赖）。
-- SVG 维持按文本预览（file-kind 注释里的既定取舍：代码工具里源码比渲染有用）。
+- SVG 当时维持按文本预览（file-kind 注释里的既定取舍：代码工具里源码比渲染有用）。
+  后来推翻：`.svg` 按图渲染、源码一键切换，见
+  [HTML 文件预览：沙箱渲染 + 本地资源内联](2026-09-17-html预览渲染.md)。
 - 不做行号、小地图——保持最小改动。

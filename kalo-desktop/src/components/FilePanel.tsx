@@ -201,7 +201,7 @@ export default function FilePanel() {
     [root],
   );
 
-  const openFile = (file: { name: string; path: string }, tab: PreviewTab = "source") => {
+  const openFile = (file: { name: string; path: string }, tab: PreviewTab = "source", keepFull = false) => {
     const relPath = relPathOf(git, file.path);
     setPreviewTab(tab);
     setDiffLines(null);
@@ -210,8 +210,13 @@ export default function FilePanel() {
     // No read here: FilePreview owns loading (and its own error state), which
     // is what lets one path serve markdown, images and office files alike.
     setPreview({ name: file.name, path: file.path, relPath });
-    setPreviewFull(false);
+    // A link clicked inside a rendered document keeps fullscreen: browsing from
+    // one doc to the next should not dump the reader back into the narrow column.
+    if (!keepFull) setPreviewFull(false);
   };
+
+  /** Follow a link clicked inside a previewed document. */
+  const openPreviewTarget = (path: string) => openFile({ name: baseName(path), path }, "source", true);
 
   /** Switch the preview between source and diff, fetching the diff on demand. */
   const selectTab = (tab: PreviewTab) => {
@@ -473,7 +478,13 @@ export default function FilePanel() {
               onFull={() => setPreviewFull(true)}
               onClose={closePreview}
             />
-            <PreviewBody preview={preview} tab={previewTab} diff={diffLines} loading={diffLoading} />
+            <PreviewBody
+              preview={preview}
+              tab={previewTab}
+              diff={diffLines}
+              loading={diffLoading}
+              onOpenPath={openPreviewTarget}
+            />
           </div>
         </>
       )}
@@ -490,7 +501,13 @@ export default function FilePanel() {
             onFull={() => setPreviewFull(false)}
             onClose={closePreview}
           />
-          <PreviewBody preview={preview} tab={previewTab} diff={diffLines} loading={diffLoading} />
+          <PreviewBody
+            preview={preview}
+            tab={previewTab}
+            diff={diffLines}
+            loading={diffLoading}
+            onOpenPath={openPreviewTarget}
+          />
         </div>
       )}
 
@@ -578,11 +595,13 @@ function PreviewBody({
   tab,
   diff,
   loading,
+  onOpenPath,
 }: {
   preview: Preview;
   tab: PreviewTab;
   diff: DiffLine[] | null;
   loading: boolean;
+  onOpenPath?: (path: string) => void;
 }) {
   if (tab === "diff") {
     if (loading) {
@@ -603,7 +622,7 @@ function PreviewBody({
   }
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <FilePreview path={preview.path} name={preview.name} />
+      <FilePreview path={preview.path} name={preview.name} onOpenPath={onOpenPath} />
     </div>
   );
 }
