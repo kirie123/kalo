@@ -85,6 +85,7 @@
 - [P0-1 Job Runtime + P0-2 Channel 设计文档](2026-08-17-p0-job-runtime-channel.md)
 - [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
+- [子 Agent 卡片里的压缩气泡（activity feed 新增 compaction 条目）](2026-09-18-子agent压缩气泡.md)
 - [版本号管理](2026-08-19-版本号管理.md)
 - [Agent 引擎可靠性改进](2026-01-01-harness-reliability-improvements.md)
 - [DSML 思考通道工具调用恢复（网关只转换回答通道时的安全网）](2026-09-21-DSML思考通道工具调用恢复.md)

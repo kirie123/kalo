@@ -36,6 +36,7 @@ import { SettingsManager } from "../../core/settings-manager.ts";
 // Imported directly rather than via ../index.ts: that module also pulls in this
 // one, and going through it would be a circular import.
 import webFetchExtension from "../webfetch/index.ts";
+import { applyCompactionActivity, type ChildActivity, MAX_ACTIVITY_TEXT_CHARS, trimActivity } from "./activity.ts";
 import {
 	type ChildHandle,
 	childSessionDir,
@@ -91,20 +92,6 @@ function resolveMaxConcurrency(): number {
 }
 
 const MAX_CONCURRENCY = resolveMaxConcurrency();
-/** Per-entry and total caps for the live activity feed pushed to the UI. */
-const MAX_ACTIVITY_TEXT_CHARS = 2_000;
-const MAX_ACTIVITY_ITEMS = 200;
-
-/** One entry in the child's live activity feed (assistant texts and tool calls). */
-type ChildActivity =
-	| { kind: "text"; text: string }
-	| {
-			kind: "tool";
-			toolCallId: string;
-			name: string;
-			label: string;
-			status: "running" | "success" | "error";
-	  };
 
 interface SubagentDetails {
 	description?: string;
@@ -401,6 +388,7 @@ async function runTurn(opts: {
 	let steps = 0;
 	let liveTokens = 0;
 	const emit = () => {
+		trimActivity(activity);
 		opts.onUpdate?.({
 			content: [],
 			details: {
@@ -439,9 +427,6 @@ async function runTurn(opts: {
 				label: childToolLabel(event.toolName, event.args),
 				status: "running",
 			});
-			if (activity.length > MAX_ACTIVITY_ITEMS) {
-				activity.splice(0, activity.length - MAX_ACTIVITY_ITEMS);
-			}
 			emit();
 		} else if (event.type === "tool_execution_end") {
 			for (let i = activity.length - 1; i >= 0; i--) {
@@ -451,6 +436,11 @@ async function runTurn(opts: {
 					break;
 				}
 			}
+			emit();
+		} else if (event.type === "compaction_start" || event.type === "compaction_end") {
+			// The child compacts on its own; surface it so the card explains the
+			// context swap instead of showing one unbroken feed.
+			applyCompactionActivity(activity, event);
 			emit();
 		}
 	});
