@@ -54,7 +54,7 @@
 - [npm registry 证书过期导致 npx 失败](npm-registry-cert-expired.md)
 
 ### 构建/发布
-- （待补充）
+- [packages/ai 构建报 TS2307（models.dev provider key 改名删掉生成 shard）](models-dev-改名删-shard-构建失败.md)
 
 ## 沉淀路径
 
