@@ -1575,8 +1575,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Cloudflare AI Gateway models
-		if (data["cloudflare-ai-gateway"]?.models) {
-			for (const [prefixedId, model] of Object.entries(data["cloudflare-ai-gateway"].models)) {
+		const cloudflareAIGatewayModels: Record<string, ModelsDevModel> = { ...(data["cloudflare-ai-gateway"]?.models ?? {}) };
+		for (const [mid, m2] of Object.entries(data["cloudflare-workers-ai"]?.models ?? {})) cloudflareAIGatewayModels["workers-ai/" + mid] = m2 as ModelsDevModel;
+		if (Object.keys(cloudflareAIGatewayModels).length > 0) {
+			for (const [prefixedId, model] of Object.entries(cloudflareAIGatewayModels)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 
@@ -2031,8 +2033,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Kimi For Coding models
-		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+		if (data["kimi-code-plan-global"]?.models) {
+			const kimiModels = data["kimi-code-plan-global"].models as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
