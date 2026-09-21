@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a reasoning-channel tool-call recovery safety net: when an assistant message narrates a registered tool call inside its thinking text and no matching real tool call ran in that message (Anthropic-messages gateways convert tool-call markup only in the answer channel, so such narration is relayed as plain text), the loop injects a bounded reminder - at most twice per run - so the model re-issues the call as a real tool call.
 - Added harness `grep` and `glob` tools plus the shared pure-TypeScript search core (`walkFiles`, `globToRegExp`, `grepFiles`) that respects `.gitignore`, skips dependency/build directories, and needs no external binaries.
 
 ### Fixed

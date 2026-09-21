@@ -10,7 +10,7 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
+import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, StreamFn } from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -1738,5 +1738,136 @@ describe("agentLoop continuation logic", () => {
 		expect(messages[0].role).toBe("user");
 		expect(messages[1].role).toBe("assistant");
 		expect(turnCount).toBe(1);
+	});
+});
+
+describe("reasoning-channel tool-call recovery", () => {
+	// Some Anthropic-messages gateways convert tool-call markup only in the answer
+	// channel; markup the model wrote into the reasoning channel arrives as text.
+	const bar = "\uff5c";
+	const toolSchema = Type.Object({ value: Type.String() });
+
+	function createEchoTool(executed: string[]): AgentTool<typeof toolSchema, { value: string }> {
+		return {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				executed.push(params.value);
+				return { content: [{ type: "text", text: `echoed: ${params.value}` }], details: { value: params.value } };
+			},
+		};
+	}
+
+	function narratedCallPrompt(name: string): string {
+		return [
+			"I will call the tool now.",
+			`<${bar}DSML${bar} invoke name="${name}">`,
+			`<${bar}DSML${bar} parameter name="value" string="true">hello`,
+		].join("\n");
+	}
+
+	function nudgeMessages(messages: AgentMessage[]): AgentMessage[] {
+		return messages.filter((message) => {
+			if (message.role !== "user") return false;
+			const content = message.content;
+			return (
+				typeof content !== "string" &&
+				content.some((block) => block.type === "text" && block.text.includes("were not executed: echo"))
+			);
+		});
+	}
+
+	it("nudges the model to re-issue a call that was only written inside reasoning", async () => {
+		const executed: string[] = [];
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [createEchoTool(executed)] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		let callIndex = 0;
+		const streamFn: StreamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					// The narrated call arrived as reasoning text: nothing executed it.
+					const message = createAssistantMessage([
+						{ type: "thinking", thinking: narratedCallPrompt("echo") },
+						{ type: "text", text: "Done." },
+					]);
+					stream.push({ type: "done", reason: "stop", message });
+				} else if (callIndex === 1) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "finished" }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, streamFn);
+		const messages = await stream.result();
+
+		expect(executed).toEqual(["hello"]);
+		expect(callIndex).toBe(3);
+		expect(nudgeMessages(messages).length).toBe(1);
+	});
+
+	it("stops nudging after the cap when the model keeps narrating", async () => {
+		const executed: string[] = [];
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [createEchoTool(executed)] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		let callIndex = 0;
+		const streamFn: StreamFn = () => {
+			callIndex++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage([
+					{ type: "thinking", thinking: narratedCallPrompt("echo") },
+					{ type: "text", text: "I already did it." },
+				]);
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, streamFn);
+		const messages = await stream.result();
+
+		expect(callIndex).toBe(3); // initial turn plus two bounded nudges
+		expect(nudgeMessages(messages).length).toBe(2);
+		expect(executed).toEqual([]);
+	});
+
+	it("ignores narrated calls for tools that are not registered", async () => {
+		const executed: string[] = [];
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [createEchoTool(executed)] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		let callIndex = 0;
+		const streamFn: StreamFn = () => {
+			callIndex++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage([
+					{ type: "thinking", thinking: narratedCallPrompt("write") },
+					{ type: "text", text: "Nothing to do." },
+				]);
+				stream.push({ type: "done", reason: "stop", message });
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("hi")], context, config, undefined, streamFn);
+		const messages = await stream.result();
+
+		expect(callIndex).toBe(1);
+		expect(nudgeMessages(messages).length).toBe(0);
 	});
 });

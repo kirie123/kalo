@@ -10,6 +10,7 @@ import {
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
+import { findThinkingChannelToolNames, findUnexecutedThinkingChannelToolCalls } from "./dsml-tool-calls.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,
@@ -21,6 +22,13 @@ import type {
 	AgentToolResult,
 	StreamFn,
 } from "./types.ts";
+
+/**
+ * Maximum number of re-issue nudges per agent run for tool calls the model
+ * narrated inside its reasoning channel. Bounded so a model that keeps
+ * narrating instead of calling cannot loop forever.
+ */
+const MAX_THINKING_CHANNEL_TOOL_NUDGES = 2;
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
@@ -163,6 +171,7 @@ async function runLoop(
 	let currentContext = initialContext;
 	let config = initialConfig;
 	let firstTurn = true;
+	let thinkingChannelNudges = 0;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -254,6 +263,36 @@ async function runLoop(
 					currentContext.messages.push(continuationMessage);
 					newMessages.push(continuationMessage);
 					hasMoreToolCalls = true; // Force continuation
+				}
+			}
+
+			// Safety net: gateways convert tool-call markup only from the answer
+			// channel, so calls a model narrated inside reasoning are dropped silently
+			// (no tool result, no error). Nudge the model to re-issue them for real.
+			if (message.stopReason !== "length" && thinkingChannelNudges < MAX_THINKING_CHANNEL_TOOL_NUDGES) {
+				const missingThinkingChannelCalls = findUnexecutedThinkingChannelToolCalls(
+					thinkingChannelToolNames(message),
+					new Set(toolCalls.map((toolCall) => toolCall.name)),
+					new Set((currentContext.tools ?? []).map((tool) => tool.name)),
+				);
+				if (missingThinkingChannelCalls.length > 0) {
+					thinkingChannelNudges++;
+					const nudgeMessage: AgentMessage = {
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text:
+									`Tool call(s) written inside your reasoning channel were not executed: ${missingThinkingChannelCalls.join(", ")}. ` +
+									"Tool-invocation markup inside reasoning is plain text, not a tool call. " +
+									"Re-issue the missing call(s) as real tool calls now.",
+							},
+						],
+						timestamp: Date.now(),
+					};
+					currentContext.messages.push(nudgeMessage);
+					newMessages.push(nudgeMessage);
+					hasMoreToolCalls = true;
 				}
 			}
 
@@ -405,6 +444,16 @@ async function streamAssistantResponse(
 	}
 	await emit({ type: "message_end", message: finalMessage });
 	return finalMessage;
+}
+
+/** Tool names referenced by tool-call markup in an assistant message's reasoning. */
+function thinkingChannelToolNames(message: AssistantMessage): string[] {
+	const names: string[] = [];
+	for (const block of message.content) {
+		if (block.type !== "thinking") continue;
+		names.push(...findThinkingChannelToolNames(block.thinking));
+	}
+	return names;
 }
 
 /**
