@@ -274,7 +274,36 @@ export function validateModelDataDirectory(structure: ModelDataStructure, dataDi
 	if (errors.length > 0) throwValidationErrors(errors);
 }
 
+export function validateProviderModuleShardImports(packageRoot: string, providerIds: readonly string[]): void {
+	const known = new Set(providerIds);
+	const providersDir = join(packageRoot, "src", "providers");
+	const marker = ".models.ts\"";
+	const prefix = "from \"./";
+	const offenders: string[] = [];
+	for (const entry of readdirSync(providersDir).sort()) {
+		if (!entry.endsWith(".ts") || entry.endsWith(".models.ts")) continue;
+		const content = readFileSync(join(providersDir, entry), "utf8");
+		let index = content.indexOf(marker);
+		while (index !== -1) {
+			const from = content.lastIndexOf(prefix, index);
+			if (from !== -1) {
+				const shardId = content.slice(from + prefix.length, index);
+				if (!known.has(shardId)) offenders.push(entry + " imports ./" + shardId + ".models.ts");
+			}
+			index = content.indexOf(marker, index + marker.length);
+		}
+	}
+	if (offenders.length > 0) {
+		throw new Error(
+			"Provider modules import generated shards that the catalog no longer generates: " +
+				offenders.join("; ") +
+				". A models.dev provider key was probably renamed or dropped: update scripts/generate-models.ts so the provider is generated again.",
+		);
+	}
+}
+
 export function validateGeneratedModelData(packageRoot: string): void {
 	const structure = readModelDataStructure(packageRoot);
+	validateProviderModuleShardImports(packageRoot, Object.keys(structure));
 	validateModelDataDirectory(structure, join(packageRoot, "src", "providers", "data"));
 }

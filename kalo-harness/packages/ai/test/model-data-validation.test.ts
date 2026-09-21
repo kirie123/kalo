@@ -9,6 +9,7 @@ import {
 	MODEL_DATA_SCHEMA_VERSION,
 	type ModelDataStructure,
 	readModelDataStructure,
+	validateGeneratedModelData,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
 
@@ -173,5 +174,14 @@ describe("generated model data validation", () => {
 			'import { TEST_PROVIDER_MODELS } from "./providers/test-provider.models.ts";\nimport { MISSING_MODELS } from "./providers/missing.models.ts";\n',
 		);
 		expect(() => readModelDataStructure(packageRoot)).toThrow("aggregator and provider shards do not match");
+	});
+
+	it("rejects provider modules importing shards the catalog no longer generates", () => {
+		const { packageRoot } = createFixture();
+		writeFileSync(
+			join(packageRoot, "src", "providers", "hand-written-provider.ts"),
+			'import { MISSING_MODELS } from "./removed-provider.models.ts";\n',
+		);
+		expect(() => validateGeneratedModelData(packageRoot)).toThrow("no longer generates");
 	});
 });
