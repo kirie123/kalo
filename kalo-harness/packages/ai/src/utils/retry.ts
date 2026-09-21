@@ -47,6 +47,11 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"provider.?returned.?error",
 	"exceeded request buffer limit while retrying upstream",
 
+	// Gateway rejection of a request the gateway had served before (observed as
+	// transient "This request is not supported." 400s from an Anthropic-messages
+	// relay on large cached contexts; the identical request succeeds on retry).
+	"this request is not supported",
+
 	// Network, proxy, and fetch transport failures. This includes OpenAI Codex
 	// raw-fetch failures such as "upstream connect", "connection refused", and
 	// "reset before headers" (#733), plus OpenRouter connection drops (#3317).

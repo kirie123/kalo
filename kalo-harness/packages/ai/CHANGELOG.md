@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Fixed transient `400 This request is not supported.` responses from Anthropic-messages gateways being classified as non-retryable; the identical request succeeds when it is sent again.
 - Fixed GitHub Copilot login triggering API rate limits while enabling model policies by limiting concurrent policy updates ([#6187](https://github.com/earendil-works/pi/issues/6187)).
 - Fixed upstream request buffer limit failures to trigger automatic assistant retries.
 - Fixed interrupted upstream response streams and gateway temporarily-unavailable responses to be classified as retryable instead of failing the turn.
