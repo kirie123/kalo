@@ -87,6 +87,7 @@
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
 - [版本号管理](2026-08-19-版本号管理.md)
 - [Agent 引擎可靠性改进](2026-01-01-harness-reliability-improvements.md)
+- [DSML 思考通道工具调用恢复（网关只转换回答通道时的安全网）](2026-09-21-DSML思考通道工具调用恢复.md)
 - [客户端会话元数据 SQLite 持久化](2026-01-01-客户端会话元数据SQLite持久化.md)
 - [每轮 LLM 调用前检查压缩](2026-01-01-每轮LLM调用前检查压缩.md)
 - [压缩摘要追加 session-file 路径](2026-01-01-压缩摘要追加session-file路径.md)
