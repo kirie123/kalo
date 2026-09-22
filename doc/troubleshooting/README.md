@@ -49,6 +49,7 @@
 - [启动后提示「引擎未响应」（解析到了其他平台的 sidecar 二进制）](engine-unresponsive-wrong-platform-binary.md)
 - [OpenAI-compat 代理的缓存命中率始终显示 0%（Anthropic 原生字段未映射 / OpenAI 兼容层不报缓存）](openai-compat-proxy-cache-hit-always-zero.md)
 - [Anthropic 协议网关返回 401（网关只认 Authorization: Bearer）或直接拒绝 pi 内核](anthropic-gateway-401-bearer-auth.md)
+- [edit 报 Could not find ...（oldText 与文件字符漂移，不是中文/CRLF 的问题；容错与诊断均已落地）](edit-not-found-oldtext-drift.md)
 
 ### 工具链
 - [npm registry 证书过期导致 npx 失败](npm-registry-cert-expired.md)
