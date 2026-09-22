@@ -20,6 +20,7 @@ import {
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.ts";
+import type { EditMatchStrategy } from "./edit-match-strategies.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { renderToolPath, str } from "./render-utils.ts";
@@ -100,6 +101,17 @@ const defaultEditOperations: EditOperations = {
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
+}
+
+const APPROXIMATE_MATCH_NOTES: Record<Exclude<EditMatchStrategy, "exact">, string> = {
+	fuzzy: "whitespace-normalized",
+	trimmed: "indentation-insensitive",
+	whitespace: "whitespace-insensitive",
+	anchored: "block-anchor",
+};
+
+function describeMatchStrategy(strategy: EditMatchStrategy): string {
+	return strategy === "exact" ? "" : ` (approximate match: ${APPROXIMATE_MATCH_NOTES[strategy]})`;
 }
 
 function prepareEditArguments(input: unknown): EditToolInput {
@@ -346,7 +358,11 @@ export function createEditToolDefinition(
 				const { bom, text: content } = stripBom(rawContent);
 				const originalEnding = detectLineEnding(content);
 				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+				const { baseContent, newContent, matchedWith } = applyEditsToNormalizedContent(
+					normalizedContent,
+					edits,
+					path,
+				);
 				throwIfAborted();
 
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
@@ -359,7 +375,7 @@ export function createEditToolDefinition(
 					content: [
 						{
 							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
+							text: `Successfully replaced ${edits.length} block(s) in ${path}.${describeMatchStrategy(matchedWith)}`,
 						},
 					],
 					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },

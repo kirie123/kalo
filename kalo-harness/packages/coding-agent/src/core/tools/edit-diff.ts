@@ -6,6 +6,12 @@ import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { describeClosestMatch, formatClosestMatchDiagnostic, normalizeForFuzzyMatch } from "./edit-diff-diagnostics.ts";
+import {
+	EDIT_MATCH_STRATEGIES,
+	type EditMatchStrategy,
+	locateWithStrategy,
+	normalizeForStrategy,
+} from "./edit-match-strategies.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
 export { normalizeForFuzzyMatch };
@@ -168,6 +174,8 @@ export interface Edit {
 export interface AppliedEditsResult {
 	baseContent: string;
 	newContent: string;
+	/** Strategy that located the edits ("exact" when the text matched verbatim). */
+	matchedWith: EditMatchStrategy;
 }
 
 /**
@@ -221,12 +229,6 @@ export function stripBom(content: string): { bom: string; text: string } {
 	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
 }
 
-function countOccurrences(content: string, oldText: string): number {
-	const fuzzyContent = normalizeForFuzzyMatch(content);
-	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	return fuzzyContent.split(fuzzyOldText).length - 1;
-}
-
 function getNotFoundError(
 	path: string,
 	editIndex: number,
@@ -275,11 +277,10 @@ function getNoChangeError(path: string, totalEdits: number): Error {
 /**
  * Apply one or more exact-text replacements to LF-normalized content.
  *
- * All edits are matched against the same original content. Replacements are
- * then applied in reverse order so offsets remain stable. If any edit needs
- * fuzzy matching, the operation runs in fuzzy-normalized content space and then
- * overlays those line-level changes onto the original content so unchanged line
- * blocks keep their original bytes.
+ * Edits are located by trying the tolerance strategies from strictest to
+ * loosest: the first strategy that can locate every edit (uniquely) is used.
+ * Looser strategies then rewrite only the touched line blocks, so unchanged
+ * lines keep their original bytes.
  */
 export function applyEditsToNormalizedContent(
 	normalizedContent: string,
@@ -297,52 +298,62 @@ export function applyEditsToNormalizedContent(
 		}
 	}
 
-	const initialMatches = normalizedEdits.map((edit) => fuzzyFindText(normalizedContent, edit.oldText));
-	const usedFuzzyMatch = initialMatches.some((match) => match.usedFuzzyMatch);
-	const replacementBaseContent = usedFuzzyMatch ? normalizeForFuzzyMatch(normalizedContent) : normalizedContent;
+	let firstFailure: { editIndex: number; oldText: string } | undefined;
 
-	const matchedEdits: MatchedEdit[] = [];
-	for (let i = 0; i < normalizedEdits.length; i++) {
-		const edit = normalizedEdits[i];
-		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
-		if (!matchResult.found) {
-			throw getNotFoundError(path, i, normalizedEdits.length, replacementBaseContent, edit.oldText);
+	for (const strategy of EDIT_MATCH_STRATEGIES) {
+		const matchBase = normalizeForStrategy(strategy, normalizedContent);
+		const matchedEdits: MatchedEdit[] = [];
+		let strategyFailed = false;
+
+		for (let i = 0; i < normalizedEdits.length; i++) {
+			const edit = normalizedEdits[i];
+			const location = locateWithStrategy(strategy, matchBase, normalizeForStrategy(strategy, edit.oldText));
+			if (location.kind === "ambiguous") {
+				throw getDuplicateError(path, i, normalizedEdits.length, location.occurrences);
+			}
+			if (location.kind === "none") {
+				firstFailure ??= { editIndex: i, oldText: edit.oldText };
+				strategyFailed = true;
+				break;
+			}
+			matchedEdits.push({
+				editIndex: i,
+				matchIndex: location.index,
+				matchLength: location.length,
+				newText: edit.newText,
+			});
 		}
 
-		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
-		if (occurrences > 1) {
-			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
+		if (strategyFailed) {
+			continue;
 		}
 
-		matchedEdits.push({
-			editIndex: i,
-			matchIndex: matchResult.index,
-			matchLength: matchResult.matchLength,
-			newText: edit.newText,
-		});
-	}
-
-	matchedEdits.sort((a, b) => a.matchIndex - b.matchIndex);
-	for (let i = 1; i < matchedEdits.length; i++) {
-		const previous = matchedEdits[i - 1];
-		const current = matchedEdits[i];
-		if (previous.matchIndex + previous.matchLength > current.matchIndex) {
-			throw new Error(
-				`edits[${previous.editIndex}] and edits[${current.editIndex}] overlap in ${path}. Merge them into one edit or target disjoint regions.`,
-			);
+		matchedEdits.sort((a, b) => a.matchIndex - b.matchIndex);
+		for (let i = 1; i < matchedEdits.length; i++) {
+			const previous = matchedEdits[i - 1];
+			const current = matchedEdits[i];
+			if (previous.matchIndex + previous.matchLength > current.matchIndex) {
+				throw new Error(
+					`edits[${previous.editIndex}] and edits[${current.editIndex}] overlap in ${path}. Merge them into one edit or target disjoint regions.`,
+				);
+			}
 		}
+
+		const baseContent = normalizedContent;
+		const newContent =
+			strategy === "exact"
+				? applyReplacements(matchBase, matchedEdits)
+				: applyReplacementsPreservingUnchangedLines(normalizedContent, matchBase, matchedEdits);
+
+		if (baseContent === newContent) {
+			throw getNoChangeError(path, normalizedEdits.length);
+		}
+
+		return { baseContent, newContent, matchedWith: strategy };
 	}
 
-	const baseContent = normalizedContent;
-	const newContent = usedFuzzyMatch
-		? applyReplacementsPreservingUnchangedLines(normalizedContent, replacementBaseContent, matchedEdits)
-		: applyReplacements(replacementBaseContent, matchedEdits);
-
-	if (baseContent === newContent) {
-		throw getNoChangeError(path, normalizedEdits.length);
-	}
-
-	return { baseContent, newContent };
+	const failure = firstFailure ?? { editIndex: 0, oldText: normalizedEdits[0].oldText };
+	throw getNotFoundError(path, failure.editIndex, normalizedEdits.length, normalizedContent, failure.oldText);
 }
 
 /** Generate a standard unified patch. */
