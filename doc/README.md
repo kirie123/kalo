@@ -83,6 +83,7 @@
 - [macOS `.app` / `.dmg` 打包与运行时资源定位](2026-09-15-macos-app-打包与资源定位.md)
 - [自定义 Provider 的模型能力配置（思考 / 图片 / 最大输出 / Bearer 鉴权头）](2026-09-11-provider模型能力配置.md)
 - [P0-1 Job Runtime + P0-2 Channel 设计文档](2026-08-17-p0-job-runtime-channel.md)
+- [bash 后台模式：长跑命令交给 Job Runtime](2026-09-24-bash-后台模式.md)
 - [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
 - [子 Agent 卡片里的压缩气泡（activity feed 新增 compaction 条目）](2026-09-18-子agent压缩气泡.md)

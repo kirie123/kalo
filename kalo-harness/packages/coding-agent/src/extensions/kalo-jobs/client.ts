@@ -61,6 +61,20 @@ export class JobsUnavailable extends Error {
 	}
 }
 
+/** What `POST /jobs` accepts when starting a command-backed job. */
+export interface JobStartInput {
+	/** Id prefix; the gateway defaults it to `gateway`. */
+	kind?: string;
+	/** One-line label shown in job listings and the desktop panel. */
+	label: string;
+	/** Working directory; the gateway falls back to its own when it is gone. */
+	cwd: string;
+	/** Shell command, run through the gateway's bash. */
+	cmd: string;
+	/** Extra environment merged over the gateway's process env. */
+	env?: Record<string, string>;
+}
+
 export interface JobsClientDeps {
 	/** Owning session id, sent as `x-kalo-session`; undefined = anonymous. */
 	session?: () => string | undefined;
@@ -83,6 +97,15 @@ export class JobsClient {
 
 	list(): Promise<JobSnapshot[]> {
 		return this.request<{ jobs: JobSnapshot[] }>("GET", "/jobs").then((r) => r.jobs);
+	}
+
+	/**
+	 * Start a command-backed job in the gateway. The job is fenced to the
+	 * session presented as `x-kalo-session`, so only this session (or the
+	 * operator) can see or stop it.
+	 */
+	start(input: JobStartInput): Promise<{ id: string; job: JobSnapshot }> {
+		return this.request("POST", "/jobs", input);
 	}
 
 	get(id: string): Promise<JobSnapshot> {

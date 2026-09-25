@@ -101,4 +101,27 @@ describe("kalo-jobs client", () => {
 		expect(jobs.map((j) => j.id)).toEqual(["gateway-2"]);
 		h.cleanup();
 	});
+
+	test("start posts a command job and returns the gateway id", async () => {
+		const h = harness({ reply: () => ({ body: { id: "bash-7", job: { id: "bash-7" } } }) });
+		const started = await h.client.start({
+			kind: "bash",
+			label: "sleep 5",
+			cwd: "/tmp",
+			cmd: "sleep 5",
+			env: { KALO: "1" },
+		});
+		expect(h.calls[0].url).toBe("http://127.0.0.1:9999/jobs");
+		expect(h.calls[0].method).toBe("POST");
+		expect(h.calls[0].headers["x-kalo-session"]).toBe("s-1");
+		expect(h.calls[0].body).toEqual({
+			kind: "bash",
+			label: "sleep 5",
+			cwd: "/tmp",
+			cmd: "sleep 5",
+			env: { KALO: "1" },
+		});
+		expect(started.id).toBe("bash-7");
+		h.cleanup();
+	});
 });

@@ -4,6 +4,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
+import { type BackgroundCommandStarter, gatewayBackgroundStarter } from "../../extensions/kalo-jobs/background.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../modes/interactive/theme/theme.ts";
@@ -25,6 +26,10 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 
+/** Extra system-prompt guidance for the background path (Kalo gateway jobs). */
+const BACKGROUND_BASH_GUIDELINE =
+	"长跑命令用 bash(run_in_background=true) 交给后台任务，随后用 job_output 读取或等待，不要 sleep 轮询";
+
 function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 	if (timeout === undefined) return undefined;
 	if (!Number.isFinite(timeout) || timeout <= 0) {
@@ -41,6 +46,14 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	run_in_background: Type.Optional(
+		Type.Boolean({
+			description:
+				"Start the command as a background job and return its job id immediately instead of waiting. " +
+				"Read its output with job_output; completion is announced in-session. " +
+				"Cannot be combined with timeout, and needs the Kalo gateway.",
+		}),
+	),
 });
 
 export const bashToolSystemPromptContribution = {
@@ -200,6 +213,13 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/**
+	 * How `run_in_background` hands the command to a job runtime. Defaults to
+	 * the gateway-backed starter. A bash tool with custom `operations` (remote
+	 * shells) has none: a gateway job would run the command on the wrong
+	 * machine, so background mode is unavailable there.
+	 */
+	backgroundStarter?: BackgroundCommandStarter;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -229,12 +249,13 @@ function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
+function formatBashCall(args: { command?: string; timeout?: number; run_in_background?: boolean } | undefined): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
+	const backgroundSuffix = args?.run_in_background ? theme.fg("muted", " (background)") : "";
 	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
+	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix + backgroundSuffix;
 }
 
 function rebuildBashResultRenderComponent(
@@ -327,23 +348,58 @@ export function createBashToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const backgroundStarter = options?.backgroundStarter ?? (options?.operations ? undefined : gatewayBackgroundStarter);
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. Set run_in_background to start a long-running command as a job instead of waiting for it.`,
 		promptSnippet: bashToolSystemPromptContribution.snippet,
-		promptGuidelines: exposeSessionEnvironment ? [...bashToolSystemPromptContribution.guidelines] : undefined,
+		promptGuidelines: exposeSessionEnvironment
+			? [...bashToolSystemPromptContribution.guidelines, ...(backgroundStarter ? [BACKGROUND_BASH_GUIDELINE] : [])]
+			: undefined,
 		parameters: bashSchema,
 		constrainedSampling: getExperimentalToolSampling(),
 		async execute(
 			_toolCallId,
-			{ command, timeout }: { command: string; timeout?: number },
+			{ command, timeout, run_in_background }: { command: string; timeout?: number; run_in_background?: boolean },
 			signal?: AbortSignal,
 			onUpdate?,
 			ctx?,
 		) {
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
+			if (run_in_background) {
+				if (timeout !== undefined) {
+					throw new Error(
+						"run_in_background cannot be combined with timeout: a background job has no timeout. " +
+							"Drop timeout and stop the job with job_kill instead.",
+					);
+				}
+				if (!backgroundStarter) {
+					throw new Error(
+						"run_in_background is not available on this bash tool: it uses custom operations, " +
+							"so a gateway job would run the command somewhere else.",
+					);
+				}
+				const started = await backgroundStarter({
+					command: spawnContext.command,
+					cwd: spawnContext.cwd,
+					env: spawnContext.env,
+					owner: ctx?.sessionManager.getSessionId(),
+				});
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`[background] job ${started.id} started.\n\n` +
+								`Call job_output("${started.id}", wait=true) to wait for it or read its output; ` +
+								"you are notified in-session when it finishes.",
+						},
+					],
+					details: undefined,
+				};
+			}
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
