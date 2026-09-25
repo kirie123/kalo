@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Auto-compaction no longer re-triggers immediately after being cancelled (via abort signal or extension `cancel: true`). Cancellation now anchors the same backoff used for failures: compaction is skipped until at least one new message enters the context. Unlike failures, cancellations do not increment the failure counter, so repeated user cancellations cannot trip the circuit breaker.
+
 ### Added
 
 - Added fullscreen transcript search with `Ctrl+Shift+F`, incremental match highlighting, configurable search match theme colors, and next/previous navigation with `Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`.
