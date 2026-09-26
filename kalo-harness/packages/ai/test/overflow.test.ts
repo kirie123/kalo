@@ -142,6 +142,25 @@ describe("isContextOverflow", () => {
 		expect(isContextOverflow(message, 1048576)).toBe(true);
 	});
 
+	it("detects gateway-style overflow (length stop with tiny output and cacheWrite filling context)", () => {
+		// pz-style: the bulk of the prompt is reported under cacheWrite and the
+		// model emits output=1 instead of 0 with finish_reason "length".
+		const message = createLengthStopMessage({
+			input: 185,
+			cacheRead: 0,
+			cacheWrite: 209887,
+			output: 1,
+			provider: "pz",
+			model: "claude-opus-5",
+		});
+		expect(isContextOverflow(message, 200000)).toBe(true);
+	});
+
+	it("does not treat a tiny-output length stop as overflow when context is not filled", () => {
+		const message = createLengthStopMessage({ input: 185, cacheRead: 0, cacheWrite: 5000, output: 1 });
+		expect(isContextOverflow(message, 200000)).toBe(false);
+	});
+
 	it("treats a length stop below the desired output limit as recoverable", () => {
 		const message = createLengthStopMessage({
 			input: 3,

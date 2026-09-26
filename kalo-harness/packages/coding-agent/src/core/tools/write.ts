@@ -8,6 +8,7 @@ import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/inte
 import { getExperimentalToolSampling } from "../experimental.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import type { FileReadState } from "./file-read-state.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -103,6 +104,11 @@ async function previousState(
 export interface WriteToolOptions {
 	/** Custom operations for file writing. Default: local filesystem */
 	operations?: WriteOperations;
+	/**
+	 * Shared read-tracking state. A successful write records the new content
+	 * signature so a follow-up edit on the just-written file is allowed.
+	 */
+	readState?: FileReadState;
 }
 
 type WriteHighlightCache = {
@@ -290,6 +296,8 @@ export function createWriteToolDefinition(
 				// Write the file contents.
 				await ops.writeFile(absolutePath, content);
 				throwIfAborted();
+				// Record the just-written content so a follow-up edit is permitted.
+				options?.readState?.record(absolutePath, content);
 
 				return {
 					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],

@@ -353,13 +353,13 @@ describe("AgentSession compaction characterization", () => {
 
 		await harness.session.prompt("x".repeat(5000));
 
-		// The vendored agent loop auto-continues after a "length" stop, so after the
-		// failed compact-and-retry it issues one more request (empty faux queue
-		// answer) before settling. The compaction assertions below are the point of
-		// this test: exactly one overflow compaction, then the terminal error.
-		expect(harness.faux.state.callCount).toBe(3);
+		// The vendored agent loop auto-continues after a "length" stop. The point of
+		// this test: exactly one overflow compaction (compact-and-retry runs once),
+		// the terminal overflow banner is surfaced, and instead of giving up the
+		// second truncation escalates to a threshold compaction (drop-oldest).
 		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
-		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
+		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "threshold")).toHaveLength(1);
+		expect(harness.eventsOfType("compaction_end").map((event) => event.errorMessage)).toContain(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);
 	});
@@ -449,7 +449,7 @@ describe("AgentSession compaction characterization", () => {
 		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(true);
 	});
 
-	it("does not retry overflow recovery more than once", async () => {
+	it("escalates to a threshold compaction after overflow recovery was already attempted", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
@@ -469,7 +469,12 @@ describe("AgentSession compaction characterization", () => {
 		await sessionInternals._checkCompaction(overflowMessage);
 		await sessionInternals._checkCompaction({ ...overflowMessage, timestamp: Date.now() + 1 });
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		// First check runs the compact-and-retry; the second, with recovery already
+		// attempted, surfaces the terminal banner AND escalates to a threshold
+		// compaction (drop-oldest) rather than giving up outright.
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(2);
+		expect(runAutoCompactionSpy.mock.calls[0]).toEqual(["overflow", true]);
+		expect(runAutoCompactionSpy.mock.calls[1]).toEqual(["threshold", false]);
 		expect(compactionErrors).toContain(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);

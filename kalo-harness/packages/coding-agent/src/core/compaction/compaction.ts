@@ -733,6 +733,58 @@ function buildReusedSummarizationMessages(
 	];
 }
 
+/**
+ * Output tokens reserved for the summary response itself when sizing the
+ * summarization request. Mirrors Claude Code's MAX_OUTPUT_TOKENS_FOR_SUMMARY.
+ */
+const SUMMARY_OUTPUT_RESERVE = 20_000;
+
+/** Rough token estimate for a raw prompt string (~4 chars/token). */
+function estimatePromptTokens(text: string | undefined): number {
+	return text ? Math.ceil(text.length / 4) : 0;
+}
+
+/**
+ * Drop the oldest messages from the summarization input until the request is
+ * expected to fit the summarizer model's context window (minus a reserved output
+ * budget and the prompt overhead). Always keeps at least the most recent message.
+ * Returns the input unchanged when the model reports no window or it already fits.
+ */
+export function trimOldestToFitSummaryWindow(
+	messages: AgentMessage[],
+	model: Model<any>,
+	basePrompt: string,
+	previousSummary: string | undefined,
+): AgentMessage[] {
+	const contextWindow = model.contextWindow ?? 0;
+	if (contextWindow <= 0 || messages.length <= 1) {
+		return messages;
+	}
+	const reservedOutput = Math.min(
+		model.maxTokens > 0 ? model.maxTokens : SUMMARY_OUTPUT_RESERVE,
+		SUMMARY_OUTPUT_RESERVE,
+	);
+	const promptOverhead = estimatePromptTokens(basePrompt) + estimatePromptTokens(previousSummary);
+	const budget = contextWindow - reservedOutput - promptOverhead;
+	if (budget <= 0) {
+		// Pathologically small window: keep only the most recent message.
+		return messages.slice(-1);
+	}
+
+	let total = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+	if (total <= budget) {
+		return messages;
+	}
+
+	let startIndex = 0;
+	// Drop from the oldest end, but never drop the final message.
+	while (startIndex < messages.length - 1 && total > budget) {
+		total -= estimateTokens(messages[startIndex]);
+		startIndex++;
+	}
+	return messages.slice(startIndex);
+}
+
 /** Generate or update a conversation summary and return its provider usage. */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
@@ -761,8 +813,16 @@ export async function generateSummaryWithUsage(
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
+	// The summarization request is sent to the same model whose window we are
+	// trying to relieve. When the segment to summarize is itself near/over the
+	// context window, the request would overflow and compaction would fail exactly
+	// when it is needed most. Drop the oldest messages from the summary input until
+	// it fits the model's window minus a reserved output budget. The dropped tail
+	// is being compacted away anyway, so losing it from the summary is acceptable.
+	const messagesForSummary = trimOldestToFitSummaryWindow(currentMessages, model, basePrompt, previousSummary);
+
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
+	const llmMessages = convertToLlm(messagesForSummary);
 
 	const summarizationMessages = reuseMessages
 		? buildReusedSummarizationMessages(llmMessages, basePrompt, previousSummary)
