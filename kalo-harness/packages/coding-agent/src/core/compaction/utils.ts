@@ -106,7 +106,8 @@ function truncateForSummary(text: string, maxChars: number): string {
  * Tool results are truncated to keep the summarization request within
  * reasonable token budgets. Full content is not needed for summarization.
  */
-export function serializeConversation(messages: Message[]): string {
+export function serializeConversation(messages: Message[], options?: { stripThinking?: boolean }): string {
+	const stripThinking = options?.stripThinking ?? false;
 	const parts: string[] = [];
 
 	for (const msg of messages) {
@@ -119,7 +120,7 @@ export function serializeConversation(messages: Message[]): string {
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					thinkingParts.push(block.thinking);
+					if (!stripThinking) thinkingParts.push(block.thinking);
 				} else if (block.type === "toolCall") {
 					const args = block.arguments as Record<string, unknown>;
 					const argsStr = Object.entries(args)
