@@ -540,7 +540,7 @@ function SessionRowItem({
       onContextMenu={editing ? undefined : menu.onContextMenu}
       className={`group flex w-full items-center gap-1 rounded-md hover:bg-card ${
         variant === "flat" ? "px-2 py-1.5" : "py-1.5 pl-9 pr-2"
-      } ${active ? "bg-card" : ""}`}
+      } ${active ? "bg-card font-medium" : ""}`}
     >
       {running && <RunningSpinner />}
       {editing ? (
@@ -612,11 +612,14 @@ function SideButton({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-card ${
-        active ? "bg-card" : ""
+      className={`relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-card ${
+        active ? "bg-card font-medium text-ink" : "text-dim hover:text-ink"
       }`}
     >
-      <span className={active ? "text-ink" : "text-dim"}>{icon}</span>
+      {active && (
+        <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+      )}
+      <span className={active ? "text-ink" : ""}>{icon}</span>
       <span>{label}</span>
     </button>
   );

@@ -165,6 +165,27 @@ pub fn write_file_text(path: &str, contents: &str) -> Result<(), String> {
     fs::write(p, contents).map_err(|e| format!("cannot write {path}: {e}"))
 }
 
+/// Write binary bytes (base64-encoded by the caller) to a user-picked path.
+/// Mirror of `write_file_text` for binary payloads — the "save as image" menu
+/// exports a rendered widget to PNG, which cannot go through the text writer.
+/// The path comes from the save dialog, so no allow-list; parents are created.
+pub fn write_file_bytes(path: &str, data_base64: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    if p.as_os_str().is_empty() {
+        return Err("save path is empty".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64)
+        .map_err(|e| format!("invalid base64 payload: {e}"))?;
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+        }
+    }
+    fs::write(p, &bytes).map_err(|e| format!("cannot write {path}: {e}"))
+}
+
 /// Extension-based MIME guess, for `data:` URLs in the preview. Only formats
 /// the preview can actually show are listed; everything else is opaque bytes
 /// as far as this function is concerned.
@@ -701,5 +722,24 @@ mod tests {
     #[test]
     fn write_file_text_rejects_an_empty_path() {
         assert!(write_file_text("", "x").is_err());
+    }
+
+    #[test]
+    fn write_file_bytes_decodes_base64_and_creates_parents() {
+        let dir = std::env::temp_dir().join(format!("kalo-bytes-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let target = dir.join("nested").join("widget.png");
+        // base64 of the PNG magic bytes \x89PNG
+        let b64 = base64::engine::general_purpose::STANDARD.encode([0x89, 0x50, 0x4e, 0x47]);
+        write_file_bytes(&target.to_string_lossy(), &b64).expect("write");
+        assert_eq!(fs::read(&target).unwrap(), vec![0x89, 0x50, 0x4e, 0x47]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_file_bytes_rejects_bad_base64_and_empty_path() {
+        assert!(write_file_bytes("", "x").is_err());
+        let target = std::env::temp_dir().join(format!("kalo-bad-b64-{}.png", std::process::id()));
+        assert!(write_file_bytes(&target.to_string_lossy(), "not valid base64!!!").is_err());
     }
 }

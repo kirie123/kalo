@@ -1,7 +1,7 @@
 {
   "name": "kalo",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.2",
   "description": "AI coding agent desktop client, built on the pi agent engine (https://github.com/earendil-works/pi)",
   "workspaces": [
     "kalo-desktop"
@@ -18,5 +18,13 @@
     "version:major": "bun scripts/version.mjs major",
     "check": "node scripts/check-changed.mjs",
     "check:full": "node scripts/check-file-length.mjs --strict && node scripts/check-bridge-contract.mjs && node scripts/check-full.mjs"
+  },
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
   }
 }

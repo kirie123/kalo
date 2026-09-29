@@ -14,6 +14,8 @@ import {
   statusOf,
   type StatusIndex,
 } from "../lib/git";
+import { sessionArtifacts, type ArtifactItem } from "../lib/artifacts";
+import { useArtifactAutoOpen } from "./ArtifactsCard";
 import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import DiffView, { type DiffLine } from "./DiffView";
 import FilePreview from "./FilePreview";
@@ -62,6 +64,7 @@ function asDirEntry(entry: GitEntry): DirEntry {
 export default function FilePanel() {
   const cwd = useChatSelector((s) => s.cwd);
   const isStreaming = useChatSelector((s) => s.isStreaming);
+  const timeline = useChatSelector((s) => s.timeline);
   const [rootOverride, setRootOverride] = useState<string | null>(null);
   const root = rootOverride ?? cwd;
   const [pathDraft, setPathDraft] = useState(root ?? "");
@@ -350,6 +353,32 @@ export default function FilePanel() {
   const changedCount = git?.entries.length ?? 0;
   const canDiff = preview !== null && preview.relPath !== null && !statusOf(gitIndex, preview.path)?.untracked;
 
+  // Aggregate all present_files declarations from this session's timeline.
+  const artifacts = useMemo(() => {
+    const recs = timeline
+      .filter((e) => e.kind === "artifacts")
+      .flatMap((e) => (e as any).summary.items as ArtifactItem[]);
+    // Dedup by path, last-wins (matches sessionArtifacts logic).
+    const map = new Map<string, ArtifactItem>();
+    for (const item of recs) map.set(item.path, item);
+    return Array.from(map.values());
+  }, [timeline]);
+
+  const [artifactsOpen, setArtifactsOpen] = useState(true);
+
+  // Live auto-open: when present_files fires during a live turn, open primary
+  // in the preview panel. History replay never emits, so this is live-only.
+  useArtifactAutoOpen(
+    useCallback(
+      (item: ArtifactItem) => {
+        if (item.kind === "file") openFile({ name: item.name, path: item.path });
+      },
+      // openFile is stable (no dep), but ESLint wants it listed
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [],
+    ),
+  );
+
   return (
     <aside className="flex shrink-0 border-l border-edge">
       {/* Panel left-edge splitter (chat | tree) */}
@@ -449,6 +478,49 @@ export default function FilePanel() {
         )}
 
         <div className="min-h-0 flex-1 overflow-auto py-1">
+          {/* Artifacts section: model-declared deliverables from present_files */}
+          {artifacts.length > 0 && (
+            <div className="border-b border-edge pb-1 mb-1">
+              <button
+                onClick={() => setArtifactsOpen((v) => !v)}
+                className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-card"
+              >
+                <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+                  className={`shrink-0 text-dim transition-transform ${artifactsOpen ? "" : "-rotate-90"}`}>
+                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-[10px] font-medium uppercase tracking-wide text-dim">产物 {artifacts.length}</span>
+              </button>
+              {artifactsOpen && artifacts.map((item) => (
+                <button
+                  key={item.path}
+                  onClick={() => {
+                    if (item.kind === "file" && !item.missing) {
+                      openFile({ name: item.name, path: item.path });
+                    }
+                  }}
+                  title={item.path}
+                  disabled={item.missing === true}
+                  className="flex w-full items-center gap-1.5 py-1 pl-5 pr-2 text-left text-xs hover:bg-card disabled:opacity-50"
+                >
+                  {item.kind === "url" ? (
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-tone-blue">
+                      <circle cx="8" cy="8" r="6.5" /><path d="M8 1.5c-1.5 1.5-2.5 3.8-2.5 6.5s1 5 2.5 6.5M8 1.5c1.5 1.5 2.5 3.8 2.5 6.5s-1 5-2.5 6.5M1.5 8h13" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-tone-orange">
+                      <path d="M4 1.5h5L12.5 5v9a1 1 0 01-1 1h-7a1 1 0 01-1-1v-11a1 1 0 011-1z" strokeLinejoin="round" />
+                      <path d="M9 1.5V5h3.5" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                  <span className={`min-w-0 flex-1 truncate ${item.primary ? "font-medium text-ink" : "text-dim"}`}>
+                    {item.name}
+                  </span>
+                  {item.missing && <span className="shrink-0 text-[9px] text-dim">缺失</span>}
+                </button>
+              ))}
+            </div>
+          )}
           {changesOnly && git ? (
             renderChanges(git)
           ) : root ? (

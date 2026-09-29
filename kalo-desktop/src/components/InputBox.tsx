@@ -394,7 +394,7 @@ export default function InputBox() {
         {/* Toolbar — capability switches on the left, context scope + send on
             the right. The working directory and the model live in the footer
             below the card, so this row stays readable. */}
-        <div className="flex items-center gap-2 px-3 pb-3 pt-1">
+        <div className="flex items-center gap-3 px-3 pb-3 pt-1">
           <button
             onClick={() => void pickAttachments()}
             title="添加附件"

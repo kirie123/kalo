@@ -1,11 +1,13 @@
 import { memo } from "react";
 import type { TimelineEntry } from "../lib/timeline";
+import ArtifactsCard from "./ArtifactsCard";
 import AssistantMessage from "./AssistantMessage";
 import ChangedFilesCard from "./ChangedFilesCard";
 import CompactionBubble from "./CompactionBubble";
 import RetryNotice from "./RetryNotice";
 import ToolCallGroup, { ToolCallList } from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
+import WidgetCard from "./WidgetCard";
 
 /**
  * Renders one timeline entry. Used both at top level (MessageList) and inside a
@@ -64,6 +66,10 @@ const TimelineItem = memo(function TimelineItem({
       return (
         <ChangedFilesCard files={entry.files} totalAdded={entry.totalAdded} totalRemoved={entry.totalRemoved} />
       );
+    case "artifacts":
+      return <ArtifactsCard summary={entry.summary} />;
+    case "widget":
+      return <WidgetCard summary={entry.summary} />;
   }
 });
 

@@ -29,6 +29,7 @@
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   write_file_text { path, contents } -> void   ("save as" target)
+ *   write_file_bytes { path, dataBase64 } -> void ("save as image" PNG target)
  *   read_text_since { path, offset, maxBytes? } -> { text, offset, size, reset }
  *   dir_diff_names { a, b, ignore? } -> { changed, added, removed, truncated }
  *   read_attachment { path } -> AttachmentDraft (image base64, or a path ref)
@@ -36,6 +37,11 @@
  *   open_path { path, reveal } -> void
  *   git_status { cwd } -> GitStatus | null   (null = not a repo)
  *   git_diff { cwd, relPath } -> string      (unified diff vs HEAD)
+ *
+ * tool details contract (engine → desktop via AgentToolResult.details):
+ *   present_files result.details -> PresentFilesDetails { artifacts: ArtifactItem[]; explanation? }
+ *     ArtifactItem: { kind, path, name, fileKind?, bytes?, missing?, primary }
+ *     Lands in session jsonl; replays on history load; auto-open emitted live only.
  *
  * events:
  *   pi-event:{sessionId}  — one stdout JSON line (response or event)
@@ -270,6 +276,11 @@ export function readFileText(path: string, maxBytes?: number): Promise<FileTextC
 /** Save UTF-8 text to a user-picked path ("save as"), creating parent dirs. */
 export function writeFileText(path: string, contents: string): Promise<void> {
   return invoke<void>("write_file_text", { path, contents });
+}
+
+/** Save binary bytes (base64) to a user-picked path — e.g. a widget exported to PNG. */
+export function writeFileBytes(path: string, dataBase64: string): Promise<void> {
+  return invoke<void>("write_file_bytes", { path, dataBase64 });
 }
 
 /** Whole file as base64, for image / office / pdf previews. */

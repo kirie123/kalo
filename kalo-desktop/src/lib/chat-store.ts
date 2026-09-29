@@ -86,8 +86,12 @@ import {
 import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
 import { dispatchExtensionUiRequest } from "./extension-ui-dispatch";
 import { pushCompactingNotice, settleCompaction } from "./compaction-entries";
+import { handleSpecialToolResult, parseArtifacts } from "./artifacts";
+import { parseWidget } from "./widgets";
 import type {
   AssistantEntry,
+  ArtifactsEntry,
+  WidgetEntry,
   TimelineEntry,
   ToolCallRecord,
   ToolGroupEntry,
@@ -1530,28 +1534,29 @@ export class ChatStore {
       case "tool_execution_update":
         this.applyToolPartial(ev.toolCallId, ev.partialResult, rt);
         break;
-      case "tool_execution_end":
+      case "tool_execution_end": {
+        // Update the tool record first, then push any artifact/widget cards as
+        // separate top-level mutateTimeline calls. Doing the pushes inside the
+        // updateToolRecord callback nests mutateTimeline: the inner commit lands
+        // the card, then the outer commit overwrites the timeline with a stale
+        // snapshot taken before the push, silently dropping the card.
+        let done: ToolCallRecord | null = null;
         this.updateToolRecord(
           ev.toolCallId,
           (rec) => {
-            const done: ToolCallRecord = {
-              ...rec,
-              status: ev.isError ? "error" : "success",
-              result: ev.result,
-            };
-            // Fold file mutations into this run's summary while the args and
-            // the result are together in one place.
-            accumulate(rt.runChanges, done, rt.view.cwd);
+            done = { ...rec, status: ev.isError ? "error" : "success", result: ev.result };
             return done;
           },
           rt,
         );
-        // A todo_write result carries the whole replacement plan.
-        if (ev.toolName === "todo_write" && !ev.isError) {
-          const todos = readTodos(ev.result);
-          if (todos) this.setRt(rt, { todos });
+        if (done) {
+          accumulate(rt.runChanges, done, rt.view.cwd);
+          handleSpecialToolResult(done, { setTodos: (t) => this.setRt(rt, { todos: t }), pushArtifacts: (s) => this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "artifacts", summary: s } satisfies ArtifactsEntry), rt) });
+          const widgetSummary = parseWidget(done);
+          if (widgetSummary) this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "widget", summary: widgetSummary } satisfies WidgetEntry), rt);
         }
         break;
+      }
 
       case "compaction_start":
         rt.compactionNoticeId = nextEntryId();
@@ -1848,19 +1853,12 @@ function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
     } else if (m.role === "toolResult") {
       const result = { content: m.content, details: m.details, isError: m.isError };
       const rec = pendingCalls.get(m.toolCallId);
-      if (rec) {
-        rec.status = m.isError ? "error" : "success";
-        rec.result = result;
-        pendingCalls.delete(m.toolCallId);
-      } else {
-        addCall({
-          toolCallId: m.toolCallId,
-          toolName: m.toolName,
-          args: {},
-          status: m.isError ? "error" : "success",
-          result,
-        });
-      }
+      const settled: ToolCallRecord = { toolCallId: m.toolCallId, toolName: m.toolName, args: rec?.args ?? {}, status: m.isError ? "error" : "success", result };
+      if (rec) { rec.status = settled.status; rec.result = result; pendingCalls.delete(m.toolCallId); } else { addCall(settled); }
+      const artifactsSummary = parseArtifacts(settled);
+      if (artifactsSummary) t.push({ id: nextEntryId(), kind: "artifacts", summary: artifactsSummary } satisfies ArtifactsEntry);
+      const widgetSummary = parseWidget(settled);
+      if (widgetSummary) t.push({ id: nextEntryId(), kind: "widget", summary: widgetSummary } satisfies WidgetEntry);
     }
   }
 

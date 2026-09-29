@@ -44,6 +44,7 @@
 - [ContextRing 加载历史会话后始终显示「–」（上下文长度不刷新）](context-ring-shows-dash-on-history-session.md)
 - [自定义 Provider 的模型「读不到图」（模型定义没声明 image）](custom-provider-image-input.md)
 - [从 UI 建的模型不思考、读不到图、输出被截短、手工字段被抹（模型定义缺能力字段）](custom-provider-model-capabilities.md)
+- [工具产出的卡片（产物/widget 图表）实时流不显示、重开会话才出现（嵌套 mutateTimeline 覆盖）](timeline-card-dropped-nested-mutate.md)
 
 ### 引擎（kalo-harness / sidecar）
 - [启动后提示「引擎未响应」（解析到了其他平台的 sidecar 二进制）](engine-unresponsive-wrong-platform-binary.md)

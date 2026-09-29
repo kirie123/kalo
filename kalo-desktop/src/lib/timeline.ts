@@ -13,6 +13,8 @@
  */
 import type { AssistantMessage, UserMessage } from "../types";
 import type { ChangeSummary } from "./changed-files";
+import type { ArtifactSummary } from "./artifacts";
+import type { WidgetSummary } from "./widgets";
 
 export interface ToolCallRecord {
   toolCallId: string;
@@ -111,6 +113,28 @@ export interface ChangesEntry extends ChangeSummary {
   kind: "changes";
 }
 
+/**
+ * A present_files call: the model's explicit list of final deliverables.
+ * Pushed on each present_files tool_execution_end (live) and replayed from
+ * session history via buildTimeline. Auto-open fires only on live arrival.
+ */
+export interface ArtifactsEntry {
+  id: string;
+  kind: "artifacts";
+  summary: ArtifactSummary;
+}
+
+/**
+ * A show_widget call: an inline SVG or HTML visualization declared by the model.
+ * Pushed on each show_widget tool_execution_end (live) and replayed from
+ * session history via buildTimeline.
+ */
+export interface WidgetEntry {
+  id: string;
+  kind: "widget";
+  summary: WidgetSummary;
+}
+
 export type TimelineEntry =
   | UserEntry
   | AssistantEntry
@@ -118,6 +142,8 @@ export type TimelineEntry =
   | RetryEntry
   | NoticeEntry
   | ChangesEntry
+  | ArtifactsEntry
+  | WidgetEntry
   | CompactionEntry;
 
 /** One task of the agent's plan, written whole-list by the `todo_write` tool. */

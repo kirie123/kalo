@@ -300,6 +300,13 @@ fn write_file_text(path: String, contents: String) -> Result<(), String> {
     files::write_file_text(&path, &contents)
 }
 
+/// Save binary bytes (base64) to a user-picked path — the "save as image"
+/// menu exports a rendered widget to PNG, which the text writer can't handle.
+#[tauri::command(async)]
+fn write_file_bytes(path: String, data_base64: String) -> Result<(), String> {
+    files::write_file_bytes(&path, &data_base64)
+}
+
 /// Read a whole file as base64, for previews that need raw bytes (images,
 /// docx/xlsx, pdf). Over-cap files answer `truncated` with no data.
 #[tauri::command(async)]
@@ -679,6 +686,7 @@ fn main() {
             list_dir,
             read_file_text,
             write_file_text,
+            write_file_bytes,
             read_file_bytes,
             git_status,
             git_diff,

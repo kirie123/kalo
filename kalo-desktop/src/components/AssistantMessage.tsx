@@ -124,7 +124,7 @@ export default function AssistantMessage({
       {failed && <ErrorBanner raw={message.errorMessage!} />}
       {interrupted && <InterruptDivider />}
       {!streaming && (usage || copyText) && (
-        <div className="group/msg mt-2 flex items-end justify-between gap-2 text-xs text-dim">
+        <div className="group/msg mt-2 flex items-end justify-between gap-2 text-[11px] text-dim">
           <span>
             {usage && formatRunUsage(usage)}
           </span>
