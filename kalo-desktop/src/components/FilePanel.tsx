@@ -381,12 +381,45 @@ export default function FilePanel() {
 
   return (
     <aside className="flex shrink-0 border-l border-edge">
-      {/* Panel left-edge splitter (chat | tree) */}
+      {/* Preview column, nearest the chat so reading stays close to the
+          conversation; the tree sits on the far side. */}
+      {preview && !previewFull && (
+        <>
+          {/* Panel left-edge splitter (chat | preview) */}
+          <div
+            onMouseDown={(e) =>
+              startColumnDrag(e, previewW, { min: 240, max: 960, invert: true, persistKey: "kalo.layout.previewW" }, setPreviewW)
+            }
+            className="w-1 shrink-0 cursor-col-resize hover:bg-edge"
+          />
+          <div className="flex shrink-0 flex-col" style={{ width: previewW }}>
+            <PreviewHeader
+              name={preview.name}
+              tab={previewTab}
+              canDiff={canDiff}
+              onTab={selectTab}
+              onFull={() => setPreviewFull(true)}
+              onClose={closePreview}
+            />
+            <PreviewBody
+              preview={preview}
+              tab={previewTab}
+              diff={diffLines}
+              loading={diffLoading}
+              onOpenPath={openPreviewTarget}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Preview | tree splitter (or chat | tree when no preview is open) */}
       <div
         onMouseDown={(e) =>
           startColumnDrag(e, treeW, { min: 180, max: 560, invert: true, persistKey: "kalo.layout.treeW" }, setTreeW)
         }
-        className="w-1 shrink-0 cursor-col-resize hover:bg-edge"
+        className={`w-1 shrink-0 cursor-col-resize hover:bg-edge ${
+          preview && !previewFull ? "border-l border-edge" : ""
+        }`}
       />
 
       {/* Tree column */}
@@ -531,39 +564,9 @@ export default function FilePanel() {
         </div>
       </div>
 
-      {/* Preview column, side by side with the tree */}
-      {preview && !previewFull && (
-        <>
-          {/* Tree | preview splitter */}
-          <div
-            onMouseDown={(e) =>
-              startColumnDrag(e, previewW, { min: 240, max: 960, invert: true, persistKey: "kalo.layout.previewW" }, setPreviewW)
-            }
-            className="w-1 shrink-0 cursor-col-resize border-l border-edge hover:bg-edge"
-          />
-          <div className="flex shrink-0 flex-col" style={{ width: previewW }}>
-            <PreviewHeader
-              name={preview.name}
-              tab={previewTab}
-              canDiff={canDiff}
-              onTab={selectTab}
-              onFull={() => setPreviewFull(true)}
-              onClose={closePreview}
-            />
-            <PreviewBody
-              preview={preview}
-              tab={previewTab}
-              diff={diffLines}
-              loading={diffLoading}
-              onOpenPath={openPreviewTarget}
-            />
-          </div>
-        </>
-      )}
-
       {/* Fullscreen preview overlay */}
       {preview && previewFull && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-base">
+        <div className="fixed inset-x-0 bottom-0 top-8 z-50 flex flex-col bg-base">
           <PreviewHeader
             name={preview.name}
             tab={previewTab}
