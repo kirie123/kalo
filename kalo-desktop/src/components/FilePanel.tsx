@@ -19,17 +19,17 @@ import { useArtifactAutoOpen } from "./ArtifactsCard";
 import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import DiffView, { type DiffLine } from "./DiffView";
 import FilePreview from "./FilePreview";
+import { normPath } from "../lib/chat-store-helpers";
+import {
+  adoptPanelMemory,
+  patchPanelMemory,
+  resolvePanelMemory,
+  usePanelMemory,
+  type PanelMemory,
+  type PanelPreview as Preview,
+  type PanelTab as PreviewTab,
+} from "../lib/file-panel-memory";
 import type { DirEntry, GitEntry, GitStatus } from "../types";
-
-interface Preview {
-  name: string;
-  path: string;
-  /** Posix path relative to the repo root; null outside a repository. */
-  relPath: string | null;
-}
-
-/** Which view the preview column is showing. */
-type PreviewTab = "source" | "diff";
 
 /** Milliseconds to wait after a turn ends before re-reading git status. */
 const TURN_END_DEBOUNCE = 400;
@@ -60,20 +60,36 @@ function asDirEntry(entry: GitEntry): DirEntry {
 }
 
 /** Right-side file browser with a text preview. The tree root follows the
- * session cwd until the user navigates elsewhere via the path bar. */
-export default function FilePanel() {
+ * session cwd until the user navigates elsewhere via the path bar.
+ *
+ * What the panel remembers (open file, browsing root, expansion) belongs to the
+ * session and lives in lib/file-panel-memory; listings, git status, diff lines,
+ * the menu and fullscreen stay transient here. `hidden` keeps the panel mounted
+ * while collapsed, so收起/展开 restarts none of it. */
+export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
   const cwd = useChatSelector((s) => s.cwd);
   const isStreaming = useChatSelector((s) => s.isStreaming);
   const timeline = useChatSelector((s) => s.timeline);
-  const [rootOverride, setRootOverride] = useState<string | null>(null);
-  const root = rootOverride ?? cwd;
-  const [pathDraft, setPathDraft] = useState(root ?? "");
+  const uid = useChatSelector((s) => s.sessionUid);
+  const sessionFile = useChatSelector((s) => s.sessionFile);
+  const mem = usePanelMemory(uid, cwd);
+  const root = mem.root;
+  const expanded = useMemo(() => new Set(mem.expanded), [mem.expanded]);
+  const preview = mem.preview;
+  const previewTab = mem.previewTab;
+  const changesOnly = mem.changesOnly;
+  const artifactsOpen = mem.artifactsOpen;
+  const backStack = mem.backStack;
+  const remember = useCallback((p: Partial<PanelMemory>) => patchPanelMemory(uid, cwd, p), [uid, cwd]);
+  // 新对话的会话文件一旦落盘，池键就从 fresh-N 换成文件路径：文件区记忆也跟着
+  // 换键，否则引擎被驱逐后再从侧边栏打开同一会话就接不上了。
+  useEffect(() => {
+    if (sessionFile) adoptPanelMemory(uid, normPath(sessionFile));
+  }, [uid, sessionFile]);
+  const [pathDraft, setPathDraft] = useState(root);
   // Lazy tree cache: directory path -> its single-level listing.
   const [tree, setTree] = useState<Map<string, DirEntry[]>>(new Map());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [preview, setPreview] = useState<Preview | null>(null);
   const [previewFull, setPreviewFull] = useState(false);
-  const [previewTab, setPreviewTab] = useState<PreviewTab>("source");
   const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   // Right-click target for the shared context menu (its anchor lives in `menu`).
@@ -84,9 +100,6 @@ export default function FilePanel() {
   // Shown inline in the git strip rather than as a toast: status is re-read
   // after every turn, and a repeating toast for a persistent problem is noise.
   const [gitError, setGitError] = useState<string | null>(null);
-  const [changesOnly, setChangesOnly] = useState(false);
-  // Back navigation: every root change pushes the previous root.
-  const [backStack, setBackStack] = useState<string[]>([]);
   const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 288));
   const [previewW, setPreviewW] = useState(() => loadWidth("kalo.layout.previewW", 416));
   // Race guard: only the latest diff request may populate its slot.
@@ -120,18 +133,6 @@ export default function FilePanel() {
     }
   }, []);
 
-  // Reset and reload whenever the root changes (cwd switch or path-bar nav).
-  useEffect(() => {
-    setTree(new Map());
-    setExpanded(new Set());
-    setPreview(null);
-    setPreviewFull(false);
-    setDiffLines(null);
-    diffReq.current++;
-    if (root) void loadDir(root);
-    void refreshGit(root);
-  }, [root, loadDir, refreshGit]);
-
   // Re-read git status when a turn ends: that is exactly when the agent has
   // finished writing files. Debounced, because a burst of turns is common.
   const wasStreaming = useRef(isStreaming);
@@ -145,7 +146,7 @@ export default function FilePanel() {
 
   // Keep the path bar in sync when the root changes from outside.
   useEffect(() => {
-    setPathDraft(root ?? "");
+    setPathDraft(root);
   }, [root]);
 
   /** Navigate the tree to an arbitrary directory (validated first). */
@@ -153,15 +154,14 @@ export default function FilePanel() {
     const target = path.trim();
     if (!target || target === root) return;
     try {
-      const entries = await listDir(target);
-      if (push && root) setBackStack((s) => [...s, root]);
-      setRootOverride(target);
-      setTree(new Map([[target, entries]]));
-      setExpanded(new Set());
-      setPreview(null);
+      // Validated by listing; the effect above reloads the tree for the new
+      // root, and a root change drops the expansion in the memory store.
+      await listDir(target);
+      if (push && root) remember({ rootOverride: target, backStack: [...backStack, root] });
+      else remember({ rootOverride: target });
     } catch {
       chatStore.pushToast(`不是有效目录：${target}`, "warning");
-      setPathDraft(root ?? "");
+      setPathDraft(root);
     }
   };
 
@@ -169,18 +169,16 @@ export default function FilePanel() {
   const goBack = () => {
     const prev = backStack[backStack.length - 1];
     if (!prev) return;
-    setBackStack((s) => s.slice(0, -1));
+    remember({ backStack: backStack.slice(0, -1) });
     void navigate(prev, false);
   };
 
   const toggleDir = (path: string) => {
     const isOpen = expanded.has(path);
-    setExpanded((s) => {
-      const next = new Set(s);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
+    const next = new Set(expanded);
+    if (isOpen) next.delete(path);
+    else next.add(path);
+    remember({ expanded: [...next] });
     if (!isOpen && !tree.has(path)) void loadDir(path);
   };
 
@@ -204,26 +202,48 @@ export default function FilePanel() {
     [root],
   );
 
-  const openFile = (file: { name: string; path: string }, tab: PreviewTab = "source", keepFull = false) => {
-    const relPath = relPathOf(git, file.path);
-    setPreviewTab(tab);
+  // Session switch (uid) or a new working directory: re-read the tree, git
+  // status and diff from disk. The remembered fields come from the memory
+  // store, so this never closes the preview or forgets the expansion.
+  useEffect(() => {
+    const m = resolvePanelMemory(uid, cwd);
+    setTree(new Map());
     setDiffLines(null);
+    setPreviewFull(false);
     diffReq.current++;
-    if (tab === "diff" && relPath) void loadDiff(relPath);
-    // No read here: FilePreview owns loading (and its own error state), which
-    // is what lets one path serve markdown, images and office files alike.
-    setPreview({ name: file.name, path: file.path, relPath });
-    // A link clicked inside a rendered document keeps fullscreen: browsing from
-    // one doc to the next should not dump the reader back into the narrow column.
-    if (!keepFull) setPreviewFull(false);
-  };
+    if (m.root) {
+      void loadDir(m.root);
+      for (const p of m.expanded) void loadDir(p);
+    }
+    void refreshGit(m.root);
+    // A remembered diff tab has no lines to restore: refetch (FilePreview's
+    // source view reloads its own content).
+    if (m.preview && m.previewTab === "diff" && m.preview.relPath) void loadDiff(m.preview.relPath);
+  }, [uid, cwd, root, loadDir, refreshGit, loadDiff]);
+
+  const openFile = useCallback(
+    (file: { name: string; path: string }, tab: PreviewTab = "source", keepFull = false) => {
+      const relPath = relPathOf(git, file.path);
+      remember({ preview: { name: file.name, path: file.path, relPath }, previewTab: tab });
+      setDiffLines(null);
+      diffReq.current++;
+      if (tab === "diff" && relPath) void loadDiff(relPath);
+      // No read here: FilePreview owns loading (and its own error state), which
+      // is what lets one path serve markdown, images and office files alike.
+      // A link clicked inside a rendered document keeps fullscreen: browsing
+      // from one doc to the next should not dump the reader back into the
+      // narrow column.
+      if (!keepFull) setPreviewFull(false);
+    },
+    [git, remember, loadDiff],
+  );
 
   /** Follow a link clicked inside a previewed document. */
   const openPreviewTarget = (path: string) => openFile({ name: baseName(path), path }, "source", true);
 
   /** Switch the preview between source and diff, fetching the diff on demand. */
   const selectTab = (tab: PreviewTab) => {
-    setPreviewTab(tab);
+    remember({ previewTab: tab });
     if (tab === "diff" && !diffLines && !diffLoading && preview?.relPath) {
       void loadDiff(preview.relPath);
     }
@@ -231,9 +251,8 @@ export default function FilePanel() {
 
   const closePreview = () => {
     diffReq.current++;
-    setPreview(null);
+    remember({ preview: null, previewTab: "source" });
     setPreviewFull(false);
-    setPreviewTab("source");
     setDiffLines(null);
   };
 
@@ -364,8 +383,6 @@ export default function FilePanel() {
     return Array.from(map.values());
   }, [timeline]);
 
-  const [artifactsOpen, setArtifactsOpen] = useState(true);
-
   // Live auto-open: when present_files fires during a live turn, open primary
   // in the preview panel. History replay never emits, so this is live-only.
   useArtifactAutoOpen(
@@ -373,14 +390,12 @@ export default function FilePanel() {
       (item: ArtifactItem) => {
         if (item.kind === "file") openFile({ name: item.name, path: item.path });
       },
-      // openFile is stable (no dep), but ESLint wants it listed
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [],
+      [openFile],
     ),
   );
 
   return (
-    <aside className="flex shrink-0 border-l border-edge">
+    <aside className={`${hidden ? "hidden" : "flex"} shrink-0 border-l border-edge`}>
       {/* Preview column, nearest the chat so reading stays close to the
           conversation; the tree sits on the far side. */}
       {preview && !previewFull && (
@@ -492,7 +507,7 @@ export default function FilePanel() {
               <span className="shrink-0 text-[10px] text-dim">干净</span>
             ) : (
               <button
-                onClick={() => setChangesOnly((v) => !v)}
+                onClick={() => remember({ changesOnly: !changesOnly })}
                 title={changesOnly ? "显示完整目录树" : "只列出未提交的改动"}
                 className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
                   changesOnly ? "bg-card text-ink" : "text-dim hover:bg-card hover:text-ink"
@@ -515,7 +530,7 @@ export default function FilePanel() {
           {artifacts.length > 0 && (
             <div className="border-b border-edge pb-1 mb-1">
               <button
-                onClick={() => setArtifactsOpen((v) => !v)}
+                onClick={() => remember({ artifactsOpen: !artifactsOpen })}
                 className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-card"
               >
                 <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"

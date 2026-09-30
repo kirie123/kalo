@@ -422,7 +422,10 @@ export default function App() {
                 <ChatView />
               )}
             </div>
-            {panelOpen && page === "chat" && <FilePanel />}
+            {/* 收起时用 hidden 而不是卸载：文件面板的状态（打开的文件、目录展开）
+                属于用户正在看的文件区，收起再展开应该原样还在。按会话各记各的见
+                doc/2026-09-30-文件面板按会话记忆.md。 */}
+            {page === "chat" && <FilePanel hidden={!panelOpen} />}
           </div>
         </main>
 

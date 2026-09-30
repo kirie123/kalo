@@ -61,6 +61,7 @@ import {
 } from "./changed-files";
 import {
   errText,
+  latestTodos,
   loadLastModel,
   modelErrorHint,
   normPath,
@@ -191,6 +192,13 @@ export interface ChatState {
    * stick-to-bottom flag) when the user switches sessions.
    */
   activeSessionKey: string;
+  /**
+   * Stable identity of the active conversation (see SessionRuntime.uid). Views
+   * that remember state across a session switch key on this: unlike
+   * activeSessionKey it survives the fresh-N -> session-file re-key that
+   * happens when a new chat's file lands on disk.
+   */
+  sessionUid: string;
 }
 
 /**
@@ -293,6 +301,13 @@ class SessionRuntime {
    * Re-keyed by the store when the engine reports its session file.
    */
   key: string;
+  /**
+   * Stable per-conversation identity for per-session UI memory
+   * (doc/2026-09-30-文件面板按会话记忆.md): taken from the initial key and
+   * never re-keyed, so `fresh-N` keeps naming the same conversation after the
+   * engine reports its session file and the pool key moves to that path.
+   */
+  uid: string;
   view: SessionView;
   /** Tauri event unlisteners for this runtime's engine process. */
   unlisteners: Array<() => void> = [];
@@ -344,6 +359,7 @@ class SessionRuntime {
    */
   constructor(key: string, cwd = "", public expertId?: string) {
     this.key = key;
+    this.uid = key;
     this.view = freshView(cwd);
   }
 }
@@ -471,6 +487,7 @@ export class ChatStore {
       runningByFile: stableFlags,
       pendingSessions: stablePending,
       activeSessionKey: this.active.key,
+      sessionUid: this.active.uid,
     };
     this.listeners.forEach((l) => l());
   }
@@ -1780,35 +1797,6 @@ export class ChatStore {
 // ============================================================================
 // History reconstruction (get_messages -> timeline)
 // ============================================================================
-
-/**
- * The whole-list plan snapshot carried by a `todo_write` tool result
- * (`details.todos`, mirroring the harness extension). Returns null when the
- * payload isn't the expected shape, so a malformed result leaves the last
- * good plan on screen instead of blanking it.
- */
-function readTodos(result: any): TodoItem[] | null {
-  const todos = result?.details?.todos;
-  if (!Array.isArray(todos)) return null;
-  const ok = todos.every(
-    (t: any) =>
-      t &&
-      typeof t.content === "string" &&
-      (t.status === "pending" || t.status === "in_progress" || t.status === "completed"),
-  );
-  return ok ? (todos as TodoItem[]) : null;
-}
-
-/** Replay the plan from a loaded history page: the last todo_write wins. */
-function latestTodos(messages: AgentMessage[]): TodoItem[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== "toolResult" || m.toolName !== "todo_write" || m.isError) continue;
-    const todos = readTodos({ details: m.details });
-    if (todos) return todos;
-  }
-  return [];
-}
 
 function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
   const t: TimelineEntry[] = [];
