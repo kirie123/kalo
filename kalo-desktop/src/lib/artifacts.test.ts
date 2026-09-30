@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  emitAutoOpen,
-  handleSpecialToolResult,
-  onAutoOpen,
-  parseArtifacts,
-  sessionArtifacts,
-  type ArtifactItem,
-} from "./artifacts";
+import { handleSpecialToolResult, parseArtifacts, sessionArtifacts } from "./artifacts";
+import { resolvePanelMemory } from "./file-panel-memory";
 import type { ToolCallRecord } from "./timeline";
 
 function makeRec(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
@@ -95,13 +89,16 @@ describe("sessionArtifacts", () => {
 });
 
 describe("handleSpecialToolResult — present_files", () => {
+  const noop = { setTodos: () => {}, pushArtifacts: () => {} };
+
   it("calls pushArtifacts with the parsed summary", () => {
     const rec = makeRec();
     let captured: unknown = null;
-    handleSpecialToolResult(rec, {
-      setTodos: () => {},
-      pushArtifacts: (s) => { captured = s; },
-    });
+    handleSpecialToolResult(
+      rec,
+      { setTodos: () => {}, pushArtifacts: (s) => { captured = s; } },
+      { uid: "uid-parse", cwd: "/out" },
+    );
     expect(captured).not.toBeNull();
     expect((captured as any).primary?.name).toBe("report.html");
   });
@@ -109,41 +106,40 @@ describe("handleSpecialToolResult — present_files", () => {
   it("does not call pushArtifacts on error status", () => {
     const rec = makeRec({ status: "error" });
     let called = false;
-    handleSpecialToolResult(rec, {
-      setTodos: () => {},
-      pushArtifacts: () => { called = true; },
-    });
+    handleSpecialToolResult(
+      rec,
+      { setTodos: () => {}, pushArtifacts: () => { called = true; } },
+      { uid: "uid-error", cwd: "/out" },
+    );
     expect(called).toBe(false);
   });
 
-  it("emits auto-open for the primary item", () => {
-    const opened: ArtifactItem[] = [];
-    const unsub = onAutoOpen((item) => opened.push(item));
-    handleSpecialToolResult(makeRec(), { setTodos: () => {}, pushArtifacts: () => {} });
-    unsub();
-    expect(opened).toHaveLength(1);
-    expect(opened[0]?.name).toBe("report.html");
-  });
-});
-
-describe("auto-open emitter", () => {
-  it("delivers to all subscribers", () => {
-    const a: ArtifactItem[] = [];
-    const b: ArtifactItem[] = [];
-    const u1 = onAutoOpen((i) => a.push(i));
-    const u2 = onAutoOpen((i) => b.push(i));
-    const item: ArtifactItem = { kind: "file", path: "/x", name: "x", primary: true };
-    emitAutoOpen(item);
-    u1(); u2();
-    expect(a).toHaveLength(1);
-    expect(b).toHaveLength(1);
+  it("queues the primary for auto-open in the session that declared it", () => {
+    handleSpecialToolResult(makeRec(), noop, { uid: "uid-owner", cwd: "/out" });
+    expect(resolvePanelMemory("uid-owner", "/out").pendingArtifact).toEqual({
+      name: "report.html",
+      path: "/out/report.html",
+    });
   });
 
-  it("unsubscribed handler is not called", () => {
-    const calls: number[] = [];
-    const unsub = onAutoOpen(() => calls.push(1));
-    unsub();
-    emitAutoOpen({ kind: "file", path: "/x", name: "x", primary: true });
-    expect(calls).toHaveLength(0);
+  it("leaves another session's file area untouched", () => {
+    handleSpecialToolResult(makeRec(), noop, { uid: "uid-owner-b", cwd: "/out" });
+    expect(resolvePanelMemory("uid-bystander", "/out").pendingArtifact).toBeNull();
+  });
+
+  it("drops URLs and files the engine could not stat", () => {
+    const artifacts = (items: unknown[]) => makeRec({ result: { content: [], details: { artifacts: items } } });
+    handleSpecialToolResult(
+      artifacts([{ kind: "url", path: "https://x/y", name: "y", primary: true }]),
+      noop,
+      { uid: "uid-url", cwd: "/out" },
+    );
+    expect(resolvePanelMemory("uid-url", "/out").pendingArtifact).toBeNull();
+    handleSpecialToolResult(
+      artifacts([{ kind: "file", path: "/out/gone.md", name: "gone.md", primary: true, missing: true }]),
+      noop,
+      { uid: "uid-missing", cwd: "/out" },
+    );
+    expect(resolvePanelMemory("uid-missing", "/out").pendingArtifact).toBeNull();
   });
 });

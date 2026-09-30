@@ -1568,7 +1568,7 @@ export class ChatStore {
         );
         if (done) {
           accumulate(rt.runChanges, done, rt.view.cwd);
-          handleSpecialToolResult(done, { setTodos: (t) => this.setRt(rt, { todos: t }), pushArtifacts: (s) => this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "artifacts", summary: s } satisfies ArtifactsEntry), rt) });
+          handleSpecialToolResult(done, { setTodos: (t) => this.setRt(rt, { todos: t }), pushArtifacts: (s) => this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "artifacts", summary: s } satisfies ArtifactsEntry), rt) }, { uid: rt.uid, cwd: rt.view.cwd });
           const widgetSummary = parseWidget(done);
           if (widgetSummary) this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "widget", summary: widgetSummary } satisfies WidgetEntry), rt);
         }

@@ -1,17 +1,18 @@
 /**
- * Pure logic for the present_files tool: parsing, aggregation, and the
- * live auto-open emitter.
+ * Pure logic for the present_files tool: parsing, aggregation, and the live
+ * auto-open side effect.
  *
- * Kept free of Tauri IPC so the parsing rules are unit-testable and the
- * emitter can be subscribed from any component without store coupling.
- * chat-store calls handleSpecialToolResult() on tool_execution_end; the
- * card reads ArtifactSummary from the timeline entry; FilePanel subscribes
- * to autoOpenEmitter for the one-shot live side effect.
+ * Kept free of Tauri IPC so the parsing rules are unit-testable. chat-store
+ * calls handleSpecialToolResult() on live tool_execution_end; the card reads
+ * ArtifactSummary from the timeline entry; the auto-open is recorded into the
+ * *owning session's* file-panel memory, so a deliverable never pops into the
+ * file area of another session (doc/2026-09-28-产物呈现通道.md § 自动打开).
  *
  * Design: doc/2026-09-28-产物呈现通道.md
  */
 
 import type { FileKind } from "./file-kind";
+import { queuePanelArtifactOpen } from "./file-panel-memory";
 import type { TodoItem } from "./timeline";
 import type { ToolCallRecord } from "./timeline";
 
@@ -101,25 +102,6 @@ export function sessionArtifacts(records: ToolCallRecord[]): ArtifactItem[] {
 }
 
 // ============================================================================
-// Auto-open emitter (live-only; history replay never calls this)
-// ============================================================================
-
-type AutoOpenHandler = (item: ArtifactItem) => void;
-
-const handlers = new Set<AutoOpenHandler>();
-
-/** Subscribe to live auto-open events. Returns an unsubscribe function. */
-export function onAutoOpen(fn: AutoOpenHandler): () => void {
-  handlers.add(fn);
-  return () => handlers.delete(fn);
-}
-
-/** Emit a live auto-open event. Called only from chat-store's live tool_execution_end path. */
-export function emitAutoOpen(item: ArtifactItem): void {
-  for (const fn of handlers) fn(item);
-}
-
-// ============================================================================
 // Shared tool-result handler (extracts todo_write + present_files from chat-store)
 // ============================================================================
 
@@ -128,16 +110,27 @@ interface ToolResultActions {
   pushArtifacts(summary: ArtifactSummary): void;
 }
 
+/** The session that issued the call: where a live auto-open has to land. */
+export interface CallOwner {
+  /** Session-runtime uid (ChatState.sessionUid) — the panel memory's bucket key. */
+  uid: string;
+  /** That session's working directory, for the memory's root baseline. */
+  cwd: string;
+}
+
 /**
  * Handle per-tool side effects for tool_execution_end. Extracted here so
  * chat-store delegates in one line rather than growing with each new tool.
  *
- * Returns whether the primary artifact should be auto-opened (i.e. a live
- * present_files call succeeded). The caller fires emitAutoOpen if true.
+ * A successful present_files pushes its card *and* queues its primary for
+ * auto-open in `owner`'s file panel: the event carries the session it belongs
+ * to, so a background session's deliverable waits for its own file area
+ * instead of opening in whatever session is on screen.
  */
 export function handleSpecialToolResult(
   rec: ToolCallRecord,
   actions: ToolResultActions,
+  owner: CallOwner,
 ): void {
   if (rec.toolName === "todo_write" && rec.status !== "error") {
     const todos = readTodos(rec.result);
@@ -147,7 +140,7 @@ export function handleSpecialToolResult(
     const summary = parseArtifacts(rec);
     if (summary) {
       actions.pushArtifacts(summary);
-      if (summary.primary) emitAutoOpen(summary.primary);
+      if (summary.primary) queuePanelArtifactOpen(owner.uid, owner.cwd, summary.primary);
     }
   }
 }

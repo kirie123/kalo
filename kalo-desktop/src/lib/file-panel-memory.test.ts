@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { adoptPanelMemory, patchPanelMemory, resolvePanelMemory, subscribePanelMemory } from "./file-panel-memory";
+import {
+  adoptPanelMemory,
+  patchPanelMemory,
+  queuePanelArtifactOpen,
+  resolvePanelMemory,
+  subscribePanelMemory,
+} from "./file-panel-memory";
 
 const preview = (path: string) => ({ name: path.split("/").pop() ?? path, path, relPath: null });
 
@@ -15,6 +21,7 @@ describe("resolvePanelMemory", () => {
       changesOnly: false,
       backStack: [],
       artifactsOpen: true,
+      pendingArtifact: null,
     });
   });
 
@@ -85,6 +92,41 @@ describe("patched snapshots are not shared", () => {
     patchPanelMemory("uid-copy", "D:/repo", { expanded: [...before.expanded, "D:/repo/doc"] });
     expect(before.expanded).toEqual(["D:/repo/src"]);
     expect(resolvePanelMemory("uid-copy", "D:/repo").expanded).toEqual(["D:/repo/src", "D:/repo/doc"]);
+  });
+});
+
+describe("pending artifact (present_files auto-open)", () => {
+  it("queues a deliverable for its own session only", () => {
+    queuePanelArtifactOpen("uid-art", "D:/repo", { kind: "file", name: "report.html", path: "D:/out/report.html" });
+    expect(resolvePanelMemory("uid-art", "D:/repo").pendingArtifact).toEqual({
+      name: "report.html",
+      path: "D:/out/report.html",
+    });
+    // 别的会话（比如正在看的那个）什么也不会多出来。
+    expect(resolvePanelMemory("uid-elsewhere", "D:/repo").pendingArtifact).toBeNull();
+  });
+
+  it("drops URLs and missing files instead of queueing a dead open", () => {
+    queuePanelArtifactOpen("uid-url", "D:/repo", { kind: "url", name: "y", path: "https://x/y" });
+    queuePanelArtifactOpen("uid-gone", "D:/repo", { kind: "file", name: "gone.md", path: "D:/out/gone.md", missing: true });
+    expect(resolvePanelMemory("uid-url", "D:/repo").pendingArtifact).toBeNull();
+    expect(resolvePanelMemory("uid-gone", "D:/repo").pendingArtifact).toBeNull();
+  });
+
+  it("survives unrelated patches and is cleared the same way it was set", () => {
+    queuePanelArtifactOpen("uid-keep-art", "D:/repo", { kind: "file", name: "a.html", path: "D:/out/a.html" });
+    patchPanelMemory("uid-keep-art", "D:/repo", { preview: preview("D:/out/b.html") });
+    expect(resolvePanelMemory("uid-keep-art", "D:/repo").pendingArtifact?.name).toBe("a.html");
+    patchPanelMemory("uid-keep-art", "D:/repo", { pendingArtifact: null });
+    expect(resolvePanelMemory("uid-keep-art", "D:/repo").pendingArtifact).toBeNull();
+  });
+
+  it("notifies the panel so an open file area reacts without a session switch", () => {
+    const seen = vi.fn();
+    const off = subscribePanelMemory(seen);
+    queuePanelArtifactOpen("uid-notify", "D:/repo", { kind: "file", name: "a.html", path: "D:/out/a.html" });
+    off();
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 });
 

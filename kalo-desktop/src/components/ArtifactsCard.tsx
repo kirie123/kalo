@@ -1,6 +1,6 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import { formatBytes, type FileKind } from "../lib/file-kind";
-import { onAutoOpen, type ArtifactItem } from "../lib/artifacts";
+import type { ArtifactItem } from "../lib/artifacts";
 import type { ArtifactSummary } from "../lib/artifacts";
 import { chatStore } from "../lib/chat-store";
 import { openPath } from "../lib/pi-bridge";
@@ -160,13 +160,4 @@ export default function ArtifactsCard({ summary }: { summary: ArtifactSummary })
       )}
     </div>
   );
-}
-
-/**
- * Auto-open hook for FilePanel: subscribes to the live emitter and calls
- * `onOpen` whenever a present_files primary fires during the current streaming turn.
- * History replay never emits, so this only fires for live tool calls.
- */
-export function useArtifactAutoOpen(onOpen: (item: ArtifactItem) => void): void {
-  useEffect(() => onAutoOpen(onOpen), [onOpen]);
 }

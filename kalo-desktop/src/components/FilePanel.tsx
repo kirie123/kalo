@@ -15,7 +15,6 @@ import {
   type StatusIndex,
 } from "../lib/git";
 import { sessionArtifacts, type ArtifactItem } from "../lib/artifacts";
-import { useArtifactAutoOpen } from "./ArtifactsCard";
 import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import DiffView, { type DiffLine } from "./DiffView";
 import FilePreview from "./FilePreview";
@@ -383,16 +382,18 @@ export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
     return Array.from(map.values());
   }, [timeline]);
 
-  // Live auto-open: when present_files fires during a live turn, open primary
-  // in the preview panel. History replay never emits, so this is live-only.
-  useArtifactAutoOpen(
-    useCallback(
-      (item: ArtifactItem) => {
-        if (item.kind === "file") openFile({ name: item.name, path: item.path });
-      },
-      [openFile],
-    ),
-  );
+  // Live auto-open: a present_files call of *this* session queues its primary
+  // in this session's memory (chat-store records it against the issuing
+  // session), so an artifact declared while another session was on screen
+  // waits there instead of popping into this file area. Opening it here, with
+  // the panel's own git state in hand, is what fills in the diff-able relPath.
+  // History replay never queues, so this stays live-only.
+  useEffect(() => {
+    const pending = mem.pendingArtifact;
+    if (!pending) return;
+    remember({ pendingArtifact: null });
+    openFile({ name: pending.name, path: pending.path });
+  }, [mem.pendingArtifact, remember, openFile]);
 
   return (
     <aside className={`${hidden ? "hidden" : "flex"} shrink-0 border-l border-edge`}>

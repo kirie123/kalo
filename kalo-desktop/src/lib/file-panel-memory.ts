@@ -27,6 +27,29 @@ export interface PanelPreview {
 /** Which view the preview column is showing. */
 export type PanelTab = "source" | "diff";
 
+/**
+ * A live `present_files` deliverable waiting for its session's panel.
+ *
+ * A deliverable declared while its session ran in the background must not pop
+ * into the file area of whatever session happens to be on screen; it waits here
+ * and the panel opens it as soon as that session is the active one. See
+ * doc/2026-09-28-产物呈现通道.md § 自动打开.
+ */
+export interface PendingArtifact {
+  name: string;
+  path: string;
+}
+
+/** A live deliverable of a session (engine `present_files` item, narrowed to
+ *  the fields the panel needs). */
+export interface Deliverable {
+  kind: "file" | "url";
+  name: string;
+  path: string;
+  /** True when the engine could not stat the path: nothing to open. */
+  missing?: true;
+}
+
 export interface PanelMemory {
   /** Directory the user navigated to; null = follow the session cwd. */
   rootOverride: string | null;
@@ -43,6 +66,11 @@ export interface PanelMemory {
   changesOnly: boolean;
   backStack: string[];
   artifactsOpen: boolean;
+  /**
+   * Deliverable declared by a live `present_files` of this session, opened by
+   * the panel the next time this session is on screen (then cleared).
+   */
+  pendingArtifact: PendingArtifact | null;
 }
 
 /** The blank file area of a session that has not been browsed yet. */
@@ -56,6 +84,7 @@ function fresh(root: string): PanelMemory {
     changesOnly: false,
     backStack: [],
     artifactsOpen: true,
+    pendingArtifact: null,
   };
 }
 
@@ -127,6 +156,17 @@ const subscribe = (fn: () => void) => {
 
 /** Subscribe to memory writes (the hook's channel). */
 export const subscribePanelMemory = subscribe;
+
+/**
+ * Record a live deliverable for the session that declared it. Called from the
+ * present_files live path (lib/artifacts.ts), which knows the owning session's
+ * uid and cwd — the two things routing the open needs. URLs and files the
+ * engine could not stat are dropped here: there is nothing to preview.
+ */
+export function queuePanelArtifactOpen(uid: string, cwd: string, item: Deliverable): void {
+  if (item.kind !== "file" || item.missing) return;
+  patchPanelMemory(uid, cwd, { pendingArtifact: { name: item.name, path: item.path } });
+}
 
 const snapshot = () => version;
 
