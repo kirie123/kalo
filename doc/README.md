@@ -90,6 +90,7 @@
 - [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
 - [子 Agent 卡片里的压缩气泡（activity feed 新增 compaction 条目）](2026-09-18-子agent压缩气泡.md)
+- [子 Agent 活动面板（输入框「N 个子 agent」按钮 + Agent map 弹窗；插话模式迁入输入队列；效果图 `mockups/2026-09-30-agent-map.html`）](2026-09-30-子agent活动面板.md)
 - [版本号管理](2026-08-19-版本号管理.md)
 - [Agent 引擎可靠性改进](2026-01-01-harness-reliability-improvements.md)
 - [DSML 思考通道工具调用恢复（网关只转换回答通道时的安全网）](2026-09-21-DSML思考通道工具调用恢复.md)
