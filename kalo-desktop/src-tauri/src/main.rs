@@ -22,6 +22,7 @@ mod sidecar;
 mod sessions_store;
 mod workspace;
 mod pi_config;
+mod priority;
 mod proc;
 mod skills;
 
@@ -630,6 +631,12 @@ fn main() {
             // Must come first: everything below resolves bundled resources
             // (sidecars, internal-skills) through this.
             resources::init(app.handle());
+            // Keep the window schedulable when the machine is loaded by the
+            // user's own workload (training loops etc.): Windows otherwise
+            // parks a background window in EcoQoS and its WebView2 renderer
+            // can be starved until typing stops echoing
+            // (doc/2026-10-01-高负载下界面响应与输入可见性.md §2).
+            priority::keep_ui_responsive();
             // Auto-start the IM gateway when Feishu credentials already exist.
             gateway::autostart(app.handle());
             // First-run: knowledge base directory tree + INDEX.md stub.
