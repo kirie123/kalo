@@ -10,6 +10,16 @@
  * testable without a DOM. This component only drives that machine and calls
  * back into chat-store.
  *
+ * Layout notes (2026-10-01 feedback):
+ * - It is a compact card aligned with the composer column, not a full-width
+ *   strip — the strip read as a huge block that hid the transcript.
+ * - Clicking the header row collapses it to a single line (question snippet +
+ *   progress) so the transcript stays readable while deliberating; a new
+ *   request always starts expanded.
+ * - Opening "其他…" adds the free-text field *below* the option list instead of
+ *   replacing it: the options are the answer key, losing sight of them mid-typing
+ *   was the bug.
+ *
  * Design: doc/2026-09-07-ask-user-向用户提问工具.md
  */
 
@@ -19,7 +29,6 @@ import {
   createAskState,
   currentDraft,
   currentQuestion,
-  encodeAnswers,
   goNext,
   goTo,
   hasOptions,
@@ -43,7 +52,7 @@ function ProgressDots({
 }) {
   if (state.questions.length <= 1) return null;
   return (
-    <div className="mb-3 flex items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       {state.questions.map((question, i) => {
         const draft = state.drafts[i];
         const answered = draft !== undefined && isAnswered(question, draft);
@@ -87,7 +96,7 @@ function OptionList({
   const options = question.options ?? [];
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1">
       {options.map((option) => {
         const selected = draft.selected.includes(option.label);
         return (
@@ -95,23 +104,23 @@ function OptionList({
             key={option.label}
             type="button"
             onClick={() => onToggle(option.label)}
-            className={`flex min-h-[44px] w-full items-start rounded-lg border px-3 py-2 text-left text-sm transition-colors duration-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+            className={`flex w-full items-start rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors duration-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
               selected
                 ? "border-accent bg-accent/10 text-body"
                 : "border-edge bg-raised hover:border-dim hover:bg-base"
             }`}
           >
             <span
-              className={`mr-2.5 mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] ${
+              className={`mr-2 mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[10px] ${
                 selected ? "border-accent bg-accent text-white" : "border-dim"
               } ${question.multiSelect ? "rounded" : "rounded-full"}`}
             >
               {selected && "✓"}
             </span>
-            <span className="flex flex-col">
+            <span className="flex min-w-0 flex-col">
               <span className="font-medium leading-snug">{option.label}</span>
               {option.description && (
-                <span className="mt-0.5 text-xs text-dim leading-snug">
+                <span className="mt-px line-clamp-2 text-xs leading-snug text-dim" title={option.description}>
                   {option.description}
                 </span>
               )}
@@ -120,12 +129,12 @@ function OptionList({
         );
       })}
 
-      {/* "其他…" expander */}
+      {/* "其他…" expander — hidden while the free-text field below is open. */}
       {!draft.customOpen && (
         <button
           type="button"
           onClick={onCustomOpen}
-          className="flex min-h-[44px] w-full items-center rounded-lg border border-dashed border-edge px-3 py-2 text-left text-sm text-dim transition-colors duration-100 hover:border-dim hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="flex w-full items-center rounded-md border border-dashed border-edge px-2.5 py-1.5 text-left text-sm text-dim transition-colors duration-100 hover:border-dim hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           其他…
         </button>
@@ -173,6 +182,9 @@ function CustomField({
 export default function AskUserPanel() {
   const pendingAsk = useChatSelector((s) => s.pendingAsk);
   const [localState, setLocalState] = useState<AskState | null>(null);
+  // Collapsed request id, not a boolean: a new ask (new id) must start
+  // expanded even if the previous one was left folded.
+  const [collapsedId, setCollapsedId] = useState<string | null>(null);
 
   // Sync local state when a new request arrives; keep editing if the same one.
   const effectiveState =
@@ -192,6 +204,7 @@ export default function AskUserPanel() {
   const answered = isAnswered(question, draft);
   const last = isLast(effectiveState);
   const submittable = canSubmit(effectiveState);
+  const collapsed = collapsedId === effectiveState.id;
 
   const update = (next: AskState) => {
     setLocalState(next);
@@ -206,78 +219,114 @@ export default function AskUserPanel() {
   };
 
   return (
-    <div className="border-t border-edge bg-card px-4 py-3">
-      <div className="mx-auto max-w-lg">
-        {/* Header */}
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            {question.header && (
-              <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-wide text-dim">
-                {question.header}
-              </span>
-            )}
-            {/* The question is the only free-text slot; it may carry a second
-                line when the engine folded a legacy `detail` into it, so it
-                wraps on newlines. */}
-            <p className="whitespace-pre-wrap text-sm font-medium leading-snug text-body">
-              {question.question}
-            </p>
-          </div>
-          <ProgressDots state={effectiveState} onGoTo={(i) => update(goTo(effectiveState, i))} />
-        </div>
-
-        {/* Answer area — capped height so long option lists don't push everything off screen */}
-        <div className="mt-2 max-h-64 overflow-y-auto">
-          {freeTextOnly || draft.customOpen ? (
-            <CustomField
-              value={draft.custom}
-              onChange={(text) => update(setCustom(effectiveState, text))}
-              onSubmit={handleNext}
-              placeholder={freeTextOnly ? "输入你的答案…" : "输入其他答案…"}
-            />
-          ) : (
-            <OptionList
-              question={question}
-              state={effectiveState}
-              onToggle={(label) => update(toggleOption(effectiveState, label))}
-              onCustomOpen={() => update(setCustomOpen(effectiveState, true))}
-            />
+    // Compact card sized like the todo panel, pinned above the composer.
+    <div className="mx-auto mb-1.5 w-full max-w-lg overflow-hidden rounded-lg border border-edge bg-card text-[13px]">
+      {/* Header — always visible, clicking it folds/unfolds the card. When
+          folded it keeps the question visible on one line, because that line is
+          what the user needs while reading the transcript above. */}
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5">
+        <button
+          type="button"
+          onClick={() => setCollapsedId(collapsed ? null : effectiveState.id)}
+          aria-expanded={!collapsed}
+          title={collapsed ? "展开回答" : "折叠（先看上文）"}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left"
+        >
+          {/* Up when collapsed (the card unfolds upward), down when expanded. */}
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            className={`shrink-0 text-dim transition-transform ${collapsed ? "rotate-180" : ""}`}
+            aria-hidden
+          >
+            <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-dim">
+            {question.header ?? "提问"}
+          </span>
+          {collapsed && (
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-body">{question.question}</span>
           )}
-        </div>
+        </button>
+        <ProgressDots
+          state={effectiveState}
+          onGoTo={(i) => update(goTo(effectiveState, i))}
+        />
+      </div>
 
-        {/* Footer actions */}
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            {/* "我直接说" — dismiss without answering */}
-            <button
-              type="button"
-              onClick={() => void chatStore.cancelAsk()}
-              className="rounded px-2 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            >
-              我直接说
-            </button>
-            {/* Skip current question */}
-            {!last && (
+      {!collapsed && (
+        <div className="border-t border-edge px-2.5 pb-2.5 pt-2">
+          {/* The question is the only free-text slot; it may carry a second
+              line when the engine folded a legacy `detail` into it, so it
+              wraps on newlines. */}
+          <p className="whitespace-pre-wrap text-sm font-medium leading-snug text-body">
+            {question.question}
+          </p>
+
+          {/* Answer area: only the option list scrolls; the free-text field is
+              rendered outside of it so opening "其他…" is always visible. */}
+          <div className="mt-2">
+            {!freeTextOnly && (
+              <div className="max-h-48 overflow-y-auto">
+                <OptionList
+                  question={question}
+                  state={effectiveState}
+                  onToggle={(label) => update(toggleOption(effectiveState, label))}
+                  onCustomOpen={() => update(setCustomOpen(effectiveState, true))}
+                />
+              </div>
+            )}
+            {(freeTextOnly || draft.customOpen) && (
+              <div className={freeTextOnly ? "" : "mt-1.5"}>
+                <CustomField
+                  key={question.id}
+                  value={draft.custom}
+                  onChange={(text) => update(setCustom(effectiveState, text))}
+                  onSubmit={handleNext}
+                  placeholder={freeTextOnly ? "输入你的答案…" : "输入其他答案…"}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Footer actions */}
+          <div className="mt-2.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {/* "我直接说" — dismiss without answering */}
               <button
                 type="button"
-                onClick={() => update(skipCurrent(effectiveState))}
-                className="rounded px-2 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                onClick={() => void chatStore.cancelAsk()}
+                className="rounded px-1.5 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
-                跳过本问
+                我直接说
               </button>
-            )}
-          </div>
+              {/* Skip current question */}
+              {!last && (
+                <button
+                  type="button"
+                  onClick={() => update(skipCurrent(effectiveState))}
+                  className="rounded px-1.5 py-1 text-xs text-dim transition-colors hover:text-body focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  跳过本问
+                </button>
+              )}
+            </div>
 
-          <button
-            type="button"
-            disabled={last ? !submittable : !answered}
-            onClick={handleNext}
-            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-[var(--accent-contrast)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          >
-            {last ? "提交" : "下一问"}
-          </button>
+            <button
+              type="button"
+              disabled={last ? !submittable : !answered}
+              onClick={handleNext}
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-[var(--accent-contrast)] transition-opacity disabled:cursor-not-allowed disabled:opacity-40 hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              {last ? "提交" : "下一问"}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
