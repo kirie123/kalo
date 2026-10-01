@@ -101,6 +101,44 @@ export default function InputBox() {
     });
   };
 
+  // Type-to-focus: with the timeline (or anything else non-editable) holding
+  // focus, a keystroke used to go nowhere — the window was up, the composer was
+  // live, and nothing happened. Take the character and put the caret in the
+  // composer, the way chat apps do.
+  //
+  // Deliberately conservative: only when the composer is actually clickable at
+  // this moment (a modal, lightbox or context menu covering it wins the hit
+  // test) and the key is a plain printable character typed outside of any
+  // editable or interactive control — so Space still activates a focused
+  // button instead of being swallowed here.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat || e.isComposing) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1) return; // Enter/Escape/Tab/arrows keep their meaning
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest("input, textarea, select, button, a, [contenteditable], [role='menu'], [role='dialog']")) {
+        return;
+      }
+      const el = textareaRef.current;
+      if (!el || el.disabled) return;
+      const box = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      if (!hit || !cardRef.current?.contains(hit)) return;
+      e.preventDefault();
+      const next = el.value + e.key;
+      setText(next);
+      syncAc(next, next.length);
+      requestAnimationFrame(() => {
+        const node = textareaRef.current;
+        node?.focus();
+        node?.setSelectionRange(next.length, next.length);
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Debounced file search for @ completion.
   const acQuery = ac?.mode === "file" ? ac.query : null;
   useEffect(() => {
@@ -369,6 +407,14 @@ export default function InputBox() {
             ))}
           </div>
         )}
+        {/* Why typing does nothing, in words. The question itself is right
+            above; without this line a disabled composer just looks broken. */}
+        {chat.hasPendingAsk && (
+          <div className="flex items-center gap-2 px-4 pt-3 text-xs text-dim">
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-accent" />
+            输入已暂停 · 先回答上方的问题，或点「我直接说」把控制权拿回来
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={text}
@@ -382,7 +428,7 @@ export default function InputBox() {
           rows={1}
           placeholder={
             chat.hasPendingAsk
-              ? "请先回答上方的问题，或点\"我直接说\"…"
+              ? "输入已暂停"
               : busy
                 ? "Enter 加入队列，本轮结束后自动发送（可在条目上改成立即插入）…"
                 : chat.connecting
@@ -390,7 +436,7 @@ export default function InputBox() {
                   : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"
           }
           disabled={chat.hasPendingAsk}
-          className="min-h-14 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-dim"
+          className="min-h-14 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-dim disabled:cursor-not-allowed disabled:opacity-50"
         />
 
         {/* Toolbar — capability switches on the left, context scope + send on
