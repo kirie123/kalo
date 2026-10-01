@@ -7,7 +7,7 @@ import { highlight } from "../lib/highlight";
 import { openPath, readFileBytes, readFileText } from "../lib/pi-bridge";
 import { MAX_COLS, MAX_ROWS, readXlsx, type XlsxWorkbook } from "../lib/xlsx";
 import { openZip } from "../lib/zip";
-import { MarkdownBlock } from "./AssistantMessage";
+import { MarkdownBlock } from "./MarkdownBlock";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import HtmlFrame from "./HtmlFrame";
 import SvgBlock from "./SvgBlock";

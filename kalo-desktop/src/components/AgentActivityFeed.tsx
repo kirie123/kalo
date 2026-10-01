@@ -8,7 +8,7 @@ import {
   type CompactionActivityItem,
   compactionActivityView,
 } from "../lib/subagent-activity";
-import { CodeRenderer } from "./AssistantMessage";
+import { CodeRenderer } from "./MarkdownBlock";
 
 /**
  * One child agent's live activity feed: assistant texts, tool calls, and
