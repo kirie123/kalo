@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { AgentActivityItem } from "../lib/subagent-activity";
 import type { ToolCallRecord } from "../lib/timeline";
 import { callTodos, groupTitle, rowLabel } from "../lib/tool-labels";
+import { capToolOutput } from "../lib/tool-output";
 import AgentActivityFeed from "./AgentActivityFeed";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 import { TodoStatusIcon } from "./TodoPanel";
@@ -156,6 +157,36 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
   );
 }
 
+/**
+ * Tool output in a `<pre>`, capped to a head/tail window with an explicit way
+ * out. Results are unbounded (build logs, file dumps) and every character
+ * stays in the DOM for the life of the session, so the window is what keeps a
+ * log-heavy session cheap to scroll (doc/2026-10-01-高负载下界面响应与输入可见性.md).
+ */
+function OutputPre({ text, maxHeight = "max-h-72", dim = false }: { text: string; maxHeight?: string; dim?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const capped = useMemo(() => capToolOutput(text), [text]);
+  return (
+    <>
+      <pre
+        className={`mono ${maxHeight} overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs ${
+          dim ? "text-dim" : ""
+        }`}
+      >
+        {expanded ? text : capped.text}
+      </pre>
+      {capped.truncated && !expanded && (
+        <button
+          onClick={() => setExpanded(true)}
+          className="mt-1 self-start rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim hover:bg-card"
+        >
+          显示全部（另有 {capped.hiddenChars.toLocaleString()} 字符 / {capped.hiddenLines.toLocaleString()} 行）
+        </button>
+      )}
+    </>
+  );
+}
+
 function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   if (rec.toolName === "agent") {
     const activity: AgentActivityItem[] | undefined =
@@ -199,11 +230,9 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   if (rec.toolName === "bash") {
     const output = resultText(rec.result) || resultText(rec.partialResult);
     return (
-      <div className="mb-1 ml-6 mt-1">
+      <div className="mb-1 ml-6 mt-1 flex flex-col">
         {output ? (
-          <pre className="mono max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs">
-            {output}
-          </pre>
+          <OutputPre text={output} />
         ) : (
           <div className="text-xs text-dim">{rec.status === "running" ? "运行中…" : "（无输出）"}</div>
         )}
@@ -215,14 +244,8 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   const output = resultText(rec.result) || resultText(rec.partialResult);
   return (
     <div className="mb-1 ml-6 mt-1 flex flex-col gap-1">
-      <pre className="mono max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs text-dim">
-        {JSON.stringify(rec.args ?? {}, null, 2)}
-      </pre>
-      {output && (
-        <pre className="mono max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs">
-          {output}
-        </pre>
-      )}
+      <OutputPre text={JSON.stringify(rec.args ?? {}, null, 2)} maxHeight="max-h-40" dim />
+      {output && <OutputPre text={output} />}
     </div>
   );
 }
