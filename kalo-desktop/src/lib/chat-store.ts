@@ -70,6 +70,7 @@ import {
   sameFlags,
   saveLastModel,
 } from "./chat-store-helpers";
+import { publishBashWatch } from "./tool-watch-registry";
 import {
   createSession,
   closeSession,
@@ -498,11 +499,8 @@ export class ChatStore {
    */
   private set(partial: Partial<ChatState>) {
     for (const [k, v] of Object.entries(partial)) {
-      if (SESSION_VIEW_KEYS.has(k as keyof SessionView)) {
-        (this.active.view as Record<string, unknown>)[k] = v;
-      } else {
-        (this.global as Record<string, unknown>)[k] = v;
-      }
+      const target = SESSION_VIEW_KEYS.has(k as keyof SessionView) ? this.active.view : this.global;
+      (target as Record<string, unknown>)[k] = v;
     }
     this.commit();
   }
@@ -1567,6 +1565,7 @@ export class ChatStore {
           rt,
         );
         if (done) {
+          publishBashWatch(ev.toolName, ev.toolCallId, { status: ev.isError ? "error" : "success", result: ev.result });
           accumulate(rt.runChanges, done, rt.view.cwd);
           handleSpecialToolResult(done, { setTodos: (t) => this.setRt(rt, { todos: t }), pushArtifacts: (s) => this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "artifacts", summary: s } satisfies ArtifactsEntry), rt) }, { uid: rt.uid, cwd: rt.view.cwd });
           const widgetSummary = parseWidget(done);
@@ -1752,7 +1751,7 @@ export class ChatStore {
   // --------------------------------------------------------------------------
 
   private onToolStart(toolCallId: string, toolName: string, args: any, rt: SessionRuntime) {
-    const rec: ToolCallRecord = { toolCallId, toolName, args, status: "running" };
+    const rec: ToolCallRecord = { toolCallId, toolName, args, status: "running", startedAt: Date.now() };
     this.mutateTimeline((t) => {
       const last = t[t.length - 1];
       // Consecutive calls of the same tool collapse into one group.
@@ -1773,6 +1772,7 @@ export class ChatStore {
       const rec = e.calls.find((c) => c.toolCallId === toolCallId);
       if (!rec) continue;
       rec.partialResult = partialResult;
+      publishBashWatch(rec.toolName, toolCallId, { status: "running", partialResult });
       this.queueTimelineFlush(e.id, rt);
       return;
     }

@@ -63,9 +63,10 @@ function asDirEntry(entry: GitEntry): DirEntry {
  *
  * What the panel remembers (open file, browsing root, expansion) belongs to the
  * session and lives in lib/file-panel-memory; listings, git status, diff lines,
- * the menu and fullscreen stay transient here. `hidden` keeps the panel mounted
- * while collapsed, so收起/展开 restarts none of it. */
-export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
+ * the menu and fullscreen stay transient here. The tab container in
+ * RightPanel owns visibility, so this renders no shell of its own — just the
+ * preview and tree columns that fill it. */
+export default function FilePanel() {
   const cwd = useChatSelector((s) => s.cwd);
   const isStreaming = useChatSelector((s) => s.isStreaming);
   const timeline = useChatSelector((s) => s.timeline);
@@ -100,7 +101,6 @@ export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
   // after every turn, and a repeating toast for a persistent problem is noise.
   const [gitError, setGitError] = useState<string | null>(null);
   const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 288));
-  const [previewW, setPreviewW] = useState(() => loadWidth("kalo.layout.previewW", 416));
   // Race guard: only the latest diff request may populate its slot.
   const diffReq = useRef(0);
 
@@ -396,19 +396,13 @@ export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
   }, [mem.pendingArtifact, remember, openFile]);
 
   return (
-    <aside className={`${hidden ? "hidden" : "flex"} shrink-0 border-l border-edge`}>
+    <div className="flex min-h-0 min-w-0 flex-1">
       {/* Preview column, nearest the chat so reading stays close to the
-          conversation; the tree sits on the far side. */}
+          conversation; the tree sits on the far side and keeps its own width
+          (the panel's left edge is dragged in RightPanel). */}
       {preview && !previewFull && (
         <>
-          {/* Panel left-edge splitter (chat | preview) */}
-          <div
-            onMouseDown={(e) =>
-              startColumnDrag(e, previewW, { min: 240, max: 960, invert: true, persistKey: "kalo.layout.previewW" }, setPreviewW)
-            }
-            className="w-1 shrink-0 cursor-col-resize hover:bg-edge"
-          />
-          <div className="flex shrink-0 flex-col" style={{ width: previewW }}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <PreviewHeader
               name={preview.name}
               tab={previewTab}
@@ -428,18 +422,22 @@ export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
         </>
       )}
 
-      {/* Preview | tree splitter (or chat | tree when no preview is open) */}
-      <div
-        onMouseDown={(e) =>
-          startColumnDrag(e, treeW, { min: 180, max: 560, invert: true, persistKey: "kalo.layout.treeW" }, setTreeW)
-        }
-        className={`w-1 shrink-0 cursor-col-resize hover:bg-edge ${
-          preview && !previewFull ? "border-l border-edge" : ""
-        }`}
-      />
+      {/* Preview | tree splitter: only meaningful while both are on screen. */}
+      {preview && !previewFull && (
+        <div
+          onMouseDown={(e) =>
+            startColumnDrag(e, treeW, { min: 180, max: 560, invert: true, persistKey: "kalo.layout.treeW" }, setTreeW)
+          }
+          className="w-1 shrink-0 cursor-col-resize border-l border-edge hover:bg-edge"
+        />
+      )}
 
-      {/* Tree column */}
-      <div className="flex shrink-0 flex-col" style={{ width: treeW }}>
+      {/* Tree column: beside a preview it keeps its dragged width; on its own
+          it takes the whole tab. */}
+      <div
+        className={`flex flex-col ${preview && !previewFull ? "shrink-0" : "min-w-0 flex-1"}`}
+        style={preview && !previewFull ? { width: treeW } : undefined}
+      >
         <div className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
           <span className="text-xs font-medium">文件</span>
           <button
@@ -604,7 +602,7 @@ export default function FilePanel({ hidden = false }: { hidden?: boolean }) {
 
       {/* Right-click context menu */}
       {menu.at && menuEntry && <ContextMenu at={menu.at} items={entryMenuItems(menuEntry)} onClose={menu.close} />}
-    </aside>
+    </div>
   );
 }
 

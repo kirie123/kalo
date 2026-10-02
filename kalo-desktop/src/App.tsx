@@ -6,7 +6,6 @@ import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
 import ExpertsPanel from "./features/experts/ExpertsPanel";
 import FeedsSettings from "./components/FeedsSettings";
-import FilePanel from "./components/FilePanel";
 import JobsCenter from "./components/JobsCenter";
 import NotesPanel from "./features/notes/NotesPanel";
 import OnboardingOverlay from "./features/onboarding/OnboardingOverlay";
@@ -19,11 +18,13 @@ import SettingsPage, {
   type ThemePref,
 } from "./components/SettingsPage";
 import Sidebar from "./components/Sidebar";
+import RightPanel from "./components/RightPanel";
 import TasksSettings from "./components/TasksSettings";
 import TaskRunPanel from "./components/TaskRunPanel";
 import TitleBar, { type MenuEntry, type TitleMenu } from "./components/TitleBar";
 import { listSessions, deleteSession } from "./lib/pi-bridge";
 import { chatStore, useChatSelector } from "./lib/chat-store";
+import { panelTabs, usePanelTabs } from "./lib/panel-tabs";
 import { loadWidth, startColumnDrag } from "./lib/drag";
 import { startFreshChat } from "./lib/fresh-chat";
 import { cwdBasename } from "./lib/projects";
@@ -47,8 +48,9 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarW, setSidebarW] = useState(() => loadWidth("kalo.layout.sidebarW", 260));
-  // 文件浏览默认展开；是否有打开文件只决定面板内是否出现预览列。
-  const [panelOpen, setPanelOpen] = useState(true);
+  // 右栏视图（文件 / 终端）与终端页签状态都在 lib/terminal-panel：
+  // 「在终端中打开」的触发点在时间线深处的 bash 行上，不适合从 App 逐层传。
+  const panel = usePanelTabs();
   const [projects, setProjects] = useState<ProjectGroup[]>([]);
   const [theme, setTheme] = useState<ThemePref>(() => loadTheme());
   // null = 还没问过 ~/.kalo/onboarding.json；"first" 首次自动弹，
@@ -237,10 +239,10 @@ export default function App() {
           { kind: "item", label: "侧边栏", checked: !sidebarCollapsed, onClick: onToggleCollapsed },
           {
             kind: "item",
-            label: "文件面板",
-            checked: panelOpen && page === "chat",
+            label: "右栏面板",
+            checked: panel.open && page === "chat",
             disabled: page !== "chat",
-            onClick: () => setPanelOpen((v) => !v),
+            onClick: () => panelTabs.toggle(),
           },
           { kind: "sep" },
           { kind: "item", label: "聊天", checked: page === "chat", onClick: () => setPage("chat") },
@@ -274,7 +276,7 @@ export default function App() {
       onOpenSettings,
       onToggleCollapsed,
       sidebarCollapsed,
-      panelOpen,
+      panel.open,
       page,
       onOpenAutomation,
       onOpenNotes,
@@ -373,14 +375,14 @@ export default function App() {
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
-              {/* The file panel is bound to the chat's cwd; the other pages
-                  have no cwd of their own, so the toggle is hidden there. */}
+              {/* The right panel is bound to the chat's cwd; the other pages
+                  have no cwd of their own, so the toggles are hidden there. */}
               {page === "chat" && (
                 <button
-                  onClick={() => setPanelOpen((v) => !v)}
-                  title="文件面板"
+                  onClick={() => panelTabs.toggle()}
+                  title="右栏面板（文件 / 浏览器 / 终端）"
                   className={`shrink-0 rounded-md p-1.5 hover:bg-card ${
-                    panelOpen ? "text-ink" : "text-dim hover:text-ink"
+                    panel.open ? "text-ink" : "text-dim hover:text-ink"
                   }`}
                 >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
@@ -422,10 +424,11 @@ export default function App() {
                 <ChatView />
               )}
             </div>
-            {/* 收起时用 hidden 而不是卸载：文件面板的状态（打开的文件、目录展开）
-                属于用户正在看的文件区，收起再展开应该原样还在。按会话各记各的见
-                doc/2026-09-30-文件面板按会话记忆.md。 */}
-            {page === "chat" && <FilePanel hidden={!panelOpen} />}
+            {/* 隐藏用 hidden 而不是卸载：文件面板的浏览状态（打开的文件、
+                目录展开）、终端的 shell 进程、浏览器的页面都该原样还在。文件区
+                按会话各记各的见 doc/2026-09-30-文件面板按会话记忆.md；右栏页签
+                见 doc/2026-10-03-右栏页签面板.md。 */}
+            {page === "chat" && <RightPanel hidden={!panel.open} />}
           </div>
         </main>
 

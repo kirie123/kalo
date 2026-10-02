@@ -455,6 +455,11 @@ export interface PiExitInfo {
   code: number | null;
 }
 
+/** Payload of `terminal-exit:{id}` — the shell's exit code, null when unknown. */
+export interface TerminalExitInfo {
+  code: number | null;
+}
+
 /** One engine slash command (extension command, skill:, or prompt template). */
 export interface SlashCommand {
   name: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { capToolOutput } from "./tool-output";
+import { capToolOutput, contentText } from "./tool-output";
 
 describe("capToolOutput", () => {
   it("leaves short output untouched", () => {
@@ -68,5 +68,47 @@ describe("capToolOutput", () => {
     const out = capToolOutput("");
     expect(out.truncated).toBe(false);
     expect(out.text).toBe("");
+  });
+});
+
+describe("contentText", () => {
+  it("returns empty for nullish input", () => {
+    expect(contentText(null)).toBe("");
+    expect(contentText(undefined)).toBe("");
+  });
+
+  it("passes a plain string through", () => {
+    expect(contentText("ps aux output\nsecond line")).toBe("ps aux output\nsecond line");
+  });
+
+  it("joins the text blocks of a content array", () => {
+    const result = {
+      content: [
+        { type: "text", text: "第一段" },
+        { type: "text", text: "第二段" },
+      ],
+    };
+    expect(contentText(result)).toBe("第一段\n第二段");
+  });
+
+  it("ignores non-text blocks", () => {
+    const result = {
+      content: [
+        { type: "image", data: "AAA", mimeType: "image/png" },
+        { type: "text", text: "看图" },
+      ],
+    };
+    expect(contentText(result)).toBe("看图");
+  });
+
+  it("renders an empty content array as empty text, not JSON", () => {
+    // The bug that motivated this helper: a running bash's partial result is
+    // `{content: []}`, and `JSON.stringify` leaked it into the tool row.
+    expect(contentText({ content: [] })).toBe("");
+  });
+
+  it("returns empty for shapes without a content array", () => {
+    expect(contentText({ details: { exitCode: 1 } })).toBe("");
+    expect(contentText(42)).toBe("");
   });
 });

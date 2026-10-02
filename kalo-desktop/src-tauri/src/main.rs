@@ -21,6 +21,7 @@ mod session;
 mod session_paging;
 mod sidecar;
 mod sessions_store;
+mod terminal;
 mod workspace;
 mod pi_config;
 mod priority;
@@ -628,6 +629,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionManager::default())
         .manage(GatewayManager::default())
+        .manage(terminal::TerminalManager::new())
         .setup(|app| {
             // Must come first: everything below resolves bundled resources
             // (sidecars, internal-skills) through this.
@@ -754,6 +756,10 @@ fn main() {
             experts::expert_upsert,
             experts::expert_remove,
             workspace::create_workspace,
+            terminal::terminal_open,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Kalo");
@@ -770,6 +776,10 @@ fn main() {
                         process.kill();
                     }
                 }
+            }
+            // Terminal shells are children of this process too.
+            if let Some(terminals) = app_handle.try_state::<terminal::TerminalManager>() {
+                terminals.kill_all();
             }
         }
     });

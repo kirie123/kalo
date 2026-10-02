@@ -37,6 +37,8 @@
  *   open_path { path, reveal } -> void
  *   git_status { cwd } -> GitStatus | null   (null = not a repo)
  *   git_diff { cwd, relPath } -> string      (unified diff vs HEAD)
+ *   terminal_open { id, cwd, cols, rows } / terminal_write { id, data }
+ *   terminal_resize { id, cols, rows } / terminal_close { id }
  *
  * tool details contract (engine → desktop via AgentToolResult.details):
  *   present_files result.details -> PresentFilesDetails { artifacts: ArtifactItem[]; explanation? }
@@ -47,6 +49,8 @@
  *   pi-event:{sessionId}  — one stdout JSON line (response or event)
  *   pi-stderr:{sessionId} — string
  *   pi-exit:{sessionId}   — { code: number | null }
+ *   terminal-output:{id}  — string (batched pty output, ~16ms window)
+ *   terminal-exit:{id}    — { code: number | null }
  *   gateway-status        — GatewayStatus (sidecar lifecycle, pairing QR)
  *   schedule-status       — ScheduleTaskInfo[] (full task-table snapshot)
  *   schedule-error        — string (async schedule_upsert validation failure)
@@ -95,6 +99,7 @@ import type {
   SessionPage,
   SkillInstallReport,
   SkillMeta,
+  TerminalExitInfo,
   TextSince,
 } from "../types";
 
@@ -695,4 +700,39 @@ export function onPiStderr(sessionId: string, cb: (line: string) => void) {
 
 export function onPiExit(sessionId: string, cb: (info: PiExitInfo) => void) {
   return listen<PiExitInfo>(`pi-exit:${sessionId}`, (e) => cb(e.payload));
+}
+
+// ============================================================================
+// Embedded terminals (doc/2026-10-02-桌面终端与长命令实时可见.md)
+// ============================================================================
+
+/**
+ * Start a shell under a PTY. `id` is the frontend-generated tab id; output
+ * arrives as `terminal-output:{id}` batches, the exit code as
+ * `terminal-exit:{id}`. cwd falls back to the app's default when null/missing.
+ */
+export function terminalOpen(args: { id: string; cwd: string | null; cols: number; rows: number }) {
+  return invoke<void>("terminal_open", args);
+}
+
+/** Keyboard input. Call sites fire-and-forget; Rust keeps keystrokes in order. */
+export function terminalWrite(id: string, data: string) {
+  return invoke<void>("terminal_write", { id, data });
+}
+
+export function terminalResize(id: string, cols: number, rows: number) {
+  return invoke<void>("terminal_resize", { id, cols, rows });
+}
+
+/** Close a tab: kills the shell tree and forgets the session. */
+export function terminalClose(id: string) {
+  return invoke<void>("terminal_close", { id });
+}
+
+export function onTerminalOutput(id: string, cb: (chunk: string) => void) {
+  return listen<string>(`terminal-output:${id}`, (e) => cb(e.payload));
+}
+
+export function onTerminalExit(id: string, cb: (info: TerminalExitInfo) => void) {
+  return listen<TerminalExitInfo>(`terminal-exit:${id}`, (e) => cb(e.payload));
 }

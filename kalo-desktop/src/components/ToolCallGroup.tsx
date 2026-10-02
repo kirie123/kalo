@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentActivityItem } from "../lib/subagent-activity";
 import type { ToolCallRecord } from "../lib/timeline";
 import { callTodos, groupTitle, rowLabel } from "../lib/tool-labels";
-import { capToolOutput } from "../lib/tool-output";
+import { panelTabs } from "../lib/panel-tabs";
+import { capToolOutput, contentText } from "../lib/tool-output";
 import AgentActivityFeed from "./AgentActivityFeed";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 import { TodoStatusIcon } from "./TodoPanel";
@@ -19,6 +20,30 @@ const TOOL_CHIPS: Record<string, string> = {
   agent: "Sub Agent",
   todo_write: "Todo",
 };
+
+/**
+ * Seconds a running bash may stay silent before its row unfolds on its own.
+ * Long commands are exactly the ones whose row the user wants to watch; below
+ * this threshold auto-expanding is noise (most commands finish in a second).
+ */
+const AUTO_OPEN_AFTER_SEC = 30;
+
+/** Elapsed seconds while a call is running; null when unknown or settled. */
+function runningSeconds(rec: ToolCallRecord, now: number): number | null {
+  if (rec.status !== "running" || typeof rec.startedAt !== "number") return null;
+  return Math.max(0, Math.floor((now - rec.startedAt) / 1000));
+}
+
+/** Open (or focus) the terminal mirror for one bash call, seeding its stream. */
+function openBashInTerminal(rec: ToolCallRecord) {
+  panelTabs.openWatchTab({
+    toolCallId: rec.toolCallId,
+    command: typeof rec.args?.command === "string" ? rec.args.command : "",
+    status: rec.status,
+    partialResult: rec.partialResult,
+    result: rec.result,
+  });
+}
 
 /**
  * Live step count for a subagent call: partial updates while running,
@@ -120,12 +145,30 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
   const stats = diff ? diffStats(diff) : null;
   const chip = TOOL_CHIPS[rec.toolName] ?? rec.toolName;
   const steps = rec.toolName === "agent" ? agentSteps(rec) : null;
+  // Set once the user clicks the row: the 30s auto-expand must not fight a
+  // deliberate collapse (doc/2026-10-02-桌面终端与长命令实时可见.md §2.3).
+  const userToggled = useRef(false);
+  const [now, setNow] = useState(() => Date.now());
+  const elapsedSec = runningSeconds(rec, now);
+
+  useEffect(() => {
+    if (rec.status !== "running") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [rec.status]);
+
+  useEffect(() => {
+    if (elapsedSec !== null && elapsedSec >= AUTO_OPEN_AFTER_SEC && !userToggled.current) setOpen(true);
+  }, [elapsedSec]);
 
   return (
-    <div className="rounded-md">
+    <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-card">
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-card"
+        onClick={() => {
+          userToggled.current = true;
+          setOpen((v) => !v);
+        }}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
         <span className="w-4 shrink-0 text-center text-[11px]">
           <StatusMark rec={rec} />
@@ -133,26 +176,39 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
         <span className="mono min-w-0 flex-1 truncate text-xs text-dim group-hover:text-ink">
           {rowLabel(rec)}
         </span>
-        {stats && (
-          <span className="mono shrink-0 text-xs">
-            <span className="text-[var(--diff-add-text)]">+{stats.add}</span>{" "}
-            <span className="text-[var(--diff-del-text)]">-{stats.del}</span>
-          </span>
-        )}
-        {steps !== null && (
-          <span
-            className={`mono shrink-0 rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${
-              rec.status === "running" ? "border-edge text-ink" : "border-edge text-dim"
-            }`}
-          >
-            {rec.status === "running" ? `第 ${steps} 步` : `共 ${steps} 步`}
-          </span>
-        )}
-        <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
-          {chip}
-        </span>
       </button>
-      {open && <ToolCallDetail rec={rec} diff={diff} />}
+      {stats && (
+        <span className="mono shrink-0 text-xs">
+          <span className="text-[var(--diff-add-text)]">+{stats.add}</span>{" "}
+          <span className="text-[var(--diff-del-text)]">-{stats.del}</span>
+        </span>
+      )}
+      {steps !== null && (
+        <span
+          className={`mono shrink-0 rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${
+            rec.status === "running" ? "border-edge text-ink" : "border-edge text-dim"
+          }`}
+        >
+          {rec.status === "running" ? `第 ${steps} 步` : `共 ${steps} 步`}
+        </span>
+      )}
+      {elapsedSec !== null && elapsedSec >= 5 && (
+        <span className="mono shrink-0 text-[10px] tabular-nums text-dim">已运行 {elapsedSec}s</span>
+      )}
+      <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
+        {chip}
+      </span>
+      {rec.toolName === "bash" && (
+        <button
+          onClick={() => openBashInTerminal(rec)}
+          title="在终端中打开"
+          className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+            <path d="M2.5 3.5l4 4-4 4M8.5 12.5h5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
@@ -162,13 +218,32 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
  * out. Results are unbounded (build logs, file dumps) and every character
  * stays in the DOM for the life of the session, so the window is what keeps a
  * log-heavy session cheap to scroll (doc/2026-10-01-高负载下界面响应与输入可见性.md).
+ *
+ * `live` keeps a running command's newest line in view as output arrives.
  */
-function OutputPre({ text, maxHeight = "max-h-72", dim = false }: { text: string; maxHeight?: string; dim?: boolean }) {
+function OutputPre({
+  text,
+  maxHeight = "max-h-72",
+  dim = false,
+  live = false,
+}: {
+  text: string;
+  maxHeight?: string;
+  dim?: boolean;
+  live?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const capped = useMemo(() => capToolOutput(text), [text]);
+  const preRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (!live) return;
+    const el = preRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [live, text]);
   return (
     <>
       <pre
+        ref={preRef}
         className={`mono ${maxHeight} overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs ${
           dim ? "text-dim" : ""
         }`}
@@ -228,13 +303,16 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   }
 
   if (rec.toolName === "bash") {
-    const output = resultText(rec.result) || resultText(rec.partialResult);
+    // Settled result first (it carries the truncation footer); while running,
+    // the partial's text blocks. No JSON fallback here: a fresh partial is
+    // `{"content": []}`, and pretty-printed JSON reads as a debug leak.
+    const output = resultText(rec.result) || contentText(rec.partialResult);
     return (
       <div className="mb-1 ml-6 mt-1 flex flex-col">
         {output ? (
-          <OutputPre text={output} />
+          <OutputPre text={output} live={rec.status === "running"} />
         ) : (
-          <div className="text-xs text-dim">{rec.status === "running" ? "运行中…" : "（无输出）"}</div>
+          <div className="text-xs text-dim">{rec.status === "running" ? "运行中…（暂无输出）" : "（无输出）"}</div>
         )}
       </div>
     );

@@ -89,3 +89,25 @@ export function capToolOutput(text: string, limits: ToolOutputLimits = {}): Capp
     hiddenLines,
   };
 }
+
+/**
+ * Text blocks of a tool result (or partial result), **without** the JSON
+ * fallback `resultText` uses. A running bash partial legitimately has no text
+ * yet (`{"content": []}`); rendering that as pretty-printed JSON looks like a
+ * debug leak, so bash's live view asks for the text only and treats "" as
+ * "nothing yet".
+ */
+export function contentText(result: unknown): string {
+  if (result == null) return "";
+  if (typeof result === "string") return result;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(
+      (c): c is { type: "text"; text: string } =>
+        typeof c === "object" && c !== null && (c as { type?: unknown }).type === "text" &&
+        typeof (c as { text?: unknown }).text === "string",
+    )
+    .map((c) => c.text)
+    .join("\n");
+}

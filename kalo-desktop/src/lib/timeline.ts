@@ -23,6 +23,12 @@ export interface ToolCallRecord {
   status: "running" | "success" | "error";
   result?: any;
   partialResult?: any;
+  /**
+   * When the call started, for the running elapsed timer / 30s auto-expand
+   * (doc/2026-10-02-桌面终端与长命令实时可见.md §2.3). Absent on records
+   * rebuilt from history — the session file has no stream timestamps.
+   */
+  startedAt?: number;
 }
 
 export interface UserEntry {
