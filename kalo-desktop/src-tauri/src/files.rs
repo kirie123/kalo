@@ -427,6 +427,20 @@ pub fn search_files(root: &str, query: &str, limit: Option<usize>) -> Result<Vec
     Ok(out)
 }
 
+/// Does `open_path`'s argument name a URL rather than a filesystem path? Only
+/// the schemes the UI actually opens need to be recognized.
+///
+/// Windows-only today: `start` needs the separator rewrite below for paths, and
+/// that rewrite silently breaks a URL. macOS/Linux openers (`open`, `xdg-open`)
+/// take URLs as they are, so nothing to branch on there.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_url(path: &str) -> bool {
+    let lower = path.trim().to_ascii_lowercase();
+    ["http://", "https://", "file://", "mailto:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+}
+
 /// Open a path with the system default handler (`reveal = false`), or show
 /// it in the OS file manager (`reveal = true`: file → selected in its
 /// parent folder, directory → the folder itself is opened).
@@ -441,8 +455,11 @@ pub fn open_path(path: &str, reveal: bool) -> Result<(), String> {
     {
         // Callers build paths with "/" (the frontend's convention), but Explorer
         // and `start` only understand "\" — handed forward slashes, Explorer
-        // silently opens its default view instead of the requested path.
-        let native = path.replace('/', "\\");
+        // silently opens its default view instead of the requested path. A URL
+        // must be handed over verbatim: rewriting it yields `http:\\host\\x`,
+        // which `start` fails to open (the browser tab and URL artifacts come
+        // through here).
+        let native = if is_url(path) { path.to_string() } else { path.replace('/', "\\") };
         let mut cmd = if reveal && !is_dir {
             let mut c = std::process::Command::new("explorer");
             // /select wants the verb and path in one comma-joined argument.
@@ -705,6 +722,18 @@ fn same_bytes(a: &Path, b: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn url_detection_covers_the_schemes_the_ui_opens() {
+        assert!(is_url("http://localhost:3000"));
+        assert!(is_url("HTTPS://example.com/x"));
+        assert!(is_url("file:///C:/tmp/a.html"));
+        assert!(is_url("mailto:someone@example.com"));
+        // host:port looks like a scheme but is a path-shaped typo — never a URL.
+        assert!(!is_url("localhost:3000"));
+        assert!(!is_url("D:/opensource-project/kalo"));
+        assert!(!is_url("http:/weird"));
+    }
 
     #[test]
     fn write_file_text_creates_missing_parents() {
