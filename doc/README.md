@@ -88,6 +88,8 @@
 - [自定义 Provider 的模型能力配置（思考 / 图片 / 最大输出 / Bearer 鉴权头）](2026-09-11-provider模型能力配置.md)
 - [P0-1 Job Runtime + P0-2 Channel 设计文档](2026-08-17-p0-job-runtime-channel.md)
 - [bash 后台模式：长跑命令交给 Job Runtime](2026-09-24-bash-后台模式.md)
+- [bash 工具耗时分析（并行批末发出 / Windows 全仓搜索 20s→3.4s / 后台 job PATH 缺 coreutils）](2026-10-02-bash工具耗时分析.md)
+- [后台 bash 的 PATH 修复与 ripgrep 随包分发（job/定时任务 coreutils 修复 + rg 六平台资产 pin 与启动期安装）](2026-10-02-后台bash-PATH修复与ripgrep随包分发.md)
 - [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
 - [子 Agent 卡片里的压缩气泡（activity feed 新增 compaction 条目）](2026-09-18-子agent压缩气泡.md)
