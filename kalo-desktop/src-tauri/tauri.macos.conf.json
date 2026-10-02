@@ -4,7 +4,8 @@
     "targets": ["app", "dmg"],
     "resources": {
       "binaries/pi-*-apple-darwin": "binaries/",
-      "binaries/kalo-gateway-*-apple-darwin": "binaries/"
+      "binaries/kalo-gateway-*-apple-darwin": "binaries/",
+      "binaries/rg-*-apple-darwin": "binaries/"
     }
   }
 }

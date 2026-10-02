@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod bundled_tools;
 mod files;
 mod experts;
 mod gateway;
@@ -654,6 +655,21 @@ fn main() {
                     }
                 }
                 Err(err) => eprintln!("[internal-skills] {err}"),
+            }
+            // Bundled rg → ~/.kalo/agent/bin (the engine's bin dir, already
+            // first on PATH). Keeps a user-replaced rg, unlike a blind copy.
+            match bundled_tools::install(false) {
+                Ok(report) => {
+                    if !report.installed.is_empty() || !report.updated.is_empty() {
+                        eprintln!(
+                            "[bundled-tools] installed {} / updated {} / skipped {}",
+                            report.installed.len(),
+                            report.updated.len(),
+                            report.skipped.len()
+                        );
+                    }
+                }
+                Err(err) => eprintln!("[bundled-tools] {err}"),
             }
             // The `~/.kalo/market/py` entry point the market-data skill, the
             // daily snapshot task and the user's terminal all go through.

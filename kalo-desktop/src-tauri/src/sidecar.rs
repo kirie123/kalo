@@ -117,6 +117,7 @@ fn not_found(name: &str, stem: &str, env_override: &str) -> String {
     let script = match stem {
         "pi" => "scripts/build-engine.sh",
         "kalo-gateway" => "scripts/build-gateway.sh",
+        "rg" => "scripts/fetch-ripgrep.mjs",
         _ => "the sidecar build scripts",
     };
     format!("{name} not found; build it with {script}, or point {env_override} at an existing one")
@@ -241,6 +242,12 @@ mod tests {
 
         let gw = not_found(&file_name("kalo-gateway"), "kalo-gateway", "KALO_GATEWAY_PATH");
         assert!(gw.contains("scripts/build-gateway.sh"), "{gw}");
+
+        // The bundled rg rides the same naming scheme; its error must point
+        // at the staging script, not the sidecar builders.
+        let rg = not_found(&file_name("rg"), "rg", "KALO_BUNDLED_RG");
+        assert!(rg.contains("scripts/fetch-ripgrep.mjs"), "{rg}");
+        assert!(rg.contains(TARGET_TRIPLE), "{rg}");
     }
 
     #[cfg(unix)]
