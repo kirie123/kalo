@@ -36,8 +36,11 @@ import {
   type JobStatus,
 } from "./types";
 // Same bash for jobs as for watch tasks: on Windows the `bash` on PATH is
-// often WSL's, which cannot see the paths these scripts talk about.
-import { resolveBash } from "../scheduler";
+// often WSL's, which cannot see the paths these scripts talk about. The spawn
+// env additionally carries the shell's own dir on PATH — `resolveBash()`
+// prefers the real shell, which does not add its coreutils to PATH itself
+// (`bashSpawnEnv`).
+import { bashSpawnEnv, resolveBash } from "../scheduler";
 
 const TICK_MS = 5_000;
 const PROBE_TIMEOUT_MS = 60_000;
@@ -376,7 +379,7 @@ export class GatewayJobBackend implements JobRegistry {
       const redirect = `exec >> ${shq(rec.logPath)} 2>&1\n${rec.cmd}`;
       const child = spawn(resolveBash(), ["-c", redirect], {
         cwd: existsSync(rec.cwd) ? rec.cwd : undefined,
-        env: rec.env ? { ...process.env, ...rec.env } : process.env,
+        env: bashSpawnEnv(rec.env),
         detached: true,
         stdio: "ignore",
         windowsHide: true,
@@ -576,6 +579,7 @@ function runProbe(script: string, cwd: string, done: (ok: boolean) => void): voi
   };
   const child = spawn(resolveBash(), ["-c", script], {
     cwd: existsSync(cwd) ? cwd : undefined,
+    env: bashSpawnEnv(),
     stdio: "ignore",
     windowsHide: true,
   });
