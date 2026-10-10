@@ -19,6 +19,15 @@ export interface XtermBundle {
   createFitAddon(): FitAddonLike;
 }
 
+/**
+ * The watch mirror's text comes from a *pipe* (the engine's bash tool), so its
+ * lines end in a bare `\n` — no carriage return. A terminal that merely moves
+ * the cursor down keeps the column, and every line then starts where the
+ * previous one ended (the classic staircase). A real PTY never shows this
+ * because the tty driver's ONLCR turns `\n` into `\r\n` on output, so the
+ * conversion is scoped to the read-only mirror: the shell tab keeps the raw
+ * byte stream its PTY already normalizes.
+ */
 export async function loadXterm(): Promise<XtermBundle> {
   const [{ Terminal }, { FitAddon }] = await Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")]);
   return {
@@ -26,6 +35,7 @@ export async function loadXterm(): Promise<XtermBundle> {
       new Terminal({
         cursorBlink: options?.readOnly !== true,
         disableStdin: options?.readOnly === true,
+        convertEol: options?.readOnly === true,
         fontFamily: 'JetBrains Mono, Menlo, Monaco, "Courier New", monospace',
         fontSize: 13,
         lineHeight: 1.4,
