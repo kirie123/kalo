@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { gitDiff, gitStatus, listDir } from "../lib/pi-bridge";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
@@ -15,7 +23,14 @@ import {
   type StatusIndex,
 } from "../lib/git";
 import { sessionArtifacts, type ArtifactItem } from "../lib/artifacts";
-import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
+import ContextMenu, {
+  copyLinkItem,
+  copyPathItem,
+  openPathItem,
+  openUrlItem,
+  useContextMenu,
+  type MenuItem,
+} from "./ContextMenu";
 import DiffView, { type DiffLine } from "./DiffView";
 import FilePreview from "./FilePreview";
 import { normPath } from "../lib/chat-store-helpers";
@@ -58,6 +73,10 @@ function asDirEntry(entry: GitEntry): DirEntry {
   return { name: baseName(entry.relPath), path: entry.path, isDir: entry.isDir, size: 0, modifiedMs: 0 };
 }
 
+/** What a right-click in this panel can land on: a tree / changes row, or one
+ * row of the session's artifacts section. */
+type MenuTarget = { kind: "entry"; entry: DirEntry } | { kind: "artifact"; item: ArtifactItem };
+
 /** Right-side file browser with a text preview. The tree root follows the
  * session cwd until the user navigates elsewhere via the path bar.
  *
@@ -93,8 +112,16 @@ export default function FilePanel() {
   const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   // Right-click target for the shared context menu (its anchor lives in `menu`).
-  const [menuEntry, setMenuEntry] = useState<DirEntry | null>(null);
+  const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const menu = useContextMenu();
+  const openRowMenu = (e: ReactMouseEvent, entry: DirEntry) => {
+    setMenuTarget({ kind: "entry", entry });
+    menu.onContextMenu(e);
+  };
+  const openArtifactMenu = (e: ReactMouseEvent, item: ArtifactItem) => {
+    setMenuTarget({ kind: "artifact", item });
+    menu.onContextMenu(e);
+  };
   // null = not a repository (or git missing): the whole git strip stays hidden.
   const [git, setGit] = useState<GitStatus | null>(null);
   // Shown inline in the git strip rather than as a toast: status is re-read
@@ -288,11 +315,30 @@ export default function FilePanel() {
     return [
       ...(entry.isDir ? [] : [openPathItem("打开文件", entry.path)]),
       ...(canDiff ? [{ label: "查看 diff", action: () => openFile(entry, "diff") }] : []),
-      openPathItem(entry.isDir ? "打开所在位置" : "打开所在路径", entry.path, !entry.isDir),
+      // A directory reveals as itself, a file is selected inside its folder;
+      // one wording covers both (openPathItem's `reveal` handles the difference).
+      openPathItem("打开所在文件夹", entry.path, !entry.isDir),
       ...(entry.isDir
         ? []
         : [{ label: "添加到对话区", action: () => void chatStore.addAttachments([entry.path]) }]),
       copyPathItem(entry.path),
+    ];
+  };
+
+  /** Right-click menu for one row of the artifacts section (the deliverables
+   * this session declared through present_files). */
+  const artifactMenuItems = (item: ArtifactItem): MenuItem[] => {
+    if (item.kind === "url") return [openUrlItem(item.path), copyLinkItem(item.path)];
+    // A missing file can still be revealed or its path copied; opening it and
+    // sending it to the chat cannot.
+    const openable = item.missing !== true;
+    return [
+      ...(openable ? [openPathItem("打开文件", item.path)] : []),
+      openPathItem("打开所在文件夹", item.path, true),
+      ...(openable
+        ? [{ label: "添加到对话区", action: () => void chatStore.addAttachments([item.path]) }]
+        : []),
+      copyPathItem(item.path),
     ];
   };
 
@@ -303,10 +349,7 @@ export default function FilePanel() {
       <div key={e.path}>
         <button
           onClick={() => (e.isDir ? toggleDir(e.path) : openFile(e))}
-          onContextMenu={(ev) => {
-            setMenuEntry(e);
-            menu.onContextMenu(ev);
-          }}
+          onContextMenu={(ev) => openRowMenu(ev, e)}
           title={e.path}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
           className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs hover:bg-card"
@@ -351,10 +394,7 @@ export default function FilePanel() {
             <button
               key={entry.path}
               onClick={() => openFile(asEntry, entry.untracked ? "source" : "diff")}
-              onContextMenu={(ev) => {
-                setMenuEntry(asEntry);
-                menu.onContextMenu(ev);
-              }}
+              onContextMenu={(ev) => openRowMenu(ev, asEntry)}
               title={entry.renamedFrom ? `${entry.path}\n（原名 ${entry.renamedFrom}）` : entry.path}
               className="flex w-full items-center gap-1.5 py-1 pl-4 pr-2 text-left text-xs hover:bg-card"
             >
@@ -547,8 +587,14 @@ export default function FilePanel() {
                     }
                   }}
                   title={item.path}
-                  disabled={item.missing === true}
-                  className="flex w-full items-center gap-1.5 py-1 pl-5 pr-2 text-left text-xs hover:bg-card disabled:opacity-50"
+                  onContextMenu={(ev) => openArtifactMenu(ev, item)}
+                  // Not `disabled`: Chromium dispatches no mouse events to a
+                  // disabled control, so its context menu could never open. The
+                  // click guard above already ignores missing entries.
+                  aria-disabled={item.missing === true || undefined}
+                  className={`flex w-full items-center gap-1.5 py-1 pl-5 pr-2 text-left text-xs hover:bg-card ${
+                    item.missing ? "cursor-default opacity-50" : ""
+                  }`}
                 >
                   {item.kind === "url" ? (
                     <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-tone-blue">
@@ -600,8 +646,18 @@ export default function FilePanel() {
         </div>
       )}
 
-      {/* Right-click context menu */}
-      {menu.at && menuEntry && <ContextMenu at={menu.at} items={entryMenuItems(menuEntry)} onClose={menu.close} />}
+      {/* Right-click context menu: a tree / changes row, or an artifacts row */}
+      {menu.at && menuTarget && (
+        <ContextMenu
+          at={menu.at}
+          items={
+            menuTarget.kind === "entry"
+              ? entryMenuItems(menuTarget.entry)
+              : artifactMenuItems(menuTarget.item)
+          }
+          onClose={menu.close}
+        />
+      )}
     </div>
   );
 }

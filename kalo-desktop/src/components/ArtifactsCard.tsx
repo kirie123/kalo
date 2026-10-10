@@ -4,7 +4,7 @@ import type { ArtifactItem } from "../lib/artifacts";
 import type { ArtifactSummary } from "../lib/artifacts";
 import { chatStore } from "../lib/chat-store";
 import { openPath } from "../lib/pi-bridge";
-import ContextMenu, { copyPathItem, openPathItem, useContextMenu, type MenuItem } from "./ContextMenu";
+import ContextMenu, { copyLinkItem, copyPathItem, openPathItem, openUrlItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import FileViewerModal from "./FileViewerModal";
 
 function errText(e: unknown): string {
@@ -95,10 +95,7 @@ export default function ArtifactsCard({ summary }: { summary: ArtifactSummary })
 
   const menuItems = (item: ArtifactItem): MenuItem[] => {
     if (item.kind === "url") {
-      return [
-        { label: "在系统浏览器打开", action: () => void openPath(item.path).catch(() => undefined) },
-        { label: "复制链接", action: () => void navigator.clipboard.writeText(item.path) },
-      ];
+      return [openUrlItem(item.path), copyLinkItem(item.path)];
     }
     return [
       openPathItem("用默认程序打开", item.path),
