@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { TimelineEntry } from "../lib/timeline";
-import { groupTitle } from "../lib/tool-labels";
+import { toolChips } from "../lib/tool-labels";
 import { sameSegmentEntries, type SegmentStats } from "../lib/work-segment";
 import TimelineItem from "./TimelineItem";
 
@@ -72,10 +72,12 @@ function WorkSegment({
         <span className={`shrink-0 font-medium ${state === "running" ? "text-tone-blue" : ""}`}>
           {headline(stats)}
         </span>
+        {/* Chips summarize the tools, never the thinking count or a raw tool id:
+            both are engine bookkeeping, not something the reader asked for
+            (doc/2026-09-13-工作段母气泡.md §3.2). */}
         <span className="flex min-w-0 flex-wrap gap-1.5">
-          {stats.thoughts > 0 && <Stat>{stats.thoughts} 次思考</Stat>}
-          {stats.tools.map((t) => (
-            <Stat key={t.name}>{groupTitle(t.name, t.count)}</Stat>
+          {toolChips(stats.tools).map((chip) => (
+            <Stat key={chip.key}>{chip.label}</Stat>
           ))}
         </span>
         <svg

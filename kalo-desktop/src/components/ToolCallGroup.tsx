@@ -8,7 +8,13 @@ import AgentActivityFeed from "./AgentActivityFeed";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 import { TodoStatusIcon } from "./TodoPanel";
 
-/** Right-side chip label naming the concrete tool, e.g. "Read File". */
+/**
+ * Right-side chip label naming the concrete tool, e.g. "Read File".
+ *
+ * Built-ins are named here too, so a row never shows an id like `job_list`;
+ * unmapped tools (MCP servers) keep their own name — that one identifies the
+ * call and only the user can recognize it.
+ */
 const TOOL_CHIPS: Record<string, string> = {
   read: "Read File",
   write: "Write File",
@@ -16,9 +22,22 @@ const TOOL_CHIPS: Record<string, string> = {
   bash: "Bash",
   grep: "Grep",
   glob: "Glob",
+  find: "Find",
   ls: "LS",
   agent: "Sub Agent",
   todo_write: "Todo",
+  ask_user: "Ask",
+  use_skill: "Skill",
+  read_me: "Design Spec",
+  web_fetch: "Web Fetch",
+  memory_save: "Memory",
+  memory_search: "Memory",
+  memory_list: "Memory",
+  job_list: "Job",
+  job_output: "Job",
+  job_kill: "Job",
+  present_files: "Present",
+  show_widget: "Widget",
 };
 
 /**
