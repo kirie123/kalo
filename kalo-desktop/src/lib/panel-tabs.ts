@@ -1,24 +1,28 @@
 /**
- * Right-panel tab state: 文件 / 浏览器 / 终端 / 跟随.
+ * Right-panel tab state: 浏览器 / 终端 / 跟随（应用级页签）。
  *
- * The right column is one tab container (CoWith-style): a tab strip with a `+`
- * menu, and every open thing — the file browser, a web page, a shell, a bash
- * mirror — is a tab in it. The strip lives in the shell while the triggers are
- * deep inside the timeline (a tool row's 「在终端中打开」), so the state is a
- * module-level store, like chatStore, rather than React state in App.
+ * The right column is one tab container: a tab strip with a `+` menu, and every
+ * open thing is a tab in it. **Open files are tabs too, but they live in
+ * `file-panel-memory`** (per session, doc/2026-10-10-右栏文件页签.md), so the
+ * strip renders this store's tabs after those. `activeId` is only set while one
+ * of *these* tabs is on screen; `""` means "no non-file tab", and the file side
+ * then decides what shows: one of its file tabs, or the bare tree.
+ *
+ * The strip lives in the shell while the triggers are deep inside the timeline
+ * (a tool row's 「在终端中打开」), so the state is a module-level store, like
+ * chatStore, rather than React state in App.
  *
  * The pure reducers at the top are exported for tests; the singleton below is
  * only glue (state + notify + watch-registry seeding).
  *
  * Tab state is app-lifetime and not persisted: terminals are processes and a
- * restart has none. Browsing memory stays in file-panel-memory (per session).
+ * restart has none. Open files and browsing memory stay in file-panel-memory.
  */
 
 import { useSyncExternalStore } from "react";
 import { clearToolWatch, seedToolWatch } from "./tool-watch-registry";
 
 export type PanelTab =
-  | { id: "files"; kind: "files" }
   | { id: string; kind: "browser"; url: string }
   | { id: string; kind: "shell"; cwd: string | null }
   | {
@@ -33,35 +37,30 @@ export type PanelTab =
 export interface PanelState {
   open: boolean;
   tabs: PanelTab[];
+  /** Current non-file tab; `""` = none on screen (the file side shows). */
   activeId: string;
 }
 
-/** The file-browser tab is a singleton and always present. */
-export const FILES_TAB_ID = "files";
-
-export const initialPanelState: PanelState = {
-  open: true,
-  tabs: [{ id: FILES_TAB_ID, kind: "files" }],
-  activeId: FILES_TAB_ID,
-};
+export const initialPanelState: PanelState = { open: true, tabs: [], activeId: "" };
 
 /** Show/hide the whole right column (the tab set is untouched). */
 export function togglePanel(state: PanelState): PanelState {
   return { ...state, open: !state.open };
 }
 
+/** Focus one tab, or `""` to hand the screen back to the file side. */
 export function activateTab(state: PanelState, id: string): PanelState {
+  if (id === "") return { ...state, activeId: "" };
   return state.tabs.some((t) => t.id === id) ? { ...state, activeId: id } : state;
 }
 
 /**
- * Add (or focus) a tab and make it current. Three of the four kinds are
- * singletons in disguise: the file tab exists once, a watch tab belongs to
- * exactly one tool call, and two browser tabs pointing at the same URL are the
- * same page — none of them may stack duplicates. Only shells always add.
+ * Add (or focus) a tab and make it current. Two of the kinds are singletons in
+ * disguise: a watch tab belongs to exactly one tool call, and two browser tabs
+ * pointing at the same URL are the same page — neither may stack duplicates.
+ * Only shells always add.
  */
 export function addTab(state: PanelState, tab: PanelTab): PanelState {
-  if (tab.kind === "files") return { ...state, open: true, activeId: FILES_TAB_ID };
   const existing =
     tab.kind === "watch"
       ? state.tabs.find((t) => t.kind === "watch" && t.toolCallId === tab.toolCallId)
@@ -73,16 +72,16 @@ export function addTab(state: PanelState, tab: PanelTab): PanelState {
 }
 
 /**
- * Close a tab. The file tab never closes. Focus falls to the tab on its left
- * (stable, and the neighbour the user most likely wants); closing the first
- * extra tab falls back to 文件.
+ * Close a tab. Focus falls to the tab on its left (stable, and the neighbour
+ * the user most likely wants); closing the leftmost one falls to the tab that
+ * took its place, and closing the last one clears `activeId` — the file side
+ * (one of its tabs, or the bare tree) then takes the screen.
  */
 export function closeTab(state: PanelState, id: string): PanelState {
-  if (id === FILES_TAB_ID) return state;
   const index = state.tabs.findIndex((t) => t.id === id);
   if (index < 0) return state;
   const tabs = state.tabs.filter((t) => t.id !== id);
-  const activeId = state.activeId === id ? (tabs[index - 1]?.id ?? FILES_TAB_ID) : state.activeId;
+  const activeId = state.activeId === id ? (tabs[index - 1]?.id ?? tabs[0]?.id ?? "") : state.activeId;
   return { ...state, tabs, activeId };
 }
 

@@ -1,10 +1,11 @@
 /**
- * Per-session memory for the file panel (doc/2026-09-30-文件面板按会话记忆.md).
+ * Per-session memory for the file panel (doc/2026-09-30-文件面板按会话记忆.md,
+ * doc/2026-10-10-右栏文件页签.md).
  *
- * "Which directory am I browsing, what is open, what is expanded" belongs to
- * the session, not to the panel widget: collapsing the panel must not close
- * the open file, and switching sessions must not wipe one session's file area
- * with another's browsing. The panel therefore keeps only transient state
+ * "Which directory am I browsing, which files are open, what is expanded"
+ * belongs to the session, not to the panel widget: collapsing the panel must not
+ * close the open files, and switching sessions must not wipe one session's file
+ * area with another's browsing. The panel therefore keeps only transient state
  * locally (directory listings, git status, diff lines, context menu) and reads
  * the remembered fields from here.
  *
@@ -16,16 +17,20 @@
  */
 
 import { useMemo, useSyncExternalStore } from "react";
+import { normPath } from "./chat-store-helpers";
 
-export interface PanelPreview {
+/** One open file tab: identity (path), title, and the 源码/diff choice. */
+export interface PanelFile {
   name: string;
   path: string;
   /** Posix path relative to the repo root; null outside a repository. */
   relPath: string | null;
+  /** Which view this file's tab is showing. */
+  view: FileView;
 }
 
-/** Which view the preview column is showing. */
-export type PanelTab = "source" | "diff";
+/** Which view a file tab shows. */
+export type FileView = "source" | "diff";
 
 /**
  * A live `present_files` deliverable waiting for its session's panel.
@@ -61,8 +66,10 @@ export interface PanelMemory {
    */
   root: string;
   expanded: string[];
-  preview: PanelPreview | null;
-  previewTab: PanelTab;
+  /** The open file tabs, in strip order (doc/2026-10-10-右栏文件页签.md). */
+  openFiles: PanelFile[];
+  /** The file tab on screen, by path; null = no file tab (the tree shows). */
+  activeFile: string | null;
   changesOnly: boolean;
   backStack: string[];
   artifactsOpen: boolean;
@@ -79,8 +86,8 @@ function fresh(root: string): PanelMemory {
     rootOverride: null,
     root,
     expanded: [],
-    preview: null,
-    previewTab: "source",
+    openFiles: [],
+    activeFile: null,
     changesOnly: false,
     backStack: [],
     artifactsOpen: true,
@@ -123,9 +130,9 @@ export function adoptPanelMemory(uid: string, sessionFile: string): void {
  * The remembered file area of `uid` under `cwd`.
  *
  * A missing bucket is the blank file area; a bucket whose root baseline no
- * longer matches the effective root keeps its preview (an open file is not
- * closed by changing the working directory) but drops its expanded set (those
- * paths may not exist under the new root).
+ * longer matches the effective root keeps its open file tabs (an open file is
+ * not closed by changing the working directory) but drops its expanded set
+ * (those paths may not exist under the new root).
  */
 export function resolvePanelMemory(uid: string, cwd: string): PanelMemory {
   const m = entries.get(bucketOf(uid)) ?? fresh(cwd);
@@ -147,13 +154,91 @@ export function patchPanelMemory(uid: string, cwd: string, partial: Partial<Pane
   notify();
 }
 
+// ---------------------------------------------------------------------------
+// File tabs (pure operations on one session's file area)
+// ---------------------------------------------------------------------------
+//
+// The open file tabs live here, not in panel-tabs: which files are open is part
+// of "what this session is looking at", so switching sessions swaps the strip.
+// `activeFile` and panel-tabs' `activeId` are mutually exclusive — the caller
+// clears the other side whenever it switches (doc/2026-10-10-右栏文件页签.md).
+
+/** The open file tab matching `path`, or null. */
+export function openFileOf(mem: PanelMemory, path: string | null): PanelFile | null {
+  if (!path) return null;
+  const key = normPath(path);
+  return mem.openFiles.find((f) => normPath(f.path) === key) ?? null;
+}
+
+/**
+ * Open (or re-focus) one file tab and make it current. Opening an already-open
+ * file never stacks a second tab: the existing one is focused and refreshed
+ * with what the caller knows (a field left undefined is kept as it was).
+ */
+export function openFileInMemory(
+  mem: PanelMemory,
+  file: { name: string; path: string; relPath?: string | null; view?: FileView },
+): Partial<PanelMemory> {
+  const key = normPath(file.path);
+  const index = mem.openFiles.findIndex((f) => normPath(f.path) === key);
+  if (index < 0) {
+    const tab: PanelFile = {
+      name: file.name,
+      path: file.path,
+      relPath: file.relPath ?? null,
+      view: file.view ?? "source",
+    };
+    return { openFiles: [...mem.openFiles, tab], activeFile: file.path };
+  }
+  const openFiles = mem.openFiles.map((f, i) =>
+    i === index
+      ? {
+          ...f,
+          name: file.name || f.name,
+          relPath: file.relPath !== undefined ? file.relPath : f.relPath,
+          view: file.view ?? f.view,
+        }
+      : f,
+  );
+  return { openFiles, activeFile: mem.openFiles[index].path };
+}
+
+/**
+ * Close one file tab. When the closed tab was the current one, focus falls to
+ * the tab on its left, then to the tab that took its place (closing the first
+ * of several), then to no tab at all — which is what brings the tree back.
+ */
+export function closeFileInMemory(mem: PanelMemory, path: string): Partial<PanelMemory> {
+  const key = normPath(path);
+  const index = mem.openFiles.findIndex((f) => normPath(f.path) === key);
+  if (index < 0) return {};
+  const openFiles = mem.openFiles.filter((_, i) => i !== index);
+  if (mem.activeFile === null || normPath(mem.activeFile) !== key) return { openFiles };
+  return { openFiles, activeFile: openFiles[index - 1]?.path ?? openFiles[0]?.path ?? null };
+}
+
+/** Switch one file tab between 源码 and diff (a no-op for a path not open). */
+export function setFileViewInMemory(mem: PanelMemory, path: string, view: FileView): Partial<PanelMemory> {
+  const key = normPath(path);
+  if (!mem.openFiles.some((f) => normPath(f.path) === key)) return {};
+  return { openFiles: mem.openFiles.map((f) => (normPath(f.path) === key ? { ...f, view } : f)) };
+}
+
+/** Make one open file the current tab; null means "no file tab" (the tree). */
+export function activateFileInMemory(mem: PanelMemory, path: string | null): Partial<PanelMemory> {
+  if (path === null) return { activeFile: null };
+  // The tab's own spelling, so the focused path always matches an open tab
+  // even when the caller's differs in case or separators.
+  const tab = openFileOf(mem, path);
+  return tab ? { activeFile: tab.path } : {};
+}
+
 const subscribe = (fn: () => void) => {
   listeners.add(fn);
   return () => {
     listeners.delete(fn);
   };
 };
-
 /** Subscribe to memory writes (the hook's channel). */
 export const subscribePanelMemory = subscribe;
 

@@ -31,17 +31,20 @@ import ContextMenu, {
   useContextMenu,
   type MenuItem,
 } from "./ContextMenu";
-import DiffView, { type DiffLine } from "./DiffView";
-import FilePreview from "./FilePreview";
+import type { DiffLine } from "./DiffView";
+import FilePreviewPane from "./FilePreviewPane";
 import { normPath } from "../lib/chat-store-helpers";
 import {
   adoptPanelMemory,
+  closeFileInMemory,
+  openFileInMemory,
+  openFileOf,
   patchPanelMemory,
   resolvePanelMemory,
+  setFileViewInMemory,
   usePanelMemory,
+  type FileView,
   type PanelMemory,
-  type PanelPreview as Preview,
-  type PanelTab as PreviewTab,
 } from "../lib/file-panel-memory";
 import type { DirEntry, GitEntry, GitStatus } from "../types";
 
@@ -94,8 +97,12 @@ export default function FilePanel() {
   const mem = usePanelMemory(uid, cwd);
   const root = mem.root;
   const expanded = useMemo(() => new Set(mem.expanded), [mem.expanded]);
-  const preview = mem.preview;
-  const previewTab = mem.previewTab;
+  // The file tabs this session has open, and the one on screen (null = nothing
+  // open, so the tree takes the whole column). Both belong to the session and
+  // live in lib/file-panel-memory; RightPanel's strip renders the same list
+  // (doc/2026-10-10-右栏文件页签.md).
+  const files = mem.openFiles;
+  const active = openFileOf(mem, mem.activeFile);
   const changesOnly = mem.changesOnly;
   const artifactsOpen = mem.artifactsOpen;
   const backStack = mem.backStack;
@@ -111,6 +118,8 @@ export default function FilePanel() {
   const [previewFull, setPreviewFull] = useState(false);
   const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
+  /** Which file the loaded diff lines belong to (each tab has its own view). */
+  const [diffPath, setDiffPath] = useState<string | null>(null);
   // Right-click target for the shared context menu (its anchor lives in `menu`).
   const [menuTarget, setMenuTarget] = useState<MenuTarget | null>(null);
   const menu = useContextMenu();
@@ -209,10 +218,11 @@ export default function FilePanel() {
   };
 
   const loadDiff = useCallback(
-    async (relPath: string) => {
+    async (path: string, relPath: string) => {
       if (!root) return;
       const req = ++diffReq.current;
       setDiffLoading(true);
+      setDiffPath(path);
       try {
         const text = await gitDiff(root, relPath);
         if (req !== diffReq.current) return;
@@ -230,11 +240,12 @@ export default function FilePanel() {
 
   // Session switch (uid) or a new working directory: re-read the tree, git
   // status and diff from disk. The remembered fields come from the memory
-  // store, so this never closes the preview or forgets the expansion.
+  // store, so this never closes a file tab or forgets the expansion.
   useEffect(() => {
     const m = resolvePanelMemory(uid, cwd);
     setTree(new Map());
     setDiffLines(null);
+    setDiffPath(null);
     setPreviewFull(false);
     diffReq.current++;
     if (m.root) {
@@ -242,18 +253,38 @@ export default function FilePanel() {
       for (const p of m.expanded) void loadDir(p);
     }
     void refreshGit(m.root);
-    // A remembered diff tab has no lines to restore: refetch (FilePreview's
-    // source view reloads its own content).
-    if (m.preview && m.previewTab === "diff" && m.preview.relPath) void loadDiff(m.preview.relPath);
-  }, [uid, cwd, root, loadDir, refreshGit, loadDiff]);
+  }, [uid, cwd, root, loadDir, refreshGit]);
+
+  // The diff view reads lines for the file tab on screen: refetch whenever that
+  // tab wants diff and the lines at hand belong to another file (or to nothing
+  // — switching sessions drops them). A remembered diff tab has no lines to
+  // restore, so it re-reads here like any other.
+  useEffect(() => {
+    const f = active;
+    if (!f || f.view !== "diff" || !f.relPath) return;
+    if (diffPath === f.path) return;
+    void loadDiff(f.path, f.relPath);
+  }, [active?.path, active?.view, active?.relPath, diffPath, loadDiff]);
+
+  // A file tab opened without a repo-relative path (a present_files deliverable
+  // is opened by RightPanel, which holds no git snapshot) only becomes
+  // diff-able once this panel fills that field in: the git state lives here.
+  useEffect(() => {
+    if (!git) return;
+    let enriched = false;
+    const fixed = files.map((f) => {
+      const rel = relPathOf(git, f.path);
+      if (rel === f.relPath) return f;
+      enriched = true;
+      return { ...f, relPath: rel };
+    });
+    if (enriched) remember({ openFiles: fixed });
+  }, [git, files, remember]);
 
   const openFile = useCallback(
-    (file: { name: string; path: string }, tab: PreviewTab = "source", keepFull = false) => {
+    (file: { name: string; path: string }, view: FileView = "source", keepFull = false) => {
       const relPath = relPathOf(git, file.path);
-      remember({ preview: { name: file.name, path: file.path, relPath }, previewTab: tab });
-      setDiffLines(null);
-      diffReq.current++;
-      if (tab === "diff" && relPath) void loadDiff(relPath);
+      remember(openFileInMemory(mem, { name: file.name, path: file.path, relPath, view }));
       // No read here: FilePreview owns loading (and its own error state), which
       // is what lets one path serve markdown, images and office files alike.
       // A link clicked inside a rendered document keeps fullscreen: browsing
@@ -261,25 +292,26 @@ export default function FilePanel() {
       // narrow column.
       if (!keepFull) setPreviewFull(false);
     },
-    [git, remember, loadDiff],
+    [git, mem, remember],
   );
 
   /** Follow a link clicked inside a previewed document. */
   const openPreviewTarget = (path: string) => openFile({ name: baseName(path), path }, "source", true);
 
-  /** Switch the preview between source and diff, fetching the diff on demand. */
-  const selectTab = (tab: PreviewTab) => {
-    remember({ previewTab: tab });
-    if (tab === "diff" && !diffLines && !diffLoading && preview?.relPath) {
-      void loadDiff(preview.relPath);
-    }
+  /** Switch the file tab on screen between 源码 and diff. */
+  const selectFileView = (view: FileView) => {
+    if (!active) return;
+    remember(setFileViewInMemory(mem, active.path, view));
   };
 
-  const closePreview = () => {
+  /** Close the file tab on screen (the ✕ at the right end of its preview row). */
+  const closeFile = () => {
+    if (!active) return;
     diffReq.current++;
-    remember({ preview: null, previewTab: "source" });
+    remember(closeFileInMemory(mem, active.path));
     setPreviewFull(false);
     setDiffLines(null);
+    setDiffPath(null);
   };
 
   // Esc exits the fullscreen preview. Registered only while fullscreen so a
@@ -409,7 +441,15 @@ export default function FilePanel() {
   };
 
   const changedCount = git?.entries.length ?? 0;
-  const canDiff = preview !== null && preview.relPath !== null && !statusOf(gitIndex, preview.path)?.untracked;
+  const canDiffActive =
+    active !== null && active.relPath !== null && !statusOf(gitIndex, active.path)?.untracked;
+  /** The lines of the tab on screen (another file's lines never leak in). */
+  const diffNow = active !== null && diffPath === active.path ? diffLines : null;
+  const diffBusy =
+    active !== null &&
+    active.view === "diff" &&
+    active.relPath !== null &&
+    (diffLoading || diffPath !== active.path);
 
   // Aggregate all present_files declarations from this session's timeline.
   const artifacts = useMemo(() => {
@@ -422,48 +462,28 @@ export default function FilePanel() {
     return Array.from(map.values());
   }, [timeline]);
 
-  // Live auto-open: a present_files call of *this* session queues its primary
-  // in this session's memory (chat-store records it against the issuing
-  // session), so an artifact declared while another session was on screen
-  // waits there instead of popping into this file area. Opening it here, with
-  // the panel's own git state in hand, is what fills in the diff-able relPath.
-  // History replay never queues, so this stays live-only.
-  useEffect(() => {
-    const pending = mem.pendingArtifact;
-    if (!pending) return;
-    remember({ pendingArtifact: null });
-    openFile({ name: pending.name, path: pending.path });
-  }, [mem.pendingArtifact, remember, openFile]);
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       {/* Preview column, nearest the chat so reading stays close to the
           conversation; the tree sits on the far side and keeps its own width
           (the panel's left edge is dragged in RightPanel). */}
-      {preview && !previewFull && (
-        <>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <PreviewHeader
-              name={preview.name}
-              tab={previewTab}
-              canDiff={canDiff}
-              onTab={selectTab}
-              onFull={() => setPreviewFull(true)}
-              onClose={closePreview}
-            />
-            <PreviewBody
-              preview={preview}
-              tab={previewTab}
-              diff={diffLines}
-              loading={diffLoading}
-              onOpenPath={openPreviewTarget}
-            />
-          </div>
-        </>
+      {active && !previewFull && (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <FilePreviewPane
+            file={active}
+            canDiff={canDiffActive}
+            diff={diffNow}
+            loading={diffBusy}
+            onView={selectFileView}
+            onFull={() => setPreviewFull(true)}
+            onClose={closeFile}
+            onOpenPath={openPreviewTarget}
+          />
+        </div>
       )}
 
       {/* Preview | tree splitter: only meaningful while both are on screen. */}
-      {preview && !previewFull && (
+      {active && !previewFull && (
         <div
           onMouseDown={(e) =>
             startColumnDrag(e, treeW, { min: 180, max: 560, invert: true, persistKey: "kalo.layout.treeW" }, setTreeW)
@@ -475,8 +495,8 @@ export default function FilePanel() {
       {/* Tree column: beside a preview it keeps its dragged width; on its own
           it takes the whole tab. */}
       <div
-        className={`flex flex-col ${preview && !previewFull ? "shrink-0" : "min-w-0 flex-1"}`}
-        style={preview && !previewFull ? { width: treeW } : undefined}
+        className={`flex flex-col ${active && !previewFull ? "shrink-0" : "min-w-0 flex-1"}`}
+        style={active && !previewFull ? { width: treeW } : undefined}
       >
         <div className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
           <span className="text-xs font-medium">文件</span>
@@ -625,22 +645,17 @@ export default function FilePanel() {
       </div>
 
       {/* Fullscreen preview overlay */}
-      {preview && previewFull && (
+      {active && previewFull && (
         <div className="fixed inset-x-0 bottom-0 top-8 z-50 flex flex-col bg-base">
-          <PreviewHeader
-            name={preview.name}
-            tab={previewTab}
-            canDiff={canDiff}
-            onTab={selectTab}
+          <FilePreviewPane
+            file={active}
+            canDiff={canDiffActive}
+            diff={diffNow}
+            loading={diffBusy}
             full
+            onView={selectFileView}
             onFull={() => setPreviewFull(false)}
-            onClose={closePreview}
-          />
-          <PreviewBody
-            preview={preview}
-            tab={previewTab}
-            diff={diffLines}
-            loading={diffLoading}
+            onClose={closeFile}
             onOpenPath={openPreviewTarget}
           />
         </div>
@@ -658,116 +673,6 @@ export default function FilePanel() {
           onClose={menu.close}
         />
       )}
-    </div>
-  );
-}
-
-function PreviewHeader({
-  name,
-  tab,
-  canDiff,
-  onTab,
-  full,
-  onFull,
-  onClose,
-}: {
-  name: string;
-  tab: PreviewTab;
-  canDiff: boolean;
-  onTab: (tab: PreviewTab) => void;
-  full?: boolean;
-  onFull: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-3">
-      <span className="min-w-0 truncate text-xs font-medium">{name}</span>
-      <div className="flex shrink-0 items-center gap-1">
-        {canDiff && (
-          <div className="mr-1 flex items-center overflow-hidden rounded-md border border-edge text-[10px]">
-            {(["source", "diff"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => onTab(t)}
-                className={`px-1.5 py-0.5 ${tab === t ? "bg-card text-ink" : "text-dim hover:text-ink"}`}
-              >
-                {t === "source" ? "源码" : "diff"}
-              </button>
-            ))}
-          </div>
-        )}
-        {full ? (
-          // Fullscreen traps the user when the only exit is a bare icon: make
-          // it a labelled button with the shortcut spelled out.
-          <button
-            onClick={onFull}
-            title="退出全屏（Esc）"
-            className="flex items-center gap-1.5 rounded-md border border-edge bg-card px-2 py-1 text-xs text-ink hover:bg-base"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M6 2.5v3h-3M10 13.5v-3h3M13.5 10h-3v3M2.5 6h3v-3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            退出全屏
-            <kbd className="rounded border border-edge bg-base px-1 text-[10px] text-dim">Esc</kbd>
-          </button>
-        ) : (
-          <button
-            onClick={onFull}
-            title="全屏查看"
-            className="rounded p-1 text-dim hover:bg-card hover:text-ink"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5L9 7M2.5 13.5L7 9" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        )}
-        <button
-          onClick={onClose}
-          title="关闭预览"
-          className="rounded p-1 text-dim hover:bg-card hover:text-ink"
-        >
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PreviewBody({
-  preview,
-  tab,
-  diff,
-  loading,
-  onOpenPath,
-}: {
-  preview: Preview;
-  tab: PreviewTab;
-  diff: DiffLine[] | null;
-  loading: boolean;
-  onOpenPath?: (path: string) => void;
-}) {
-  if (tab === "diff") {
-    if (loading) {
-      return <div className="min-h-0 flex-1 px-3 py-2 text-xs text-dim">读取 diff…</div>;
-    }
-    if (!diff || diff.length === 0) {
-      return (
-        <div className="min-h-0 flex-1 px-3 py-2 text-xs text-dim">
-          与 HEAD 无差异。（未跟踪的新文件没有 diff，切到「源码」看内容。）
-        </div>
-      );
-    }
-    return (
-      <div className="min-h-0 flex-1 overflow-auto p-2">
-        <DiffView lines={diff} />
-      </div>
-    );
-  }
-  return (
-    <div className="min-h-0 flex-1 overflow-auto">
-      <FilePreview path={preview.path} name={preview.name} onOpenPath={onOpenPath} />
     </div>
   );
 }
