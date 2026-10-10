@@ -399,14 +399,38 @@ function handleCommand(cmd: InCommand): void {
   }
 }
 
+/** How often a locked-out gateway retries the singleton lock. */
+const LOCK_RETRY_MS = 3_000;
+
 function main(): void {
   if (!acquireLock()) {
-    // Another gateway instance owns the lock. Stay alive (no exit loop) but
-    // refuse to work; the Rust side surfaces this as an error state.
-    emitError("另一个 Kalo 网关实例正在运行（feishu.lock 被占用）");
+    holdLockedOut();
     return;
   }
+  start();
+}
 
+/**
+ * Another gateway instance owns `feishu.lock` — typically the installed app
+ * while a dev window is up. Refuse to work, but **stay alive**: bun exits the
+ * moment the event loop drains, and the desktop's exit watcher reads any exit
+ * as a crash, so a bare `return` here respawned us once a second forever.
+ * Draining stdin keeps the Rust-side shutdown path working, and the poll takes
+ * over as soon as the other instance exits.
+ */
+function holdLockedOut(): void {
+  emitError("另一个 Kalo 网关实例正在运行（feishu.lock 被占用）");
+  process.stdin.resume();
+  process.stdin.on("data", () => {});
+  process.stdin.on("end", () => process.exit(0));
+  const timer = setInterval(() => {
+    if (!acquireLock()) return;
+    clearInterval(timer);
+    start();
+  }, LOCK_RETRY_MS);
+}
+
+function start(): void {
   process.on("exit", () => {
     jobsServer.stop();
     releaseLock();
