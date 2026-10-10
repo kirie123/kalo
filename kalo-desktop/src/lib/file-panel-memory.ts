@@ -160,8 +160,10 @@ export function patchPanelMemory(uid: string, cwd: string, partial: Partial<Pane
 //
 // The open file tabs live here, not in panel-tabs: which files are open is part
 // of "what this session is looking at", so switching sessions swaps the strip.
-// `activeFile` and panel-tabs' `activeId` are mutually exclusive — the caller
-// clears the other side whenever it switches (doc/2026-10-10-右栏文件页签.md).
+// panel-tabs owns "who has the screen" (its `activeId`), this store owns which
+// file the file side shows (`activeFile`): focusing a file tab clears
+// `activeId`, but opening a panel tab leaves `activeFile` alone, so closing it
+// comes back to the same file (doc/2026-10-10-右栏文件页签.md §3).
 
 /** The open file tab matching `path`, or null. */
 export function openFileOf(mem: PanelMemory, path: string | null): PanelFile | null {

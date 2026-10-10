@@ -3,11 +3,12 @@
  *
  * The strip carries two kinds of tab, in this order: the **files this session
  * has open** (per session, from file-panel-memory) and the app-level tabs —
- * 浏览器 / 终端 / 跟随 (from panel-tabs). Exactly one side is current: a file
- * tab's identity is its path, and activating it clears panel-tabs' `activeId`;
- * activating a panel tab clears `activeFile` instead. With neither current the
- * file side shows the bare tree, and there is no permanent 「文件」tab anymore
- * (doc/2026-10-10-右栏文件页签.md).
+ * 浏览器 / 终端 / 跟随 (from panel-tabs). Two stores, two questions: panel-tabs
+ * decides who has the screen (`activeId`), the file area remembers which file it
+ * shows (`activeFile`). Focusing a file tab hands the screen back to the file
+ * side; focusing a panel tab leaves the file side's own focus alone. With no
+ * file focused the file side shows the bare tree, and there is no permanent
+ * 「文件」tab anymore (doc/2026-10-10-右栏文件页签.md).
  *
  * Every tab stays mounted while inactive (CSS `hidden`), so switching tabs
  * keeps a shell's scrollback, a browser page and the file browser's expansion;
@@ -135,11 +136,10 @@ function TabStrip() {
     panelTabs.activate("");
   };
 
-  /** Focus one browser / shell / watch tab, clearing the file side's focus. */
-  const openPanelTab = (id: string) => {
-    if (mem.activeFile !== null) patchPanelMemory(uid, cwd, { activeFile: null });
-    panelTabs.activate(id);
-  };
+  // Focusing a browser / shell / watch tab leaves `activeFile` alone: panel-tabs
+  // decides who has the screen, this store only says which file the file side
+  // shows — and closing that tab then comes back to the file being read, as it
+  // did before the file tabs existed.
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
@@ -156,7 +156,7 @@ function TabStrip() {
           key={tab.id}
           tab={tab}
           active={tab.id === panel.activeId}
-          onActivate={() => openPanelTab(tab.id)}
+          onActivate={() => panelTabs.activate(tab.id)}
           onClose={() => panelTabs.close(tab.id)}
         />
       ))}
