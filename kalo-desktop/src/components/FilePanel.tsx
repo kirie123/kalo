@@ -314,6 +314,13 @@ export default function FilePanel() {
     setDiffPath(null);
   };
 
+  // Closing a file from the strip's own × bypasses closeFile above: with no
+  // active file there is nothing to show, and leaving fullscreen armed would
+  // make the next opened file appear fullscreen.
+  useEffect(() => {
+    if (mem.activeFile === null) setPreviewFull(false);
+  }, [mem.activeFile]);
+
   // Esc exits the fullscreen preview. Registered only while fullscreen so a
   // plain Esc elsewhere in the panel is untouched; mirrors FileViewerModal,
   // where Esc likewise steps back before closing anything.

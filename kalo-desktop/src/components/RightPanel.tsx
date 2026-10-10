@@ -8,7 +8,9 @@
  * shows (`activeFile`). Focusing a file tab hands the screen back to the file
  * side; focusing a panel tab leaves the file side's own focus alone. With no
  * file focused the file side shows the bare tree, and there is no permanent
- * 「文件」tab anymore (doc/2026-10-10-右栏文件页签.md).
+ * 「文件」tab anymore (doc/2026-10-10-右栏文件页签.md). The strip keeps its tabs
+ * left-aligned with `+` right after them, so a couple of open files never push
+ * the button to the far edge.
  *
  * Every tab stays mounted while inactive (CSS `hidden`), so switching tabs
  * keeps a shell's scrollback, a browser page and the file browser's expansion;
@@ -22,6 +24,7 @@ import { useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
 import {
   activateFileInMemory,
+  closeFileInMemory,
   openFileInMemory,
   patchPanelMemory,
   usePanelMemory,
@@ -141,14 +144,18 @@ function TabStrip() {
   // shows — and closing that tab then comes back to the file being read, as it
   // did before the file tabs existed.
 
+  /** Close one file tab from its chip's × (the focus rules live in the store). */
+  const closeFileTab = (path: string) => patchPanelMemory(uid, cwd, closeFileInMemory(mem, path));
+
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+    <div className="flex min-w-0 max-w-full items-center gap-1 overflow-x-auto">
       {mem.openFiles.map((file) => (
         <FileTabChip
           key={file.path}
           file={file}
           active={panel.activeId === "" && file.path === mem.activeFile}
           onActivate={() => openFileTab(file.path)}
+          onClose={() => closeFileTab(file.path)}
         />
       ))}
       {panel.tabs.map((tab) => (
@@ -164,22 +171,36 @@ function TabStrip() {
   );
 }
 
-/** One open file's tab: icon + filename, and no close button — closing a file
- * is done from the ✕ at the right end of its preview row, so the tab itself
- * stays a plain, quiet label (doc/2026-10-10-右栏文件页签.md). */
-function FileTabChip({ file, active, onActivate }: { file: PanelFile; active: boolean; onActivate: () => void }) {
+/** One open file's tab: icon + filename + the × that closes it. The preview row
+ * carries its own ✕ as well — both close the same tab. */
+function FileTabChip({
+  file,
+  active,
+  onActivate,
+  onClose,
+}: {
+  file: PanelFile;
+  active: boolean;
+  onActivate: () => void;
+  onClose: () => void;
+}) {
   return (
     <div
       className={`flex shrink-0 items-center overflow-hidden rounded-md border ${
         active ? "border-edge bg-card text-ink" : "border-transparent text-dim hover:bg-card"
       }`}
     >
-      <button onClick={onActivate} title={file.path} className="flex min-w-0 max-w-40 items-center gap-1.5 px-2 py-1 text-xs">
+      <button onClick={onActivate} title={file.path} className="flex min-w-0 max-w-40 items-center gap-1.5 py-1 pl-2 text-xs">
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
           <path d="M4 1.5h5L12.5 5v9a1 1 0 01-1 1h-7a1 1 0 01-1-1v-11a1 1 0 011-1z" strokeLinejoin="round" />
           <path d="M9 1.5V5h3.5" strokeLinejoin="round" />
         </svg>
         <span className="truncate">{file.name}</span>
+      </button>
+      <button onClick={onClose} title="关闭这个文件" className="px-1.5 py-1 text-dim hover:text-ink">
+        <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+          <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+        </svg>
       </button>
     </div>
   );
