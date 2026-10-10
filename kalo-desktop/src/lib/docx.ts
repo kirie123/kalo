@@ -11,7 +11,7 @@
  * dropped, which is what the document "says" today.
  */
 
-import { attr, deepText, element, elements, parseXml, path, rootOf, type XmlNode } from "./xml";
+import { attr, deepText, element, elements, parseXml, rootOf, type XmlNode } from "./xml";
 import type { ZipArchive } from "./zip";
 
 export interface DocxDocument {

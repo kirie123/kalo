@@ -6,7 +6,7 @@
  * without coupling to the ChatStore class directly.
  */
 
-import { createAskState, type AskState } from "./ask-user";
+import { createAskState } from "./ask-user";
 import type { RpcExtensionUIRequest } from "../types";
 
 /** One queued extension UI prompt (select / confirm / input / editor). */

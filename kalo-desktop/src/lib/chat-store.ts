@@ -32,10 +32,7 @@ import type {
   RpcSessionState,
   SlashCommand,
   ThinkingLevel,
-  ThinkingContent,
-  TextContent,
   ToolResultMessage,
-  UserMessage,
 } from "../types";
 import { appendAttachment, readAttachmentDrafts, readFileDrafts } from "./attachment-intake";
 import { applyBlockEvent, isBlockEvent, seedMessage } from "./assistant-stream";
@@ -57,7 +54,6 @@ import {
   createAccumulator,
   summarize,
   type ChangeAccumulator,
-  type ChangeSummary,
 } from "./changed-files";
 import {
   errText,
@@ -96,10 +92,8 @@ import type {
   WidgetEntry,
   TimelineEntry,
   ToolCallRecord,
-  ToolGroupEntry,
   TodoItem,
   TurnUsage,
-  UserEntry,
 } from "./timeline";
 
 // ============================================================================

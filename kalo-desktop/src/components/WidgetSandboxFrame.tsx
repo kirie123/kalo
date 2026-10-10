@@ -371,8 +371,6 @@ script { display: none !important; }
 }
 
 const DEFAULT_LOADING_MESSAGES = ["正在准备可视化…"];
-const HANDSHAKE_INTERVAL_MS = 250;
-const BOOTSTRAP_TIMEOUT_MS = 5000;
 const DEFAULT_HEIGHT = 360;
 const MAX_HEIGHT = 2000;
 

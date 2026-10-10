@@ -41,7 +41,9 @@ kalo-desktop/
 
 ## 检查命令
 
-- 前端类型：`npx tsc --noEmit`（`src/` 下）
+- 前端类型：`npx tsc --noEmit`（`src/` 下；已开 `noUnusedLocals`——声明了却没人用的组件/常量/导入会直接报错，
+  这是「重构时丢掉一处渲染」那类静默回归的唯一机器信号：`open` 还留着、`{open && <Detail/>}` 被删掉，
+  人类评审看不出来，编译器会报 `'Detail' is declared but its value is never read`，见 commit 4fb281c）
 - 前端测试：`npm test`（vitest run）
 - Rust：`cargo check` / `cargo test`（`src-tauri/` 下）
 - 收尾：跑一次改动影响的检查即可；改 lib 跑 vitest，改 Rust 跑 cargo test，不要全量重复跑。

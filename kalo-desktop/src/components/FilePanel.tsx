@@ -22,7 +22,7 @@ import {
   statusOf,
   type StatusIndex,
 } from "../lib/git";
-import { sessionArtifacts, type ArtifactItem } from "../lib/artifacts";
+import { type ArtifactItem } from "../lib/artifacts";
 import ContextMenu, {
   copyLinkItem,
   copyPathItem,
