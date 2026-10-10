@@ -162,54 +162,59 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
   }, [elapsedSec]);
 
   return (
-    <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-card">
-      <button
-        onClick={() => {
-          userToggled.current = true;
-          setOpen((v) => !v);
-        }}
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-      >
-        <span className="w-4 shrink-0 text-center text-[11px]">
-          <StatusMark rec={rec} />
-        </span>
-        <span className="mono min-w-0 flex-1 truncate text-xs text-dim group-hover:text-ink">
-          {rowLabel(rec)}
-        </span>
-      </button>
-      {stats && (
-        <span className="mono shrink-0 text-xs">
-          <span className="text-[var(--diff-add-text)]">+{stats.add}</span>{" "}
-          <span className="text-[var(--diff-del-text)]">-{stats.del}</span>
-        </span>
-      )}
-      {steps !== null && (
-        <span
-          className={`mono shrink-0 rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${
-            rec.status === "running" ? "border-edge text-ink" : "border-edge text-dim"
-          }`}
-        >
-          {rec.status === "running" ? `第 ${steps} 步` : `共 ${steps} 步`}
-        </span>
-      )}
-      {elapsedSec !== null && elapsedSec >= 5 && (
-        <span className="mono shrink-0 text-[10px] tabular-nums text-dim">已运行 {elapsedSec}s</span>
-      )}
-      <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
-        {chip}
-      </span>
-      {rec.toolName === "bash" && (
+    <>
+      <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-card">
         <button
-          onClick={() => openBashInTerminal(rec)}
-          title="在终端中打开"
-          className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink"
+          onClick={() => {
+            userToggled.current = true;
+            setOpen((v) => !v);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-            <path d="M2.5 3.5l4 4-4 4M8.5 12.5h5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <span className="w-4 shrink-0 text-center text-[11px]">
+            <StatusMark rec={rec} />
+          </span>
+          <span className="mono min-w-0 flex-1 truncate text-xs text-dim group-hover:text-ink">
+            {rowLabel(rec)}
+          </span>
         </button>
-      )}
-    </div>
+        {stats && (
+          <span className="mono shrink-0 text-xs">
+            <span className="text-[var(--diff-add-text)]">+{stats.add}</span>{" "}
+            <span className="text-[var(--diff-del-text)]">-{stats.del}</span>
+          </span>
+        )}
+        {steps !== null && (
+          <span
+            className={`mono shrink-0 rounded border px-1.5 py-0.5 text-[10px] tabular-nums ${
+              rec.status === "running" ? "border-edge text-ink" : "border-edge text-dim"
+            }`}
+          >
+            {rec.status === "running" ? `第 ${steps} 步` : `共 ${steps} 步`}
+          </span>
+        )}
+        {elapsedSec !== null && elapsedSec >= 5 && (
+          <span className="mono shrink-0 text-[10px] tabular-nums text-dim">已运行 {elapsedSec}s</span>
+        )}
+        <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
+          {chip}
+        </span>
+        {rec.toolName === "bash" && (
+          <button
+            onClick={() => openBashInTerminal(rec)}
+            title="在终端中打开"
+            className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <path d="M2.5 3.5l4 4-4 4M8.5 12.5h5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {/* Below the row, not inside it: the row is the flex/hover line, and a
+          multi-line detail inside it would be stretched into a column. */}
+      {open && <ToolCallDetail rec={rec} diff={diff} />}
+    </>
   );
 }
 
