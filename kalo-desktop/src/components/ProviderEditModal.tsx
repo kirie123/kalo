@@ -98,16 +98,11 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
   );
   const [saving, setSaving] = useState(false);
   /**
-   * Backdrop dismissal is deliberately narrow: the press and the release both
-   * have to land on the backdrop itself, and the form must still be untouched.
-   * A drag that starts inside the form (text selection, the model textarea's
-   * resize grip) ends outside the dialog, and the browser then reports the
-   * click on the common ancestor — the backdrop — which used to throw away a
-   * half-typed provider config without a word.
+   * The backdrop never closes this dialog (see the overlay below). The first
+   * stray click says so once — silently swallowing the click reads as "the app
+   * is stuck".
    */
-  const backdropPressRef = useRef(false);
-  /** Any edit in the form re-arms the guard; the buttons stay the only exits. */
-  const touchedRef = useRef(false);
+  const backdropHintShownRef = useRef(false);
   /**
    * Providers already in models.json, offered as one-click fills so adding a
    * model to a relay you have configured does not mean retyping its URL/key.
@@ -132,7 +127,6 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
 
   /** Load an existing provider's connection settings and current model list. */
   const applyKnown = (id: string, cfg: ProviderConfig) => {
-    touchedRef.current = true;
     setName(id);
     setApi(cfg.api);
     setBaseUrl(cfg.baseUrl);
@@ -200,31 +194,22 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/50"
+      // A click on the backdrop must not close this dialog: the form carries a
+      // base URL, an API key and a model list, and a stray click outside (or a
+      // drag that begins inside and ends here — the browser then reports the
+      // click on the common ancestor, i.e. this overlay) used to throw all of it
+      // away without a word. 取消 / 保存 are the only exits, and the hint keeps
+      // the first stray click from reading as "the app is stuck".
       onMouseDown={(e) => {
-        backdropPressRef.current = e.button === 0 && e.target === e.currentTarget;
-      }}
-      onMouseUp={(e) => {
-        const pressedOnBackdrop = backdropPressRef.current;
-        backdropPressRef.current = false;
-        if (!pressedOnBackdrop || e.button !== 0 || e.target !== e.currentTarget) return;
-        if (touchedRef.current) {
-          chatStore.pushToast(
-            "表单已有改动：点「取消」放弃，或点「保存」写入",
-            "warning",
-          );
-          return;
-        }
-        onClose(false);
+        if (e.button !== 0 || e.target !== e.currentTarget) return;
+        if (backdropHintShownRef.current) return;
+        backdropHintShownRef.current = true;
+        chatStore.pushToast("点「取消」或「保存」关闭这个窗口", "info");
       }}
     >
       <div
         className="flex max-h-[85vh] w-[520px] max-w-[92vw] flex-col rounded-xl border border-edge bg-card p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
-        // Any edit inside the dialog arms the backdrop guard, so the handlers
-        // below do not have to remember to do it one by one.
-        onChange={() => {
-          touchedRef.current = true;
-        }}
       >
         <h3 className="mb-4 text-base font-semibold">{isEdit ? "编辑模型" : "添加模型"}</h3>
 
@@ -236,7 +221,6 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
                 <button
                   key={p.label}
                   onClick={() => {
-                    touchedRef.current = true;
                     const v = p.apply();
                     if (v.name !== undefined) setName(v.name);
                     if (v.api !== undefined) setApi(v.api as ProviderApi);
@@ -343,7 +327,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
               value={modelLines}
               onChange={(e) => setModelLines(e.target.value)}
               rows={4}
-              placeholder={"gpt-4o\ndeepseek-v4-flash"}
+              placeholder={"gpt-4o\ndeepseek-flash"}
               className="mono w-full resize-y rounded-md border border-edge bg-base px-3 py-2 text-sm outline-none focus:border-dim"
             />
           </Field>
