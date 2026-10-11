@@ -64,7 +64,12 @@ const TimelineItem = memo(function TimelineItem({
       return <CompactionBubble entry={entry} />;
     case "changes":
       return (
-        <ChangedFilesCard files={entry.files} totalAdded={entry.totalAdded} totalRemoved={entry.totalRemoved} />
+        <ChangedFilesCard
+          files={entry.files}
+          totalAdded={entry.totalAdded}
+          totalRemoved={entry.totalRemoved}
+          artifacts={entry.artifacts}
+        />
       );
     case "artifacts":
       return <ArtifactsCard summary={entry.summary} />;

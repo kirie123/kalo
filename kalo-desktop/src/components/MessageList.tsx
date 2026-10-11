@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { foldRunArtifacts } from "../lib/artifacts";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import type { TimelineEntry } from "../lib/timeline";
 import { useChatZoom } from "../lib/chat-zoom";
@@ -38,7 +39,13 @@ export default function MessageList() {
   // Consecutive thinking/tool entries render under one collapsible parent
   // bubble. Pure view-layer fold: the timeline itself (live or replayed from a
   // session file) is untouched (doc/2026-09-13-工作段母气泡.md).
-  const rows = useMemo(() => foldWorkSegments(timeline), [timeline]);
+  //
+  // foldRunArtifacts runs first so each run's present_files list lands inside
+  // that run's end-of-run card instead of cutting it in half.
+  const rows = useMemo(
+    () => foldWorkSegments(foldRunArtifacts(timeline, isStreaming || isCompacting)),
+    [timeline, isStreaming, isCompacting],
+  );
 
   // Collapsing a segment above the viewport shortens the page; keep the header
   // where the user clicked it (same trick as the older-history prepend).

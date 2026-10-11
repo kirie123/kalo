@@ -13,7 +13,7 @@
 
 import type { FileKind } from "./file-kind";
 import { queuePanelArtifactOpen } from "./file-panel-memory";
-import type { TodoItem } from "./timeline";
+import type { ArtifactsEntry, TimelineEntry, TodoItem } from "./timeline";
 import type { ToolCallRecord } from "./timeline";
 
 // ============================================================================
@@ -99,6 +99,75 @@ export function sessionArtifacts(records: ToolCallRecord[]): ArtifactItem[] {
     }
   }
   return Array.from(map.values());
+}
+
+// ============================================================================
+// Render-layer fold: one end-of-run card per run (changes + its artifacts)
+// ============================================================================
+
+/** Merge several present_files summaries into one: deduped by path, last
+ *  declaration wins, first-appearance order preserved. Same rule as the
+ *  right-side 产物 bar, so both show the same list. */
+export function mergeArtifactSummaries(summaries: ArtifactSummary[]): ArtifactSummary | null {
+  const map = new Map<string, ArtifactItem>();
+  let explanation: string | undefined;
+  let primary: ArtifactItem | null = null;
+  for (const s of summaries) {
+    for (const item of s.items) map.set(item.path, item);
+    if (s.explanation) explanation = s.explanation;
+    // 最后一次声明的优先级描述最终交付物；取合并后的那一份。
+    if (s.primary) primary = map.get(s.primary.path) ?? s.primary;
+  }
+  const items = Array.from(map.values());
+  if (items.length === 0) return null;
+  return { items, primary, explanation };
+}
+
+/**
+ * Absorb each run's present_files summaries into that run's end-of-run changes
+ * card, so the transcript shows one summary card instead of two
+ * (doc/2026-09-28-产物呈现通道.md § 2026-10-11 增补).
+ *
+ * Runs are delimited by `user` entries: every `artifacts` entry of a turn is
+ * dropped from the render list and merged onto that turn's `changes` entry
+ * (`ChangesEntry.artifacts`). The timeline itself is left untouched — the right
+ * panel's 产物 bar reads the raw timeline, and history replay keeps its
+ * standalone cards.
+ *
+ * `live` = the session is still running its trailing turn. Its artifacts block
+ * is held back (not rendered) because the changes card may be about to absorb
+ * it; once the run settles without one (live false), the block reappears where
+ * it was declared — the fallback card for runs that changed no files.
+ */
+export function foldRunArtifacts(timeline: TimelineEntry[], live: boolean): TimelineEntry[] {
+  const out: TimelineEntry[] = [];
+  let held: ArtifactsEntry[] = [];
+  /** Where held entries belong in `out` once the turn ends without a card. */
+  let heldAt = 0;
+
+  const emitHeld = () => {
+    if (held.length > 0) out.splice(heldAt, 0, ...held);
+    held = [];
+  };
+
+  for (const entry of timeline) {
+    if (entry.kind === "artifacts") {
+      if (held.length === 0) heldAt = out.length;
+      held.push(entry);
+      continue;
+    }
+    if (entry.kind === "changes") {
+      const artifacts = mergeArtifactSummaries(held.map((h) => h.summary));
+      out.push(artifacts ? { ...entry, artifacts } : entry);
+      held = [];
+      continue;
+    }
+    if (entry.kind === "user") emitHeld(); // previous turn ended card-less
+    out.push(entry);
+  }
+
+  if (!live) emitHeld();
+  return out;
 }
 
 // ============================================================================

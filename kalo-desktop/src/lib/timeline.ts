@@ -113,10 +113,15 @@ export interface CompactionEntry {
 /**
  * End-of-run summary of the files the agent wrote or edited. Pushed once at
  * `agent_settled`, and only when at least one file changed.
+ *
+ * `artifacts` is attached at render time (not by the store) by
+ * foldRunArtifacts: the run's present_files declarations are shown inside this
+ * card, at its end, instead of as a separate card.
  */
 export interface ChangesEntry extends ChangeSummary {
   id: string;
   kind: "changes";
+  artifacts?: ArtifactSummary;
 }
 
 /**
