@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { chatStore } from "../lib/chat-store";
+import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { readModelsConfig, writeModelsConfig } from "../lib/pi-bridge";
 import {
   applyProviderEntry,
@@ -97,12 +98,8 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
     editing?.config.compat?.supportsReasoningEffort === false,
   );
   const [saving, setSaving] = useState(false);
-  /**
-   * The backdrop never closes this dialog (see the overlay below). The first
-   * stray click says so once — silently swallowing the click reads as "the app
-   * is stuck".
-   */
-  const backdropHintShownRef = useRef(false);
+  // Backdrop presses never close this dialog — see lib/modal-backdrop.ts.
+  const backdrop = usePinnedBackdrop("点「取消」或「保存」关闭这个窗口");
   /**
    * Providers already in models.json, offered as one-click fills so adding a
    * model to a relay you have configured does not mean retyping its URL/key.
@@ -194,18 +191,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/50"
-      // A click on the backdrop must not close this dialog: the form carries a
-      // base URL, an API key and a model list, and a stray click outside (or a
-      // drag that begins inside and ends here — the browser then reports the
-      // click on the common ancestor, i.e. this overlay) used to throw all of it
-      // away without a word. 取消 / 保存 are the only exits, and the hint keeps
-      // the first stray click from reading as "the app is stuck".
-      onMouseDown={(e) => {
-        if (e.button !== 0 || e.target !== e.currentTarget) return;
-        if (backdropHintShownRef.current) return;
-        backdropHintShownRef.current = true;
-        chatStore.pushToast("点「取消」或「保存」关闭这个窗口", "info");
-      }}
+      {...backdrop}
     >
       <div
         className="flex max-h-[85vh] w-[520px] max-w-[92vw] flex-col rounded-xl border border-edge bg-card p-5 shadow-2xl"

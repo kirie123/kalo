@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { chatStore } from "../lib/chat-store";
+import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { scheduleUpsert } from "../lib/pi-bridge";
 import {
   buildCron,
@@ -62,6 +63,7 @@ function clamp(raw: string, lo: number, hi: number): number {
 
 /** Create/edit form for one scheduled task, saved via schedule_upsert. */
 export default function TaskEditModal({ task, onClose }: Props) {
+  const backdrop = usePinnedBackdrop("点「取消」或「保存」关闭这个窗口");
   const [name, setName] = useState(task?.name ?? "");
   const [id, setId] = useState(task?.id ?? "");
   const [kind, setKind] = useState<ScheduleTaskKind>(task?.kind ?? "watch");
@@ -146,7 +148,7 @@ export default function TaskEditModal({ task, onClose }: Props) {
   const labelCls = "mb-1 mt-3 text-xs text-dim";
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={() => onClose(false)}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" {...backdrop}>
       <div
         className="flex max-h-[85vh] w-[640px] max-w-[92vw] flex-col overflow-y-auto rounded-xl border border-edge bg-card p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}

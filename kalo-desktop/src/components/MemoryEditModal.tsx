@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { chatStore } from "../lib/chat-store";
+import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { readMemory, writeMemory } from "../lib/pi-bridge";
 import type { MemoryMeta } from "../types";
 
@@ -11,6 +12,7 @@ interface Props {
 
 /** Editor for one memory entry: title + tags + body, saved via write_memory. */
 export default function MemoryEditModal({ memory, onClose }: Props) {
+  const backdrop = usePinnedBackdrop("点「取消」或「保存」关闭这个窗口");
   const [title, setTitle] = useState(memory?.title ?? "");
   const [tags, setTags] = useState(memory?.tags.join(", ") ?? "");
   const [content, setContent] = useState<string | null>(memory ? null : "");
@@ -66,7 +68,7 @@ export default function MemoryEditModal({ memory, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={() => onClose(false)}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" {...backdrop}>
       <div
         className="flex max-h-[85vh] w-[640px] max-w-[92vw] flex-col rounded-xl border border-edge bg-card p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}

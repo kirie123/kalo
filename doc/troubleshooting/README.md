@@ -48,6 +48,7 @@
 - [高负载时输入框「看着正常、敲字没反应」（效率模式/流式重解析饿死 UI，不是被禁用）](ui-unresponsive-under-load.md)
 - [dev 窗口与已安装应用同时开着时，网关每秒重启一次（feishu.lock 单实例互斥 + bun 空事件循环退出 0）](gateway-restart-storm-two-instances.md)
 - [重建了 sidecar（pi / 网关）但运行中的 dev 窗口行为没变（运行时用的是 target/<profile>/binaries/ 那份拷贝）](sidecar-rebuild-not-picked-up-in-dev.md)
+- [改完前端行为没变化（跑的是已安装版 %LOCALAPPDATA%\Kalo\kalo.exe，不是 dev 窗口）](edited-ui-not-visible-installed-vs-dev.md)
 
 ### 引擎（kalo-harness / sidecar）
 - [启动后提示「引擎未响应」（解析到了其他平台的 sidecar 二进制）](engine-unresponsive-wrong-platform-binary.md)
