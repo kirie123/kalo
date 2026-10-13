@@ -5,9 +5,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { ExtensionContext } from "../src/core/extensions/types.ts";
-import { createBashToolDefinition } from "../src/core/tools/bash.ts";
+import { type BashToolInput, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import {
 	type BackgroundCommandRequest,
 	commandLabel,
@@ -133,25 +134,82 @@ describe("bash run_in_background", () => {
 		expect(textOf(result)).toContain("job_output");
 	});
 
-	it("rejects timeout together with run_in_background", async () => {
-		let called = false;
+	it.each([undefined, null, 0])("accepts background timeout %s as no time limit", async (timeout) => {
+		const requests: BackgroundCommandRequest[] = [];
 		const definition = createBashToolDefinition(process.cwd(), {
-			backgroundStarter: async () => {
-				called = true;
-				return { id: "bash-1" };
+			backgroundStarter: async (request) => {
+				requests.push(request);
+				return { id: "bash-unlimited" };
 			},
 		});
 
-		await expect(
-			definition.execute(
-				"call-1",
-				{ command: "sleep 5", timeout: 10, run_in_background: true },
-				undefined,
-				undefined,
-				sessionContext("s-1"),
-			),
-		).rejects.toThrow("cannot be combined with timeout");
-		expect(called).toBe(false);
+		// Exercise the runtime guard directly, including null before argument normalization.
+		const args = { command: "pnpm build", timeout, run_in_background: true } as unknown as BashToolInput;
+		const result = await definition.execute("call-1", args, undefined, undefined, sessionContext("s-1"));
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0].command).toBe("pnpm build");
+		expect(textOf(result)).toContain("bash-unlimited");
+	});
+
+	it("accepts null timeout through validateToolArguments and starts the background job", async () => {
+		const requests: BackgroundCommandRequest[] = [];
+		const definition = createBashToolDefinition(process.cwd(), {
+			backgroundStarter: async (request) => {
+				requests.push(request);
+				return { id: "bash-null" };
+			},
+		});
+		const args: BashToolInput = validateToolArguments(definition, {
+			type: "toolCall",
+			id: "call-1",
+			name: "bash",
+			arguments: { command: "pnpm build", timeout: null, run_in_background: true },
+		});
+
+		const result = await definition.execute("call-1", args, undefined, undefined, sessionContext("s-1"));
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0].command).toBe("pnpm build");
+		expect(textOf(result)).toContain("bash-null");
+	});
+
+	it.each([10, 0.5, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+		"rejects background timeout %s before starting a job",
+		async (timeout) => {
+			let called = false;
+			const definition = createBashToolDefinition(process.cwd(), {
+				backgroundStarter: async () => {
+					called = true;
+					return { id: "bash-1" };
+				},
+			});
+
+			await expect(
+				definition.execute(
+					"call-1",
+					{ command: "sleep 5", timeout, run_in_background: true },
+					undefined,
+					undefined,
+					sessionContext("s-1"),
+				),
+			).rejects.toThrow("cannot be combined with timeout");
+			expect(called).toBe(false);
+		},
+	);
+
+	it.each([undefined, false])("rejects foreground timeout 0 with run_in_background=%s", async (run_in_background) => {
+		const definition = createBashToolDefinition(process.cwd());
+		const args: BashToolInput = validateToolArguments(definition, {
+			type: "toolCall",
+			id: "call-1",
+			name: "bash",
+			arguments: { command: "echo test", timeout: 0, run_in_background },
+		});
+
+		await expect(definition.execute("call-1", args, undefined, undefined, sessionContext("s-1"))).rejects.toThrow(
+			"Invalid timeout",
+		);
 	});
 
 	it("is unavailable when the tool has custom operations", async () => {

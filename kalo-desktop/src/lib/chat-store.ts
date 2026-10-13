@@ -6,8 +6,8 @@
  * message is persisted). Switching sessions merely changes which runtime's
  * view feeds the UI; parked runtimes keep their engine process alive, so
  * background runs continue and their events keep updating the parked view.
- * Idle parked engines beyond MAX_PARKED are evicted (LRU); streaming or
- * connecting ones never are.
+ * Idle parked engines beyond MAX_PARKED are evicted (LRU); streaming,
+ * connecting or background-kept-alive ones never are.
  *
  * The store is a plain class consumed by React via useSyncExternalStore.
  * The exposed ChatState is a composition: global slice (model catalogs,
@@ -83,6 +83,7 @@ import {
 } from "./pi-bridge";
 import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
 import { dispatchExtensionUiRequest } from "./extension-ui-dispatch";
+import { selectIdleEvictions } from "./runtime-keep-alive";
 import { pushCompactingNotice, settleCompaction } from "./compaction-entries";
 import { handleSpecialToolResult, parseArtifacts } from "./artifacts";
 import { parseWidget } from "./widgets";
@@ -310,6 +311,8 @@ class SessionRuntime {
   token = 0;
   /** Engine exited before any message was persisted — nothing to recover from. */
   dead = false;
+  /** Background tasks / unreceived results; independent of main-turn streaming. */
+  backgroundKeepAlive = false;
   historyMessages: AgentMessage[] = [];
   /** Timeline entries after this index are live (post-resume), not history. */
   historyLiveBase = 0;
@@ -359,7 +362,7 @@ class SessionRuntime {
   }
 }
 
-/** Cap on parked (non-active) idle engines; streaming ones are never evicted. */
+/** Cap on ordinary idle parked engines; protected runtimes do not count. */
 const MAX_PARKED = 4;
 
 const initialGlobal: GlobalView = {
@@ -530,6 +533,7 @@ export class ChatStore {
 
   private detachRt(rt: SessionRuntime) {
     rt.token++;
+    rt.backgroundKeepAlive = false;
     rt.unlisteners.forEach((u) => u());
     rt.unlisteners = [];
   }
@@ -544,16 +548,9 @@ export class ChatStore {
     this.commit();
   }
 
-  /** Evict idle parked engines beyond MAX_PARKED; streaming ones are never evicted. */
+  /** Only ordinary idle runtimes participate in the parked LRU. */
   private evictIdle() {
-    const parked = [...this.runtimes.values()].filter(
-      (rt) => rt !== this.active && !rt.view.isStreaming && !rt.view.connecting,
-    );
-    if (parked.length <= MAX_PARKED) return;
-    parked.sort((a, b) => a.lastActive - b.lastActive);
-    for (const rt of parked.slice(0, parked.length - MAX_PARKED)) {
-      void this.killRt(rt);
-    }
+    selectIdleEvictions(this.runtimes.values(), this.active, MAX_PARKED).forEach((rt) => void this.killRt(rt));
   }
 
   /**
@@ -636,7 +633,6 @@ export class ChatStore {
       rt.historyMessages = [];
       rt.historyLiveBase = 0;
     }
-    rt.token++;
     const token = rt.token;
     this.setRt(rt, {
       sessionId,
@@ -661,7 +657,9 @@ export class ChatStore {
         else u();
       });
 
-    track(onPiEvent(sessionId, (payload) => this.handlePiPayload(payload, rt)));
+    track(onPiEvent(sessionId, (payload) => {
+      if (!rt.dead && token === rt.token) this.handlePiPayload(payload, rt);
+    }));
     track(
       onPiStderr(sessionId, (line) => {
         if (rt === this.active) console.error("[pi stderr]", line);
@@ -683,6 +681,7 @@ export class ChatStore {
    * too — the recovered engine keeps feeding the parked view.
    */
   private async handleEngineExit(rt: SessionRuntime, deadSid: string, info: PiExitInfo) {
+    this.detachRt(rt);
     rejectSessionPending(deadSid, new Error("engine process exited"));
     this.finalizeStreamingEntries(rt);
     this.setRt(rt, { isStreaming: false, isCompacting: false, sessionId: null, pendingAsk: undefined });
@@ -1498,6 +1497,7 @@ export class ChatStore {
         setExtensionQueue: (queue) => this.setRt(rt, { extensionQueue: queue }),
         currentQueue: () => rt.view.extensionQueue,
         setInputDraft: (text) => this.setRt(rt, { inputDraft: text }),
+        setBackgroundKeepAlive: (keepAlive) => { rt.backgroundKeepAlive = keepAlive; if (!keepAlive) this.evictIdle(); },
       },
       rt !== this.active,
       (msg, kind) => this.pushToast(msg, kind),

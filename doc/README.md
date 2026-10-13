@@ -22,7 +22,7 @@
 - [会话自动命名](2026-08-21-会话自动命名.md)
 - [todo_write 任务清单工具](2026-08-21-todo-write-任务清单.md)
 - [ask_user：让模型主动向用户提问](2026-09-07-ask-user-向用户提问工具.md)
-- [可续写子 Agent、外部托管 Job 与主 Agent 派生](2026-09-11-可续写子agent与主agent派生.md)
+- [可续写子 Agent、外部托管 Job 与主 Agent 派生（后台生命周期等行为已由 2026-10-13 设计覆盖；external/peer 未实现）](2026-09-11-可续写子agent与主agent派生.md)
 - [自动压缩气泡常驻与摘要展开](2026-09-09-自动压缩气泡常驻与摘要展开.md)
 - [中止正在进行的上下文压缩](2026-09-09-中止正在进行的上下文压缩.md)
 - [压缩失败退避与重试修正（含 CJK 计价）](2026-09-10-压缩失败退避与重试修正.md)
@@ -88,6 +88,8 @@
 
 ## 运行时与平台
 
+- [后台子 Agent 生命周期与可靠投递（源码已实现、未打包；权限恢复、resume、结果确认与进程内保活）](2026-10-13-后台子agent生命周期与可靠投递.md)
+- [subagent-19 工具失败审计（历史 timeout 冲突、空参数循环与 token 核算；文末含修复状态）](2026-10-13-subagent-19工具失败审计.md)
 - [macOS 平台支持（dev 可跑）与 sidecar 命名契约](2026-09-12-macos-平台支持.md)
 - [macOS `.app` / `.dmg` 打包与运行时资源定位](2026-09-15-macos-app-打包与资源定位.md)
 - [自定义 Provider 的模型能力配置（思考 / 图片 / 最大输出 / Bearer 鉴权头）](2026-09-11-provider模型能力配置.md)
@@ -95,7 +97,7 @@
 - [bash 后台模式：长跑命令交给 Job Runtime](2026-09-24-bash-后台模式.md)
 - [bash 工具耗时分析（并行批末发出 / Windows 全仓搜索 20s→3.4s / 后台 job PATH 缺 coreutils）](2026-10-02-bash工具耗时分析.md)
 - [后台 bash 的 PATH 修复与 ripgrep 随包分发（job/定时任务 coreutils 修复 + rg 六平台资产 pin 与启动期安装）](2026-10-02-后台bash-PATH修复与ripgrep随包分发.md)
-- [Kalo 子 Agent 机制（harness 层）](kalo-subagent-design.md)
+- [Kalo 子 Agent 机制（harness 层；后台生命周期等行为已由 2026-10-13 设计覆盖）](kalo-subagent-design.md)
 - [子 Agent 超时改为 idle watchdog + 过程转录落盘](2026-09-10-子agent-idle-watchdog与转录落盘.md)
 - [子 Agent 卡片里的压缩气泡（activity feed 新增 compaction 条目）](2026-09-18-子agent压缩气泡.md)
 - [子 Agent 活动面板（输入框「N 个子 agent」按钮 + Agent map 弹窗；插话模式迁入输入队列；效果图 `mockups/2026-09-30-agent-map.html`）](2026-09-30-子agent活动面板.md)

@@ -7,6 +7,7 @@
  */
 
 import { createAskState } from "./ask-user";
+import { backgroundKeepAliveStatus } from "./runtime-keep-alive";
 import type { RpcExtensionUIRequest } from "../types";
 
 /** One queued extension UI prompt (select / confirm / input / editor). */
@@ -25,6 +26,7 @@ export type ExtUiSetters = {
   setExtensionQueue(queue: ExtUiPrompt[]): void;
   currentQueue(): ExtUiPrompt[];
   setInputDraft(text: string): void;
+  setBackgroundKeepAlive(keepAlive: boolean): void;
 };
 
 export function dispatchExtensionUiRequest(
@@ -64,7 +66,11 @@ export function dispatchExtensionUiRequest(
     case "set_editor_text":
       setters.setInputDraft(req.text);
       break;
-    case "setStatus":
+    case "setStatus": {
+      const keepAlive = backgroundKeepAliveStatus(req);
+      if (keepAlive !== undefined) setters.setBackgroundKeepAlive(keepAlive);
+      break;
+    }
     case "setWidget":
       break;
   }
