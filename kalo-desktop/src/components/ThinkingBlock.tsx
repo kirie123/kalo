@@ -3,11 +3,13 @@ import { useState } from "react";
 /** Compact collapsible row for assistant thinking content; folded by default. */
 export default function ThinkingBlock({ thinking, live }: { thinking: string; live?: boolean }) {
   const [open, setOpen] = useState(false);
+  if (!thinking.trim() && !live) return null;
   return (
     <div className="my-1">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-1.5 rounded-md px-2 py-0.5 text-left text-xs italic text-dim hover:text-ink"
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 py-1.5 text-left text-[13px] text-dim hover:text-ink"
       >
         <svg
           width="8"
@@ -21,7 +23,7 @@ export default function ThinkingBlock({ thinking, live }: { thinking: string; li
           <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span>
-          Thought ({thinking.length} chars)
+          {live ? "正在思考" : "思考过程"}
           {live && <span className="spinner ml-2 align-middle" />}
         </span>
       </button>

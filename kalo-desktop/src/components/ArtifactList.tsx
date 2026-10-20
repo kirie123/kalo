@@ -5,6 +5,7 @@ import { chatStore } from "../lib/chat-store";
 import { openPath } from "../lib/pi-bridge";
 import ContextMenu, { copyLinkItem, copyPathItem, openPathItem, openUrlItem, useContextMenu, type MenuItem } from "./ContextMenu";
 import FileViewerModal from "./FileViewerModal";
+import DeliveredImage from "./DeliveredImage";
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -119,15 +120,19 @@ export default function ArtifactList({ items }: { items: ArtifactItem[] }) {
   return (
     <>
       {items.map((item) => (
-        <ArtifactRow
-          key={item.path}
-          item={item}
-          onOpen={() => openItem(item)}
-          onContextMenu={(e) => {
-            setMenuItem(item);
-            menu.onContextMenu(e);
-          }}
-        />
+        <div key={item.path}>
+          {item.kind === "file" && item.fileKind === "image" && !item.missing && (
+            <div className="px-2 py-2"><DeliveredImage source={item.path} alt={item.name} /></div>
+          )}
+          <ArtifactRow
+            item={item}
+            onOpen={() => openItem(item)}
+            onContextMenu={(e) => {
+              setMenuItem(item);
+              menu.onContextMenu(e);
+            }}
+          />
+        </div>
       ))}
       {menu.at && menuItem && <ContextMenu at={menu.at} items={menuItems(menuItem)} onClose={menu.close} />}
       {viewing && viewing.kind === "file" && (

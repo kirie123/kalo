@@ -8,37 +8,15 @@ import AgentActivityFeed from "./AgentActivityFeed";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 import { TodoStatusIcon } from "./TodoPanel";
 
-/**
- * Right-side chip label naming the concrete tool, e.g. "Read File".
- *
- * Built-ins are named here too, so a row never shows an id like `job_list`;
- * unmapped tools (MCP servers) keep their own name — that one identifies the
- * call and only the user can recognize it.
- */
-const TOOL_CHIPS: Record<string, string> = {
-  read: "Read File",
-  write: "Write File",
-  edit: "Edit",
-  bash: "Bash",
-  grep: "Grep",
-  glob: "Glob",
-  find: "Find",
-  ls: "LS",
-  agent: "Sub Agent",
-  todo_write: "Todo",
-  ask_user: "Ask",
-  use_skill: "Skill",
-  read_me: "Design Spec",
-  web_fetch: "Web Fetch",
-  memory_save: "Memory",
-  memory_search: "Memory",
-  memory_list: "Memory",
-  job_list: "Job",
-  job_output: "Job",
-  job_kill: "Job",
-  present_files: "Present",
-  show_widget: "Widget",
-};
+/** Muted outline icons identify actions without adding tool-name badges. */
+function ToolIcon({ name }: { name: string }) {
+  const path = name === "bash" ? "M3 4l4 4-4 4M9 12h4"
+    : name === "edit" || name === "write" ? "M10 2l4 4-8 8H2v-4zM8 4l4 4"
+      : name === "read" || name === "ls" ? "M3 2h7l3 3v9H3zM9 2v4h4M5 9h5M5 11h4"
+        : name === "web_fetch" ? "M2 8h12M8 1a7 7 0 100 14A7 7 0 008 1M8 1c-4 4-4 10 0 14M8 1c4 4 4 10 0 14"
+          : "M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z";
+  return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true"><path d={path} strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
 
 /**
  * Seconds a running bash may stay silent before its row unfolds on its own.
@@ -79,19 +57,10 @@ function agentSteps(rec: ToolCallRecord): number | null {
 function StatusMark({ rec }: { rec: ToolCallRecord }) {
   if (rec.status === "running") return <span className="spinner" />;
   if (rec.status === "error") return <span className="text-[var(--danger)]">✗</span>;
-  return <span className="text-[var(--ok)]">✓</span>;
+  return <ToolIcon name={rec.toolName} />;
 }
 
-/**
- * The call rows without the group shell, for use inside a work segment.
- *
- * The segment header already summarizes the same calls as chips ("读取了 2 个
- * 文件"), and a segment is routinely cut into single-call groups by the
- * thinking blocks between them — so the per-group header there degenerates
- * into "读取了 1 个文件" stacked above the one row it describes. Dropping it
- * removes a nesting level and restores strict chronological order inside the
- * segment (doc/2026-09-13-工作段母气泡.md).
- */
+/** Individual calls are revealed on demand below the activity summary. */
 export function ToolCallList({ calls }: { calls: ToolCallRecord[] }) {
   return (
     <div className="flex flex-col text-[13px]">
@@ -102,25 +71,25 @@ export function ToolCallList({ calls }: { calls: ToolCallRecord[] }) {
   );
 }
 
-export default function ToolCallGroup({ toolName, calls }: { toolName: string; calls: ToolCallRecord[] }) {
-  // Groups start expanded so the user can follow what the agent is doing.
-  const [open, setOpen] = useState(true);
+export default function ToolCallGroup({ toolName, calls, compact = false }: { toolName: string; calls: ToolCallRecord[]; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
   const anyRunning = calls.some((c) => c.status === "running");
   const anyError = calls.some((c) => c.status === "error");
 
   return (
-    <div className="py-0.5 text-[13px]">
+    <div className={`tool-activity ${compact ? "is-compact" : ""}`}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-card"
+        aria-expanded={open}
+        className="tool-activity-heading flex w-full items-center gap-2 py-1.5 text-left text-dim hover:text-ink"
       >
-        <span className="w-4 shrink-0 text-center">
+        <span className="grid w-4 shrink-0 place-items-center">
           {anyRunning ? (
             <span className="spinner" />
           ) : anyError ? (
             <span className="text-[var(--danger)]">✗</span>
           ) : (
-            <span className="text-[var(--ok)]">✓</span>
+            <ToolIcon name={toolName} />
           )}
         </span>
         <span className="text-dim">{groupTitle(toolName, calls.length)}</span>
@@ -131,16 +100,14 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className={`ml-auto shrink-0 text-dim transition-transform ${open ? "" : "-rotate-90"}`}
+          className={`shrink-0 text-dim transition-transform ${open ? "" : "-rotate-90"}`}
         >
           <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {open && (
-        <div className="ml-6 flex flex-col border-l border-edge pl-2">
-          {calls.map((rec, i) => (
-            <ToolCallRow key={rec.toolCallId} rec={rec} isLast={i === calls.length - 1} />
-          ))}
+        <div className="tool-activity-details ml-6 flex max-h-80 flex-col overflow-y-auto">
+          <ToolCallList calls={calls} />
         </div>
       )}
     </div>
@@ -148,7 +115,7 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
 }
 
 function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) {
-  // Call details start closed, except edits (inline diff) and the newest
+  // Call details start closed, except the newest
   // todo_write. Consecutive todo_write calls collapse into one group, so
   // expanding every row would stack the same list over and over; only the
   // current plan is worth showing unfolded.
@@ -158,11 +125,10 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
   // the surrounding conversation. Progress stays visible in the row itself via
   // the spinner and the "第 N 步" chip; click to open the feed on demand.
   const [open, setOpen] = useState(
-    rec.toolName === "edit" || (rec.toolName === "todo_write" && isLast),
+    rec.toolName === "todo_write" && isLast,
   );
   const diff = extractDiff(rec.result) ?? extractDiff(rec.partialResult);
   const stats = diff ? diffStats(diff) : null;
-  const chip = TOOL_CHIPS[rec.toolName] ?? rec.toolName;
   const steps = rec.toolName === "agent" ? agentSteps(rec) : null;
   // Set once the user clicks the row: the 30s auto-expand must not fight a
   // deliberate collapse (doc/2026-10-02-桌面终端与长命令实时可见.md §2.3).
@@ -184,16 +150,18 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
     <>
       <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-card">
         <button
+          aria-expanded={open}
+          title={rowLabel(rec)}
           onClick={() => {
             userToggled.current = true;
             setOpen((v) => !v);
           }}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
-          <span className="w-4 shrink-0 text-center text-[11px]">
+          <span className="grid w-4 shrink-0 place-items-center text-[11px] text-dim">
             <StatusMark rec={rec} />
           </span>
-          <span className="mono min-w-0 flex-1 truncate text-xs text-dim group-hover:text-ink">
+          <span className="min-w-0 flex-1 truncate text-[13px] text-dim group-hover:text-ink">
             {rowLabel(rec)}
           </span>
         </button>
@@ -215,9 +183,6 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
         {elapsedSec !== null && elapsedSec >= 5 && (
           <span className="mono shrink-0 text-[10px] tabular-nums text-dim">已运行 {elapsedSec}s</span>
         )}
-        <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
-          {chip}
-        </span>
         {rec.toolName === "bash" && (
           <button
             onClick={() => openBashInTerminal(rec)}

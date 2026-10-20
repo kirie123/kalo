@@ -47,7 +47,7 @@ function CollapsibleText({ text }: { text: string }) {
 
   return (
     <div
-      className={`group/bubble relative max-w-[75%] overflow-hidden rounded-2xl bg-[var(--bubble)] px-3.5 py-2 text-sm leading-relaxed ${
+      className={`group/bubble relative max-w-[85%] overflow-hidden rounded-[20px] bg-[var(--accent)] px-4 py-3 text-[15px] leading-relaxed text-[var(--accent-contrast)] ${
         overflowing && expanded ? "pb-7" : ""
       }`}
     >
@@ -59,7 +59,7 @@ function CollapsibleText({ text }: { text: string }) {
         {text}
       </div>
       {clamped && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-[var(--bubble)]" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent to-[var(--accent)]" />
       )}
       {overflowing && (
         <button
@@ -81,7 +81,7 @@ export default function UserBubble({ message }: { message: UserMessage }) {
   const images = userImages(message);
 
   return (
-    <div className="group flex flex-col items-end py-1">
+    <div className="user-message group flex flex-col items-end py-1">
       {(paths.length > 0 || images.length > 0) && (
         <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5 pb-1">
           {images.map((img, i) => (

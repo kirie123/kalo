@@ -3,7 +3,7 @@ import { foldRunArtifacts } from "../lib/artifacts";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import type { TimelineEntry } from "../lib/timeline";
 import { useChatZoom } from "../lib/chat-zoom";
-import { foldWorkSegments } from "../lib/work-segment";
+import { foldConversationTurns } from "../lib/conversation-turns";
 import { assistantText } from "./AssistantMessage";
 import TimelineItem from "./TimelineItem";
 import WorkSegment from "./WorkSegment";
@@ -20,6 +20,7 @@ export default function MessageList() {
     }),
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const zoom = useChatZoom();
   // Stick to bottom unless the user scrolled up.
   const stickToBottom = useRef(true);
@@ -36,14 +37,9 @@ export default function MessageList() {
     isCompacting,
   ]);
 
-  // Consecutive thinking/tool entries render under one collapsible parent
-  // bubble. Pure view-layer fold: the timeline itself (live or replayed from a
-  // session file) is untouched (doc/2026-09-13-工作段母气泡.md).
-  //
-  // foldRunArtifacts runs first so each run's present_files list lands inside
-  // that run's end-of-run card instead of cutting it in half.
+  // Group whole-run progress; final replies and deliverables remain outside.
   const rows = useMemo(
-    () => foldWorkSegments(foldRunArtifacts(timeline, isStreaming || isCompacting)),
+    () => foldConversationTurns(foldRunArtifacts(timeline, isStreaming || isCompacting), isStreaming || isCompacting),
     [timeline, isStreaming, isCompacting],
   );
 
@@ -70,6 +66,18 @@ export default function MessageList() {
     const el = scrollRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [timeline, zoom]);
+
+  // Images, widgets and collapsed process rows can resize after the event flush.
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const observer = new ResizeObserver(() => {
+      const el = scrollRef.current;
+      if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   // Switching sessions always lands on the newest message: the stick-to-bottom
   // flag is per-view, so without this reset a session left scrolled up would
@@ -113,18 +121,16 @@ export default function MessageList() {
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
-        <div className="mx-auto flex max-w-3xl flex-col gap-1.5 px-4 py-4" style={{ zoom }}>
+        <div ref={contentRef} className="conversation-transcript mx-auto flex max-w-3xl flex-col px-5 py-6" style={{ zoom }}>
           {loadingOlder && <div className="text-center text-xs text-dim">加载更早的消息…</div>}
-          {rows.map((row, i) =>
+          {rows.map((row) =>
             row.kind === "segment" ? (
               <WorkSegment
-                key={row.id}
+                key={`process:${row.id}`}
                 entries={row.entries}
                 stats={row.stats}
-                // Follow the agent live: the running segment (and the trailing
-                // one of a run that hasn't settled) starts expanded, then folds
-                // itself once the run ends.
-                autoOpen={row.stats.running || (i === rows.length - 1 && (isStreaming || isCompacting))}
+                running={row.running}
+                startedAt={row.startedAt}
                 onScrollAdjust={adjustScroll}
               />
             ) : (

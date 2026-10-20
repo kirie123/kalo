@@ -40,7 +40,7 @@ export default function AssistantMessage({
   const failed = !interrupted && message.stopReason === "error" && message.errorMessage && !errorRetried;
   const lastIdx = message.content.length - 1;
   return (
-    <div className={`text-sm ${streaming ? "streaming-cursor" : ""}`}>
+    <div className={`assistant-message group/message text-[15px] ${streaming ? "streaming-cursor" : ""}`}>
       {message.content.map((block, i) => {
         if (block.type === "text") {
           if (!block.text && !streaming) return null;
@@ -63,7 +63,7 @@ export default function AssistantMessage({
             {usage && formatRunUsage(usage)}
           </span>
           {copyText && (
-            <span className="opacity-0 transition-opacity group-hover/msg:opacity-100">
+            <span className="opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
               <CopyButton text={copyText} title="复制本轮回复" />
             </span>
           )}

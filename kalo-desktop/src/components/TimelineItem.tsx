@@ -5,7 +5,7 @@ import AssistantMessage from "./AssistantMessage";
 import ChangedFilesCard from "./ChangedFilesCard";
 import CompactionBubble from "./CompactionBubble";
 import RetryNotice from "./RetryNotice";
-import ToolCallGroup, { ToolCallList } from "./ToolCallGroup";
+import ToolCallGroup from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
 import WidgetCard from "./WidgetCard";
 
@@ -13,9 +13,7 @@ import WidgetCard from "./WidgetCard";
  * Renders one timeline entry. Used both at top level (MessageList) and inside a
  * work segment (WorkSegment).
  *
- * `inSegment` drops the tool-group shell: the segment header already carries
- * the per-tool counts, so keeping the group header would stack two summaries
- * over one row. Everything else renders identically in both places.
+ * `inSegment` uses quiet activity rows within the expanded whole-run process.
  *
  * Memoized: the store's throttled flush clones only mutated entries, so
  * untouched timeline items skip re-rendering entirely during streaming.
@@ -43,11 +41,7 @@ const TimelineItem = memo(function TimelineItem({
         />
       );
     case "toolGroup":
-      return inSegment ? (
-        <ToolCallList calls={entry.calls} />
-      ) : (
-        <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />
-      );
+      return <ToolCallGroup toolName={entry.toolName} calls={entry.calls} compact={inSegment} />;
     case "retry":
       return (
         <RetryNotice

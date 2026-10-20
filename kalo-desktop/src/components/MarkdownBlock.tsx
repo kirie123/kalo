@@ -1,5 +1,7 @@
 import { memo, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import DeliveredImage from "./DeliveredImage";
+import { markdownImageSource } from "../lib/delivered-image";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -63,7 +65,9 @@ export const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: strin
             key={i}
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={[rehypeKatex]}
+            urlTransform={(url, key, node) => node.tagName === "img" && key === "src" ? markdownImageSource(url) : defaultUrlTransform(url)}
             components={{
+              img: ({ src, alt, title }) => <DeliveredImage source={typeof src === "string" ? src : ""} alt={alt} title={title} />,
               code: CodeRenderer as any,
               // CodeRenderer renders its own <pre>; avoid a double wrapper.
               pre: ({ children }) => <>{children}</>,
