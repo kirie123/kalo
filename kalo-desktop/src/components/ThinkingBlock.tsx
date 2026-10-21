@@ -5,7 +5,7 @@ export default function ThinkingBlock({ thinking, live }: { thinking: string; li
   const [open, setOpen] = useState(false);
   if (!thinking.trim() && !live) return null;
   return (
-    <div className="my-1">
+    <div className="thinking-block my-1">
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}

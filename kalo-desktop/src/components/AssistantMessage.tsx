@@ -18,6 +18,7 @@ export default function AssistantMessage({
   usage,
   copyText,
   errorRetried,
+  compact = false,
 }: {
   message: AssistantMessageType;
   streaming?: boolean;
@@ -29,6 +30,7 @@ export default function AssistantMessage({
   copyText?: string;
   /** Error already shown by the retry notice; don't render a second banner. */
   errorRetried?: boolean;
+  compact?: boolean;
 }) {
   // Stopping a run is a deliberate act, not a failure: mark it with the wave
   // divider and swallow the engine's raw "Request was aborted" instead of
@@ -40,7 +42,7 @@ export default function AssistantMessage({
   const failed = !interrupted && message.stopReason === "error" && message.errorMessage && !errorRetried;
   const lastIdx = message.content.length - 1;
   return (
-    <div className={`assistant-message group/message text-[15px] ${streaming ? "streaming-cursor" : ""}`}>
+    <div className={`assistant-message group/message text-[15px] ${compact ? "is-process" : ""} ${streaming ? "streaming-cursor" : ""}`}>
       {message.content.map((block, i) => {
         if (block.type === "text") {
           if (!block.text && !streaming) return null;

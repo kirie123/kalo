@@ -38,6 +38,7 @@ const TimelineItem = memo(function TimelineItem({
           usage={entry.usage}
           copyText={copyText}
           errorRetried={entry.retriedError}
+          compact={inSegment}
         />
       );
     case "toolGroup":

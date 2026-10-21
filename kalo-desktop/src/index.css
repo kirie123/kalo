@@ -390,12 +390,22 @@ body {
 .work-segment-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 0 2px;
+  gap: 4px;
+  padding: 8px 0 2px;
 }
 .assistant-message {
   min-width: 0;
   margin: 8px 0 14px;
+}
+.assistant-message.is-process {
+  margin: 0;
+}
+.assistant-message.is-process .thinking-block {
+  margin: 0;
+}
+.assistant-message.is-process .thinking-block > button {
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 .conversation-transcript > .user-message {
   margin: 12px 0 20px;
