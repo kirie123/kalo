@@ -53,7 +53,6 @@ import {
   accumulate,
   createAccumulator,
   summarize,
-  type ChangeAccumulator,
 } from "./changed-files";
 import {
   errText,
@@ -66,9 +65,11 @@ import {
   sameFlags,
   saveLastModel,
 } from "./chat-store-helpers";
+import { SessionRuntime, type SessionView } from "./chat-session";
 import { publishBashWatch } from "./tool-watch-registry";
 import {
   createSession,
+  expertForSession,
   closeSession,
   onPiEvent,
   onPiExit,
@@ -94,7 +95,6 @@ import type {
   TimelineEntry,
   ToolCallRecord,
   TodoItem,
-  TurnUsage,
 } from "./timeline";
 
 // ============================================================================
@@ -122,6 +122,7 @@ export interface ChatState {
   /** The engine-side session id (from get_state), used to highlight history items. */
   engineSessionId?: string;
   cwd: string;
+  expertId?: string;
   sessionName?: string;
   timeline: TimelineEntry[];
   /**
@@ -203,32 +204,6 @@ export interface ChatState {
  * components keep reading a flat ChatState. currentModel/thinkingLevel/
  * steeringMode live here because each engine process keeps its own values.
  */
-type SessionView = Pick<
-  ChatState,
-  | "sessionId"
-  | "engineSessionId"
-  | "cwd"
-  | "sessionName"
-  | "timeline"
-  | "todos"
-  | "history"
-  | "loadingOlder"
-  | "isStreaming"
-  | "isCompacting"
-  | "currentModel"
-  | "thinkingLevel"
-  | "steeringMode"
-  | "permissionMode"
-  | "extensionQueue"
-  | "pendingAsk"
-  | "inputDraft"
-  | "attachments"
-  | "inputQueue"
-  | "contextUsage"
-  | "sessionFile"
-  | "connecting"
->;
-
 /** Engine-process-global catalogs + app-level bits shared by all runtimes. */
 type GlobalView = Pick<ChatState, "models" | "customModels" | "thinkingLevels" | "toasts" | "commands">;
 
@@ -236,6 +211,7 @@ const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
   "sessionId",
   "engineSessionId",
   "cwd",
+  "expertId",
   "sessionName",
   "timeline",
   "todos",
@@ -260,106 +236,6 @@ const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
 /** Session-view changes that alter pool-visible state (runningByFile / pendingSessions) must commit. */
 function affectsPoolFlags(p: Partial<SessionView>): boolean {
   return "isStreaming" in p || "connecting" in p || "sessionFile" in p || "engineSessionId" in p || "cwd" in p;
-}
-
-/** Session-scoped fields reset for every fresh runtime. */
-function freshView(cwd = ""): SessionView {
-  const saved = loadLastModel();
-  return {
-    sessionId: null,
-    cwd,
-    timeline: [],
-    todos: [],
-    loadingOlder: false,
-    isStreaming: false,
-    isCompacting: false,
-    currentModel: saved ? ({ id: saved.modelId, name: saved.name || saved.modelId, provider: saved.provider } as ModelInfo) : undefined,
-    thinkingLevel: "medium",
-    steeringMode: "one-at-a-time",
-    permissionMode: undefined,
-    extensionQueue: [],
-    pendingAsk: undefined,
-    attachments: [],
-    inputQueue: [],
-    contextUsage: undefined,
-  };
-}
-
-/**
- * One pooled engine session: the view state above plus everything needed to
- * keep it alive in the background (event routing, history window, recovery).
- * Switching sessions never tears a runtime down — only pool eviction,
- * deliberate restart, or app exit kills its engine process.
- */
-class SessionRuntime {
-  /**
-   * Pool key: normalized session file path once known, else `fresh-N`.
-   * Re-keyed by the store when the engine reports its session file.
-   */
-  key: string;
-  /**
-   * Stable per-conversation identity for per-session UI memory
-   * (doc/2026-09-30-文件面板按会话记忆.md): taken from the initial key and
-   * never re-keyed, so `fresh-N` keeps naming the same conversation after the
-   * engine reports its session file and the pool key moves to that path.
-   */
-  uid: string;
-  view: SessionView;
-  /** Tauri event unlisteners for this runtime's engine process. */
-  unlisteners: Array<() => void> = [];
-  /** Generation guard: bumps on restart/teardown so stale callbacks no-op. */
-  token = 0;
-  /** Engine exited before any message was persisted — nothing to recover from. */
-  dead = false;
-  /** Background tasks / unreceived results; independent of main-turn streaming. */
-  backgroundKeepAlive = false;
-  historyMessages: AgentMessage[] = [];
-  /** Timeline entries after this index are live (post-resume), not history. */
-  historyLiveBase = 0;
-  /** Usage accumulator for the in-flight run (agent_start → agent_settled). */
-  runUsage: TurnUsage | null = null;
-  /** Files written/edited during the in-flight run, folded per path. */
-  runChanges: ChangeAccumulator = createAccumulator();
-  /** Auto-recovery attempts for this runtime's lifecycle (capped). */
-  recoveryCount = 0;
-  /** In-flight lazy engine connect (new chat) of this runtime. */
-  sessionInit: Promise<string> | null = null;
-  /**
-   * Set on the first prompt of a brand-new chat: pi does not write the session
-   * file until the first assistant message, so the sidebar's disk scan cannot
-   * see this session yet. Published as a PendingSession until then. Undefined
-   * for resumed sessions (already on disk) and for chats never prompted.
-   */
-  pending: { title: string; at: number } | null = null;
-  /** Background engine connect of a resume; sendPrompt awaits it. */
-  resumePromise: Promise<void> | null = null;
-  compactionNoticeId: string | null = null;
-  lastActive = Date.now();
-  /** Per-runtime lock: prevents concurrent get_session_stats IPC calls. */
-  contextInflight = false;
-  /**
-   * A prompt is on its way to the engine but `agent_start` has not come back
-   * yet. Counts as "running" for the input queue, so a message typed inside
-   * that window queues instead of racing the run that is about to start.
-   */
-  dispatching = false;
-  /** 用户刚按了停止：本次 settled 不自动发队列（停止 = 别再自己动）。 */
-  queueHold = false;
-  // Per-runtime stream batching (20fps clone flush).
-  flushTimer: ReturnType<typeof setTimeout> | null = null;
-  pendingClones = new Set<string>();
-
-  /**
-   * `expertId` (experts panel's 开始会话) is passed to create_session on every
-   * spawn, including crash recovery, so a recovered engine keeps the expert
-   * identity. A constructor parameter property, to keep this file within its
-   * length budget (the file is over the 800-line limit and may only shrink).
-   */
-  constructor(key: string, cwd = "", public expertId?: string) {
-    this.key = key;
-    this.uid = key;
-    this.view = freshView(cwd);
-  }
 }
 
 /** Cap on ordinary idle parked engines; protected runtimes do not count. */
@@ -572,6 +448,13 @@ export class ChatStore {
     this.evictIdle();
   }
 
+  selectExpert(expertId: string | undefined, cwd: string) {
+    const rt = this.active;
+    if (rt.view.isStreaming || rt.view.isCompacting || rt.view.connecting) throw new Error("请等待当前任务结束后切换专家");
+    if (rt.view.timeline.length || rt.view.sessionId) this.newChat({ cwd, expertId });
+    else this.setRt(rt, { cwd, expertId });
+  }
+
   /**
    * Kill the engine bound to a session file (called when its history is
    * deleted). If it is the active view, switch to a fresh chat first.
@@ -748,7 +631,7 @@ export class ChatStore {
     for (const delay of [0, 500, 1500]) {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
-        const sid = await createSession(cwd, rt.expertId);
+        const sid = await createSession(cwd, rt.view.expertId);
         this.attachSession(rt, sid, cwd, opts);
         return sid;
       } catch (err) {
@@ -860,6 +743,8 @@ export class ChatStore {
     // continuable; the timeline rendered in phase A stays untouched.
     rt.resumePromise = (async () => {
       try {
+        const expertId = await expertForSession(sessionPath);
+        this.setRt(rt, { expertId: expertId ?? undefined });
         localStorage.setItem("kalo.lastCwd", cwd);
         const sid = await this.spawnSession(rt, cwd, { keepTimeline: true });
         await this.waitForEngine(sid);

@@ -18,7 +18,7 @@
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   schedule_list / schedule_upsert / schedule_remove / schedule_run
  *   feed_list / feed_upsert / feed_remove / feed_run
- *   expert_list / expert_upsert / expert_remove
+ *   expert_list / expert_upsert / expert_remove / expert_import { path } -> Expert
  *   list_knowledge_cards / list_knowledge_domains / search_knowledge
  *   read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
@@ -472,6 +472,15 @@ export function onFeedError(cb: (message: string) => void) {
 /** The expert registry (id / name / workdir / mission / enabled). */
 export function expertList(): Promise<Expert[]> {
   return invoke<Expert[]>("expert_list", {});
+}
+
+/** Import a local WorkBuddy expert/team package into Kalo's managed workspace. */
+export function expertImport(path: string): Promise<Expert> {
+  return invoke<Expert>("expert_import", { path });
+}
+
+export function expertForSession(path: string): Promise<string | null> {
+  return invoke<string | null>("expert_for_session", { path });
 }
 
 /** Create or replace one expert (whole object). */

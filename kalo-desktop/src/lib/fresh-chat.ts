@@ -11,7 +11,7 @@ import { createWorkspace } from "./pi-bridge";
  * (`~/.kalo/workspaces/chat-<n>`, see doc/2026-09-07-新对话工作目录.md).
  *
  * Entry points that already know where the chat belongs (a pinned project, an
- * expert's workdir, an era workspace) keep passing their own cwd to
+ * an era workspace) keep passing their own cwd to
  * `chatStore.newChat` and do not go through here.
  */
 export async function startFreshChat(): Promise<void> {

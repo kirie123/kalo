@@ -712,13 +712,16 @@ fn handle_session_request(app: &AppHandle, value: &serde_json::Value) {
         return;
     }
 
-    // Expert task: identity + memory isolation come from the registry
-    // (doc/2026-08-29-digital-experts.md); the registry's workdir wins over
-    // the task's cwd so a stale task can't redirect an expert's session.
+    // Expert definitions supply identity/resources; task cwd supplies output location.
     let expert = match expert_id.as_deref() {
         Some(id) => match crate::experts::find(id) {
             Some(e) => {
-                cwd = e.workdir.clone();
+                if e.contains_definition_path(std::path::Path::new(&cwd)) {
+                    cwd = match crate::workspace::create_workspace() {
+                        Ok(path) => path,
+                        Err(error) => { report_failure(error); return; }
+                    };
+                }
                 Some(e.ctx())
             }
             None => {

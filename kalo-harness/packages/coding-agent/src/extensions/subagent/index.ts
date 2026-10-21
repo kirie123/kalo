@@ -8,6 +8,7 @@ import type {
 	ExtensionContext,
 } from "../../core/extensions/types.ts";
 import { SessionManager } from "../../core/session-manager.ts";
+import { resolveMemberRole } from "../expert-context/package.ts";
 import { backgroundTasks } from "./background.ts";
 import { type ChildHandle, childSessionDir, findChildSessionFile, lookup, nextChildId } from "./children.ts";
 import { acquireChild, childSlots } from "./concurrency.ts";
@@ -17,6 +18,8 @@ import { DEFAULT_TOOLS, normalizeTools, restoreChildTools, validateChildId } fro
 
 interface AgentParams {
 	prompt: string;
+	subagent_type?: string;
+	name?: string;
 	description?: string;
 	tools?: string[] | string;
 	resume?: string;
@@ -38,10 +41,13 @@ export default function subagentExtension(pi: ExtensionAPI): void {
 			"resume=子 agent id 保留上下文续写；运行中仅追加 follow-up 并返回已排队，结果归当前运行。" +
 			"默认工具 read/grep/glob/ls/web_fetch；resume 沿用初始权限，旧会话无权限记录时无工具。" +
 			"长结果截断，返回转录路径可用 read/grep 查看。",
-		promptSnippet: "agent(prompt, description?, tools?, resume?, run_in_background?) — 派生/续写子 agent，可后台执行",
+		promptSnippet:
+			"agent(prompt, subagent_type?, description?, tools?, resume?, run_in_background?) — 派生/续写子 agent；专家团可按成员 ID 绑定角色",
 		promptGuidelines: ["子 agent 报错或卡死后用 agent(resume=它的 id) 继续；后台任务通过 agent_tasks 查询或取消"],
 		parameters: Type.Object({
 			prompt: Type.String({ description: "完整任务描述；resume 时为追加的新指令。" }),
+			subagent_type: Type.Optional(Type.String({ description: "专家团成员 ID；加载其独立角色定义，新建时使用。" })),
+			name: Type.Optional(Type.String({ description: "WorkBuddy 成员 ID 兼容别名；优先使用 subagent_type。" })),
 			description: Type.Optional(Type.String({ description: "3-5 个词的任务摘要。" })),
 			tools: Type.Optional(
 				Type.Union([Type.Array(Type.String()), Type.String()], {
@@ -75,6 +81,12 @@ export async function executeAgent(
 	const agentDir = getAgentDir();
 	const directory = childSessionDir(cwd, owner, agentDir);
 	const resumeId = params.resume?.trim();
+	// Identity is immutable on resume. Never reinterpret a member id as a child id.
+	if (resumeId && (params.subagent_type || params.name)) {
+		throw new Error("resume 沿用原成员身份，请省略 subagent_type/name，仅传返回的 childId");
+	}
+	const roleId = params.subagent_type?.trim() || params.name?.trim();
+	const role = roleId ? resolveMemberRole(cwd, roleId, process.env.KALO_EXPERT_DIR?.trim() || cwd) : undefined;
 	const childId = resumeId || nextChildId();
 	validateChildId(childId);
 	// Match registry identity, including legacy ids and cwd spelling changes on Windows.
@@ -131,6 +143,7 @@ export async function executeAgent(
 					tools,
 					parentSessionId: owner,
 					childId,
+					role,
 					description: params.description,
 				};
 				// Recheck after the lock: another queued resume may have revived the child already.

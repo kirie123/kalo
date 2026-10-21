@@ -225,7 +225,7 @@ export default memo(function Sidebar({
         <SideButton onClick={notImplemented} icon={<SearchIcon />} label="搜索" />
         <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" active={automationActive} />
         <SideButton onClick={onOpenNotes} icon={<BookIcon />} label="知识笔记" active={notesActive} />
-        <SideButton onClick={onOpenExperts} icon={<ExpertIcon />} label="数字专家" active={expertsActive} />
+        <SideButton onClick={onOpenExperts} icon={<ExpertIcon />} label="专家市场" active={expertsActive} />
         <SideButton onClick={onOpenEra} icon={<EvolveIcon />} label="演化" active={eraActive} />
       </div>
 

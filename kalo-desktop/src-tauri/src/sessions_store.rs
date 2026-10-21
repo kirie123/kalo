@@ -221,7 +221,7 @@ fn unique_entry_id(existing: &HashSet<String>) -> String {
 
 /// ISO-8601 UTC timestamp in the engine's `new Date().toISOString()` shape.
 /// Sub-second precision is omitted — nothing reads it.
-fn iso_now() -> String {
+pub(crate) fn iso_now() -> String {
     let total = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

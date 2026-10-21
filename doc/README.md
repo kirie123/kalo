@@ -9,6 +9,7 @@
 - [Kalo 个人 Agent 路线图（通用底座 + 提示层）](2026-08-17-personal-agent-roadmap.md)
 - [kalo-desktop 距离生产级的差距：诊断与分期](2026-08-19-生产级差距诊断.md)
 - [数字专家（Digital Expert）+ paper-broker 虚拟账号](2026-08-29-digital-experts.md)
+- [WorkBuddy 专家包与专家团兼容（导入、成员身份与协作适配）](2026-10-21-WorkBuddy专家包与专家团兼容.md)
 
 ## 会话与输入
 

@@ -16,7 +16,7 @@
  * Liveness and transcripts: doc/2026-09-10-子agent-idle-watchdog与转录落盘.md
  */
 
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../../config.ts";
@@ -26,6 +26,7 @@ import { DefaultResourceLoader } from "../../core/resource-loader.ts";
 import { createAgentSession } from "../../core/sdk.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
+import { MEMBER_ROLE_ENTRY, type MemberRole, memberContextExtension } from "../expert-context/package.ts";
 // Imported directly rather than via ../index.ts: that module also pulls in this
 // one, and going through it would be a circular import.
 import webFetchExtension from "../webfetch/index.ts";
@@ -107,7 +108,13 @@ function getChildResources(cwd: string, agentDir: string): Promise<ChildResource
 				agentDir,
 				settingsManager,
 				noExtensions: true,
-				extensionFactories: [{ name: "webfetch", factory: webFetchExtension, hidden: true }],
+				additionalSkillPaths: process.env.KALO_EXPERT_DIR
+					? [join(process.env.KALO_EXPERT_DIR, ".kalo", "skills")]
+					: [],
+				extensionFactories: [
+					{ name: "webfetch", factory: webFetchExtension, hidden: true },
+					{ name: "expert-member", factory: memberContextExtension, hidden: true },
+				],
 			});
 			await loader.reload();
 			const modelRuntime = await ModelRuntime.create({});
@@ -179,6 +186,7 @@ export async function createChild(opts: {
 	parentSessionId: string;
 	childId: string;
 	description?: string;
+	role?: MemberRole;
 }): Promise<ChildHandle> {
 	const agentDir = getAgentDir();
 	const { settingsManager, loader, modelRuntime } = await getChildResources(opts.cwd, agentDir);
@@ -207,6 +215,7 @@ export async function createChild(opts: {
 		}
 		persistChildTools(sessionDir, opts.childId, tools);
 		session.sessionManager.appendCustomEntry(CHILD_TOOLS_ENTRY, { tools });
+		if (opts.role) session.sessionManager.appendCustomEntry(MEMBER_ROLE_ENTRY, opts.role);
 	} catch (error) {
 		session.dispose();
 		throw error;

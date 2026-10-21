@@ -12,6 +12,7 @@ import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
 import InputQueue from "./InputQueue";
 import ModelPicker from "./ModelPicker";
 import PermissionChip from "./PermissionChip";
+import ExpertPicker from "../features/experts/ExpertPicker";
 
 const MAX_TEXTAREA_HEIGHT = 192; // ~8 lines
 
@@ -533,6 +534,7 @@ export default function InputBox() {
             <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
+        <ExpertPicker />
         <ModelPicker />
       </div>
 

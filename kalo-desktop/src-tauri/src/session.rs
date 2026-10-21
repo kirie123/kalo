@@ -191,10 +191,7 @@ impl PiProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(expert) = expert {
-            cmd.env("KALO_EXPERT_ID", &expert.id)
-                .env("KALO_EXPERT_NAME", &expert.name)
-                .env("KALO_EXPERT_MISSION", &expert.mission)
-                .env("KALO_MEMORY_DIR", &expert.memory_dir);
+            expert.configure_command(&mut cmd);
         }
         if unattended {
             cmd.env("KALO_UNATTENDED", "1");

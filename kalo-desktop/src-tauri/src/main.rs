@@ -8,6 +8,7 @@
 mod bundled_tools;
 mod files;
 mod experts;
+mod expert_import;
 mod gateway;
 mod git;
 mod internal_skills;
@@ -625,6 +626,22 @@ pub(crate) fn gen_session_id() -> String {
 }
 
 fn main() {
+    // A local import uses the same validation and registry as the desktop UI.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--import-expert") {
+        if args.len() != 3 {
+            eprintln!("用法：kalo --import-expert <专家包根目录>");
+            std::process::exit(2);
+        }
+        match expert_import::expert_import(args[2].clone()) {
+            Ok(expert) => println!("{}", serde_json::to_string_pretty(&expert).expect("serialize expert")),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionManager::default())
@@ -753,6 +770,8 @@ fn main() {
             onboarding::write_onboarding_state,
             jobs_list,
             experts::expert_list,
+            experts::expert_for_session,
+            expert_import::expert_import,
             experts::expert_upsert,
             experts::expert_remove,
             workspace::create_workspace,

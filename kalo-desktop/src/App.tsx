@@ -22,7 +22,9 @@ import RightPanel from "./components/RightPanel";
 import TasksSettings from "./components/TasksSettings";
 import TaskRunPanel from "./components/TaskRunPanel";
 import TitleBar, { type MenuEntry, type TitleMenu } from "./components/TitleBar";
-import { listSessions, deleteSession } from "./lib/pi-bridge";
+import { listSessions, deleteSession, expertList } from "./lib/pi-bridge";
+import { needsExpertWorkspace } from "./lib/expert-catalog";
+import { selectChatExpert } from "./lib/expert-selection";
 import { chatStore, useChatSelector } from "./lib/chat-store";
 import { panelTabs, usePanelTabs } from "./lib/panel-tabs";
 import { loadWidth, startColumnDrag } from "./lib/drag";
@@ -56,6 +58,14 @@ export default function App() {
   // null = 还没问过 ~/.kalo/onboarding.json；"first" 首次自动弹，
   // "review" 是从帮助菜单点开的（关闭时不写标记）。
   const [onboarding, setOnboarding] = useState<null | "first" | "review">(null);
+
+  useEffect(() => {
+    void expertList().then(async (experts) => {
+      const current = chatStore.state;
+      if (!current.expertId && !current.timeline.length && !current.connecting && !current.sessionId
+        && needsExpertWorkspace(current.cwd, experts)) await selectChatExpert(null, experts);
+    }).catch((e) => chatStore.pushToast(`初始化任务目录失败：${String(e)}`, "error"));
+  }, []);
 
   // 首启判定只做一次。读失败当作已完成——见 features/onboarding/state.ts。
   useEffect(() => {
