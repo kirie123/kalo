@@ -1,7 +1,11 @@
 # 可续写子 Agent、外部托管 Job 与主 Agent 派生
 
 日期：2026-09-11
-状态：第一期已实现；第二、三期待定（主 agent 之间的调度编排需更多论证）
+状态：第一期已实现；gateway external job 与 peer 派生仍未实现，第二、三期待定。
+
+> 本次覆盖（2026-10-13）：[后台子 Agent 生命周期与可靠投递](2026-10-13-后台子agent生命周期与可靠投递.md) 源码已实现，未构建、未打包、未提交。该设计覆盖本文 §4 的后台生命周期、resume/并发槽位与权限恢复，以及 §3/§4 中拟议的子任务结果通知方式和桌面保活：运行中 resume 追加 followUp，复用当前 run；空闲续写才新建 run。权限落盘为 `<childId>.tools.json` + custom entry，旧会话无权限 metadata 按 `[]` 恢复，需工具时新建并赋权。所有结果 pending 至成功 assistant + settled ack，提供至少一次投递；notification 最多 3 批（busy 也计数），每批最多 20 条且整批总长不超过 12,000 字符。owner 仅限单进程，不支持同 session 双 engine 并写。
+>
+> 应用退出后子任务不存活；重开原会话恢复结果/中断，不自动重跑。保活仅限进程内，非 active 父会话没有引擎时不会自动开引擎。本次未实现 gateway external job、轮次 claimCompletions 或 peer 派生，下文相关接口与流程保留为待实现提案；`POST /jobs` 已有后台 bash 调用，必须保留，原“零调用方/删除路由”判断作废。§0 与第一期验证数字均为当时记录，本次验证状态见新设计。
 
 把子 agent 从「一次性、跑完即弃」改造为「常驻、可唤醒续写」，把它纳入 job 可观测面并真正激活 owner 隔离，再在其上开一条受控的「主 agent 派生并行主 agent」通道，派生出来的主 agent 在 git worktree 里干活。
 
@@ -59,7 +63,7 @@ D4 与推荐方案（桌面端纳管）相反，风险与兜底在 §6 单独展
 
 ## 3. 核心架构问题：外部托管 Job
 
-子 agent 要出现在 `job_list` 里，第一反应是复用协议层的 `JobRegistry.start(spec)`：
+**本节为后续 external job 提案，尚未实现。** 本次后台子 agent 使用引擎内运行记录与通知确认，不登记为 gateway command/external job。子 agent 若将来要出现在 `job_list` 里，第一反应是复用协议层的 `JobRegistry.start(spec)`：
 
 ```ts
 JobStart = { kind, label, owner?, run(): JobHooks }
@@ -151,7 +155,7 @@ const children = new Map<string, ChildHandle>();
 
 与现有 `activeChildren` 信号量的关系需要分清，这是两个不同的量：
 
-- **并发上限**（现有 `MAX_CONCURRENCY`，默认 6）：同时处于 `running` 的子 agent 数。续写时重新申请槽位。
+- **并发上限**（现有 `MAX_CONCURRENCY`，默认 6）：同时处于 `running` 的子 agent 数。空闲续写新建 run 并重新申请槽位；运行中 resume 追加 followUp，复用 run 与槽位。
 - **常驻上限**（新增 `MAX_RESIDENT`，默认 16）：`Map` 中非 `closed` 的条目数。超限时按 `lastActiveAt` LRU 驱逐 `idle` 的条目，若全部在 `running` 则拒绝新建并明确报错。
 
 常驻上限是必须的：`AgentSession` 持有完整消息历史，无上限的 `Map` 会让引擎进程内存单调增长。
@@ -160,11 +164,13 @@ const children = new Map<string, ChildHandle>();
 
 ### 4.2 工具契约
 
-**不新增工具**，扩展现有 `agent` 工具的参数。原设计「工具面必须极简」的约束依然有效（主力模型是本地中小模型），加一个 `resume` 参数比加一个 `agent_resume` 工具的认知负担低：
+第一期扩展 `agent` 的 `resume` 参数；2026-10-13 源码进一步加入后台参数与 `agent_tasks`（list/output/cancel）：
 
 ```
-agent(prompt, description?, tools?, resume?)
+agent(prompt, description?, tools?, resume?, run_in_background?)
 ```
+
+`tools` 接受数组或逗号/空白分隔字符串；恢复权限以 `<childId>.tools.json` 与子会话 custom entry 为依据，不从 resume 参数扩权。旧会话无权限 metadata 时恢复为 `[]`，需要工具须新建子会话并显式赋权。
 
 - `resume` 缺省 → 新建子 agent（现有行为）
 - `resume: "subagent-3"` → 向该子 agent 投递 `prompt` 作为新的 user message 并继续跑
@@ -173,12 +179,14 @@ agent(prompt, description?, tools?, resume?)
 
 1. 查 `children`，不存在或 `ownerSession` 不匹配 → 报「未知子 agent」（与 job 围栏同样的措辞策略，不区分「不存在」与「无权限」）。
 2. 状态为 `closed`（已驱逐）或不在 Map 中 → 按 §4.4 的路径规则找 `.jsonl`，`fromFile` 重建后继续；文件不存在才报「未知子 agent」。
-3. 状态为 `running` → 走 `session.followUp(prompt)`，消息排队，当前轮结束后处理。
+3. 状态为 `running` → 走 `session.followUp(prompt)`，消息排队，当前轮结束后处理；复用当前 run/runId，不新建 run、监视器或槽位。
 4. 状态为 `idle` / `stalled` / `failed` → 走 `session.prompt(prompt)` 开新一轮。**这是「中断后唤醒续写」的主路径**：上一轮因报错或 watchdog 中止而停下，历史仍在 session 里，补一条 user message 即可接着干。
 
 两种投递方式的区别是硬语义，不能混用：`followUp` 只对正在跑的 session 有效（排进队列），`prompt` 只对停下的 session 有效（开新一轮）。实现时按 `status` 分派，不让模型选。
 
-### 4.3 生命周期改造
+### 4.3 生命周期改造（external job 待实现提案）
+
+以下 gateway report/claimCompletions 流程未落地；当前源码每次运行独立持久化终态与 pending 结果，并按顶部新设计确认投递。子会话仍可续写，常驻句柄与单次 run 的终态分开管理。
 
 `runChild()` 的收尾从「丢弃」改为「归档并保活」：
 
@@ -257,7 +265,7 @@ SessionManager.fromFile(path)  // 改后：现成静态方法，直接用
 2. **跨引擎进程续写**。上一个引擎进程留下的子 agent，只要文件还在，`resume` 就能接着跑。
 3. 事后审计。
 
-但**不做自动复活**：引擎重启时不扫目录、不自行拉起任何子 agent。「哪些子 agent 该接着跑」是主 agent 与用户的决定，不是进程启动的副作用。对应地，`resume` 一个不在内存的 childId 时：
+不做自动重跑：引擎重启后恢复持久运行记录与待投递结果，无存活执行的 queued/running 转 interrupted；只有显式 `resume` 才继续子任务。「哪些子 agent 该接着跑」是主 agent 与用户的决定，不是进程启动的副作用。对应地，`resume` 一个不在内存的 childId 时：
 
 - 先查 `children` Map，命中则直接用
 - 未命中 → 拼出路径 `<cwd 桶>/subagent/<主会话 id>/<childId>.jsonl`，存在则 `fromFile` 重建并回填 Map
@@ -301,7 +309,7 @@ private visible(rec: JobRecord, caller?: Caller): boolean {
 
 现状所有 command job 无主，是因为 6 个生产方都不传 `owner`。本期**不改变 era / MarketEnvCard 的无主状态** —— 它们由桌面端面板发起，本就该对所有会话可见（用户在面板上点的，任何会话里问「装完了吗」都该答得上来）。
 
-需要改变的只有一处：`POST /jobs`（command job 的 HTTP 入口）当前把 `x-kalo-session` 作为默认 owner，但该路由**没有任何客户端调用方**。见 §7，这条路由要直接关闭。
+`POST /jobs`（command job 的 HTTP 入口）已有后台 bash 调用，必须保留；`x-kalo-session` 与 owner 的处理仍属于 command job 契约。external job 的后续方案不得以“零调用方”为由关闭此路由。
 
 ---
 
@@ -347,19 +355,11 @@ private visible(rec: JobRecord, caller?: Caller): boolean {
 
 ---
 
-## 7. 安全：关闭 token 绕过
+## 7. command job 与后续 external/peer 的边界
 
-当前存在一条绕过路径：模型可以用 `bash` 读 `~/.kalo/agent/jobs/endpoint.json` 拿到 url 与 token，然后 `curl POST /jobs` 创建任意 command job —— 工具层「没有 job_start」的约束在传输层形同虚设。
+`POST /jobs` 是已有后台 bash 的 command job 入口，必须保留。原提案基于“零调用方”要求删除该路由的判断已经失效；不能再要求所有独立进程只由 OPERATOR 发起，否则会破坏后台 bash 的现有契约。
 
-本设计引入 `spawn_peer` 后这个洞的危害升级（绕过确认框直接起长跑进程），必须一并堵上：
-
-1. **`POST /jobs` 路由删除**。它零调用方，command job 的唯一入口保留 NDJSON（桌面端 / OPERATOR）。
-2. `POST /jobs/external` 对 `kind="peer"` 拒绝 HTTP caller（§6.1）。
-3. 保留 `POST /jobs/external` 的 `kind="subagent"` 给引擎用 —— 这条能力等价于模型本来就能做的「在自己进程里派生子会话」，不构成新放权。
-
-堵完之后的不变式：**任何能起独立进程或新主会话的操作，都只能由 OPERATOR 发起**。模型通过 HTTP 能做的只有「登记一个自己进程内的子 agent」。
-
-（模型仍可用 `bash` 直接 spawn 进程 —— 那是 `bash` 工具本身的权限范畴，不在 job 运行时的威胁模型内，由 P2 权限模型处理。此处要保证的只是：job 运行时不成为提权工具。）
+external job 与 peer 派生尚未实现。将来增加时，须单独定义 caller/owner 校验与 peer 确认约束，不能把 command job 启动能力等同于创建完整主会话的权限。拟议 `POST /jobs/external` 对 `kind="peer"` 的调用限制仍属于待实现设计；本次子 agent 只使用引擎内运行记录，不新增这些 HTTP 路由。
 
 ---
 
@@ -393,7 +393,7 @@ private visible(rec: JobRecord, caller?: Caller): boolean {
 #### 实现中修正的五处设计偏差
 
 1. **`SessionManager` 没有 `fromFile`**，实际方法是 `open(path, sessionDir?, cwdOverride?)`。§4.4 已改正。
-2. **`resume` 不能申请并发槽位**（设计文档原本漏了）。若 `resume` 也走 `acquireSlot()`，当槽位被正在跑的子 agent 占满时，主 agent 想 resume 其中一个来救它会死锁。现在先查 `lookup`，命中则跳过信号量。
+2. **运行中 `resume` 不能重复申请并发槽位**。运行中的子 agent 已持有槽位，追加 followUp 复用当前 run；2026-10-13 源码明确区分空闲 resident resume，后者须新建 run 并申请槽位，不能仅因 Map 命中就跳过并发上限。
 3. **子会话文件名不可预测**（只有真实跑模型才暴露）。原设计假定子会话落在 `<childId>.jsonl`，但 `SessionManager` 自己拼文件名为 `<时间戳>_<sessionId>.jsonl`（`session-manager.ts:953`）。后果：`hasPersisted` 永远返回 false，**驱逐后 / 引擎重启后的 `resume` 全部失效**。现改为 `findChildSessionFile()` 扫目录认 `_<childId>.jsonl` 后缀（并避免 `subagent-1` 误匹配 `subagent-10`）。
 4. **失败不会抛异常**（真实注入故障才暴露）。原实现用 `try/catch` 捕失败，但 provider 报错不抛异常——它以 `stopReason: "error"` + `errorMessage` 的 assistant 消息落地，`prompt()` 正常 resolve。后果：主 agent 只能看到「(子 agent 未产生回复)」，**拿不到失败原因**，无法判断该原样重试还是改 prompt。现在同时读抛出值与 `stopReason === "error"` 的消息，`ChildOutcome.failed` 携带原因，`execute()` 新增失败分支。
 5. **`followUp()` 只入队、不等完成**（真实并发场景才暴露）。resume 一个**正在跑**的子 agent 时，`followUp` 立即返回，`runTurn` 随即去读「本轮最后一条 assistant 消息」——那时候还不存在，于是 0.0s 内返回「(子 agent 未产生回复)」。现增 `waitForIdle()`，等 `agent_end` 且 `willRetry !== true`（重试中的 `agent_end` 不算结束）。
@@ -409,7 +409,7 @@ private visible(rec: JobRecord, caller?: Caller): boolean {
 - `JobRecord` 扩展、external 三条路由、引擎 client 三方法
 - `visible()` 加 subagent 分支
 - 子 agent 注册为 `kind="subagent"` job，轮次通知走共享唤醒预算
-- 删除 `POST /jobs`（§7）
+- 保留已有后台 bash 调用的 `POST /jobs`，external/peer 另设权限边界（§7）
 
 验收：`job_list` 能看到自己的子 agent；另开一个会话确认看不到；引擎强杀后 job 90s 内转 `failed`。
 

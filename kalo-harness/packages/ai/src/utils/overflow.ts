@@ -149,11 +149,14 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 		}
 	}
 
-	// Case 3: Length-stop overflow (Xiaomi MiMo style) - server truncates oversized input
-	// to fit the context window, leaving no room for output. Returns stopReason "length"
-	// with output=0 and input+cacheRead filling the context window.
-	if (contextWindow && message.stopReason === "length" && message.usage.output === 0) {
-		const inputTokens = message.usage.input + message.usage.cacheRead;
+	// Case 3: Length-stop overflow (Xiaomi MiMo / gateway style) - server truncates
+	// oversized input to fit the context window, leaving (almost) no room for output.
+	// Returns stopReason "length" with a near-zero output while the input fills the
+	// context window. Some gateways (e.g. pz) report the bulk of the prompt under
+	// cacheWrite rather than input/cacheRead and emit output=1 instead of 0, so we
+	// tolerate a tiny output and count cacheWrite toward the filled context.
+	if (contextWindow && message.stopReason === "length" && message.usage.output <= SMALL_OUTPUT_TOKENS_FOR_OVERFLOW) {
+		const inputTokens = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
 		if (inputTokens >= contextWindow * 0.99) {
 			return true;
 		}
@@ -161,6 +164,14 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 
 	return false;
 }
+
+/**
+ * A "length" stop with output at or below this many tokens is treated as a
+ * server-side truncation signal rather than a genuine max-output completion.
+ * Providers that hard-truncate an oversized prompt commonly emit 0 or 1 output
+ * tokens with finish_reason "length".
+ */
+const SMALL_OUTPUT_TOKENS_FOR_OVERFLOW = 4;
 
 /**
  * Check whether a length stop ended below the caller or model's intended output limit.

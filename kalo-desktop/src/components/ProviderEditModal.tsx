@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { chatStore } from "../lib/chat-store";
+import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { readModelsConfig, writeModelsConfig } from "../lib/pi-bridge";
 import {
   applyProviderEntry,
@@ -97,6 +98,8 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
     editing?.config.compat?.supportsReasoningEffort === false,
   );
   const [saving, setSaving] = useState(false);
+  // Backdrop presses never close this dialog — see lib/modal-backdrop.ts.
+  const backdrop = usePinnedBackdrop("点「取消」或「保存」关闭这个窗口");
   /**
    * Providers already in models.json, offered as one-click fills so adding a
    * model to a relay you have configured does not mean retyping its URL/key.
@@ -188,7 +191,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
   return (
     <div
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/50"
-      onClick={() => onClose(false)}
+      {...backdrop}
     >
       <div
         className="flex max-h-[85vh] w-[520px] max-w-[92vw] flex-col rounded-xl border border-edge bg-card p-5 shadow-2xl"
@@ -310,7 +313,7 @@ export default function ProviderEditModal({ editing, onClose }: Props) {
               value={modelLines}
               onChange={(e) => setModelLines(e.target.value)}
               rows={4}
-              placeholder={"gpt-4o\ndeepseek-v4-flash"}
+              placeholder={"gpt-4o\ndeepseek-flash"}
               className="mono w-full resize-y rounded-md border border-edge bg-base px-3 py-2 text-sm outline-none focus:border-dim"
             />
           </Field>

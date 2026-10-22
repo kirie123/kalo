@@ -120,14 +120,40 @@ export function useContextMenu() {
   };
 }
 
-/** 「复制路径」— shared by every menu that shows a filesystem path. */
-export function copyPathItem(path: string, label = "复制路径"): MenuItem {
+/** 「复制路径」/「复制链接」— clipboard + toast, shared by both copy entries. */
+function copyItem(label: string, text: string, okText: string): MenuItem {
   return {
     label,
     action: () => {
-      void navigator.clipboard.writeText(path).then(
-        () => chatStore.pushToast("路径已复制", "info"),
+      void navigator.clipboard.writeText(text).then(
+        () => chatStore.pushToast(okText, "info"),
         () => chatStore.pushToast("复制失败", "warning"),
+      );
+    },
+  };
+}
+
+/** 「复制路径」— shared by every menu that shows a filesystem path. */
+export function copyPathItem(path: string, label = "复制路径"): MenuItem {
+  return copyItem(label, path, "路径已复制");
+}
+
+/** 「复制链接」— the url counterpart of copyPathItem. */
+export function copyLinkItem(url: string, label = "复制链接"): MenuItem {
+  return copyItem(label, url, "链接已复制");
+}
+
+/**
+ * 「在系统浏览器打开」— a http(s) url takes the same `open_path` command (the
+ * backend hands urls to the default handler instead of the file manager), so
+ * the failure toast is all this factory adds.
+ */
+export function openUrlItem(url: string, label = "在系统浏览器打开"): MenuItem {
+  return {
+    label,
+    action: () => {
+      void openPath(url).catch((e: unknown) =>
+        chatStore.pushToast(`打开链接失败：${e instanceof Error ? e.message : String(e)}`, "error"),
       );
     },
   };

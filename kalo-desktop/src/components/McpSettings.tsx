@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { chatStore } from "../lib/chat-store";
+import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { readMcpConfig, readMcpStatus, writeMcpConfig } from "../lib/pi-bridge";
 import type { McpConfig, McpServerDef, McpStatus } from "../types";
 import { Section } from "./SettingsPage";
@@ -252,9 +253,10 @@ function ServerEditModal({
   onSave: (draft: ServerDraft) => void;
 }) {
   const [d, setD] = useState<ServerDraft>(draft);
+  const backdrop = usePinnedBackdrop("点「取消」或「保存」关闭这个窗口");
   const input = "w-full rounded-md border border-edge bg-base px-2 py-1.5 text-sm outline-none focus:border-dim";
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" {...backdrop}>
       <div
         className="w-[480px] max-w-[90vw] rounded-lg border border-edge bg-card p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}

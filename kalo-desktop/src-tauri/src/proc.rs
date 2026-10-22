@@ -67,14 +67,7 @@ pub fn wait_released(child: &Mutex<Child>) -> Option<i32> {
 /// object of ours and survive their parent, which is how an old engine ends up
 /// still holding `pi-*.exe` open long after the window is gone.
 pub fn kill_tree(child: &mut Child) {
-    #[cfg(windows)]
-    {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        let _ = no_window(&mut cmd).status();
-    }
+    kill_pid_tree(child.id());
     // Still signal the child directly: taskkill may have missed it (already
     // gone, access denied), and on unix this is the whole of the kill.
     if let Err(e) = child.kill() {
@@ -83,4 +76,24 @@ pub fn kill_tree(child: &mut Child) {
     }
     // Reap, so the watcher's next poll does not race a zombie handle.
     let _ = child.try_wait();
+}
+
+/// Kill a PID *and everything it spawned*; no-op off Windows beyond being a
+/// named home for the idea. The terminal module kills a pty child through this
+/// (`portable-pty`'s `Child` is its own trait and cannot go through
+/// [`kill_tree`]), and a ConPTY shell's grandchildren (`npm`, `python`) need
+/// exactly the tree walk `taskkill /T` does.
+pub fn kill_pid_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let _ = no_window(&mut cmd).status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+    }
 }

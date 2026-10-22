@@ -5,8 +5,10 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod bundled_tools;
 mod files;
 mod experts;
+mod expert_import;
 mod gateway;
 mod git;
 mod internal_skills;
@@ -20,8 +22,10 @@ mod session;
 mod session_paging;
 mod sidecar;
 mod sessions_store;
+mod terminal;
 mod workspace;
 mod pi_config;
+mod priority;
 mod proc;
 mod skills;
 
@@ -298,6 +302,13 @@ fn read_file_text(path: String, max_bytes: Option<usize>) -> Result<FileText, St
 #[tauri::command(async)]
 fn write_file_text(path: String, contents: String) -> Result<(), String> {
     files::write_file_text(&path, &contents)
+}
+
+/// Save binary bytes (base64) to a user-picked path — the "save as image"
+/// menu exports a rendered widget to PNG, which the text writer can't handle.
+#[tauri::command(async)]
+fn write_file_bytes(path: String, data_base64: String) -> Result<(), String> {
+    files::write_file_bytes(&path, &data_base64)
 }
 
 /// Read a whole file as base64, for previews that need raw bytes (images,
@@ -615,14 +626,37 @@ pub(crate) fn gen_session_id() -> String {
 }
 
 fn main() {
+    // A local import uses the same validation and registry as the desktop UI.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--import-expert") {
+        if args.len() != 3 {
+            eprintln!("用法：kalo --import-expert <专家包根目录>");
+            std::process::exit(2);
+        }
+        match expert_import::expert_import(args[2].clone()) {
+            Ok(expert) => println!("{}", serde_json::to_string_pretty(&expert).expect("serialize expert")),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionManager::default())
         .manage(GatewayManager::default())
+        .manage(terminal::TerminalManager::new())
         .setup(|app| {
             // Must come first: everything below resolves bundled resources
             // (sidecars, internal-skills) through this.
             resources::init(app.handle());
+            // Keep the window schedulable when the machine is loaded by the
+            // user's own workload (training loops etc.): Windows otherwise
+            // parks a background window in EcoQoS and its WebView2 renderer
+            // can be starved until typing stops echoing
+            // (doc/2026-10-01-高负载下界面响应与输入可见性.md §2).
+            priority::keep_ui_responsive();
             // Auto-start the IM gateway when Feishu credentials already exist.
             gateway::autostart(app.handle());
             // First-run: knowledge base directory tree + INDEX.md stub.
@@ -640,6 +674,21 @@ fn main() {
                     }
                 }
                 Err(err) => eprintln!("[internal-skills] {err}"),
+            }
+            // Bundled rg → ~/.kalo/agent/bin (the engine's bin dir, already
+            // first on PATH). Keeps a user-replaced rg, unlike a blind copy.
+            match bundled_tools::install(false) {
+                Ok(report) => {
+                    if !report.installed.is_empty() || !report.updated.is_empty() {
+                        eprintln!(
+                            "[bundled-tools] installed {} / updated {} / skipped {}",
+                            report.installed.len(),
+                            report.updated.len(),
+                            report.skipped.len()
+                        );
+                    }
+                }
+                Err(err) => eprintln!("[bundled-tools] {err}"),
             }
             // The `~/.kalo/market/py` entry point the market-data skill, the
             // daily snapshot task and the user's terminal all go through.
@@ -679,6 +728,7 @@ fn main() {
             list_dir,
             read_file_text,
             write_file_text,
+            write_file_bytes,
             read_file_bytes,
             git_status,
             git_diff,
@@ -720,9 +770,15 @@ fn main() {
             onboarding::write_onboarding_state,
             jobs_list,
             experts::expert_list,
+            experts::expert_for_session,
+            expert_import::expert_import,
             experts::expert_upsert,
             experts::expert_remove,
             workspace::create_workspace,
+            terminal::terminal_open,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Kalo");
@@ -739,6 +795,10 @@ fn main() {
                         process.kill();
                     }
                 }
+            }
+            // Terminal shells are children of this process too.
+            if let Some(terminals) = app_handle.try_state::<terminal::TerminalManager>() {
+                terminals.kill_all();
             }
         }
     });

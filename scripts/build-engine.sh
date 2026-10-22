@@ -2,6 +2,7 @@
 # Build the pi engine from kalo-harness and stage it into the desktop app.
 #
 # Defaults to the host platform; cross-build with --platform <name>
+# Use --offline-model-data to keep the bundled model catalog unchanged.
 # (darwin-arm64, darwin-x64, linux-x64, linux-arm64, windows-x64, windows-arm64).
 #
 # Output: kalo-desktop/src-tauri/binaries/pi-<target-triple>[.exe]
@@ -49,7 +50,11 @@ echo "==> Target: $KALO_PLATFORM ($KALO_TRIPLE), host: $KALO_HOST_PLATFORM"
 echo "==> Building harness packages..."
 # `npm run build` refreshes the live model catalog first and fails without
 # network access; fall back to the bundled snapshot when that happens.
-(cd "$HARNESS" && npm run build) || (cd "$HARNESS" && npm run build:offline)
+if [[ " $* " == *" --offline-model-data "* ]]; then
+    (cd "$HARNESS" && npm run build:offline)
+else
+    (cd "$HARNESS" && npm run build) || (cd "$HARNESS" && npm run build:offline)
+fi
 
 export npm_config_registry="${npm_config_registry:-https://registry.npmmirror.com}"
 

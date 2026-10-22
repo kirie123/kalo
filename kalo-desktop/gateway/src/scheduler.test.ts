@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import {
+  bashSpawnEnv,
   DEFAULT_TASKS,
   nextCronTime,
   parseCron,
+  prependShellDir,
+  resolveBash,
   validateCron,
   Scheduler,
   type ScheduleTask,
@@ -320,5 +323,54 @@ describe("seedDefaults", () => {
     expect(DEFAULT_TASKS.every((t) => t.kind === "watch")).toBe(true);
     // And it must go through the shim, not a hardcoded interpreter path.
     expect(DEFAULT_TASKS[0].script).toContain("/.kalo/market/py");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bash spawn env — the real shell needs its own dir on PATH for coreutils
+// ---------------------------------------------------------------------------
+
+describe("bash spawn env", () => {
+  // Absolute on every platform node supports, so the pure-function cases
+  // exercise the same branch on Windows and unix alike.
+  const shell = "/opt/git/usr/bin/bash";
+
+  test("prepends the shell dir to the existing PATH entry", () => {
+    const env = prependShellDir({ PATH: "/usr/bin:/bin" }, shell);
+    expect(env.PATH).toBe(`${dirname(shell)}${delimiter}/usr/bin:/bin`);
+  });
+
+  test("keeps the key's original spelling and does not duplicate it", () => {
+    // Windows carries `Path`, not `PATH`; two case-variant keys in one env
+    // block are not something child_process can resolve deterministically.
+    const env = prependShellDir({ Path: "/usr/bin" }, shell);
+    const pathKeys = Object.keys(env).filter((k) => k.toLowerCase() === "path");
+    expect(pathKeys).toEqual(["Path"]);
+    expect(env.Path).toBe(`${dirname(shell)}${delimiter}/usr/bin`);
+  });
+
+  test("a missing PATH still gets the shell dir", () => {
+    expect(prependShellDir({}, shell).PATH).toBe(dirname(shell));
+  });
+
+  test("a shell resolved from PATH leaves the env untouched", () => {
+    // unix `resolveBash()` returns plain "bash" — there is no dir of its own.
+    const env = { PATH: "/usr/bin" };
+    expect(prependShellDir(env, "bash")).toBe(env);
+  });
+
+  test("the fix lands after the per-job env merge", () => {
+    // The engine sends its own PATH per job; prepending before the merge
+    // would let that PATH shadow the shell dir again (the original bug).
+    const env = bashSpawnEnv({ PATH: "/job/path", PI_SESSION_ID: "s1" });
+    const key = Object.keys(env).find((k) => k.toLowerCase() === "path")!;
+    const resolved = resolveBash();
+    if (isAbsolute(resolved)) {
+      expect(env[key]!.startsWith(`${dirname(resolved)}${delimiter}`)).toBe(true);
+    } else {
+      expect(env[key]).toBe("/job/path");
+    }
+    expect(env[key]!.endsWith(`${delimiter}/job/path`)).toBe(true);
+    expect(env.PI_SESSION_ID).toBe("s1");
   });
 });

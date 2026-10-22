@@ -1,5 +1,5 @@
 /**
- * 数字专家 panel (doc/2026-08-29-digital-experts.md, M1: read-only + 开始会话).
+ * Digital experts and teams: local package import, roster and session launch.
  *
  * Left: one card per registry entry. Right: the selected expert's live state —
  * running sessions, memory files, its scheduled tasks, and its workdir.
@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { chatStore } from "../../lib/chat-store";
 import {
   expertCards,
@@ -22,7 +23,9 @@ import {
   sessionTitles,
 } from "../../lib/expert-view";
 import { startFreshChat } from "../../lib/fresh-chat";
-import { expertList, jobsList, listDir, listSessions, openPath, readFileText } from "../../lib/pi-bridge";
+import { expertDefinitionDir, filterExperts, type ExpertKindFilter } from "../../lib/expert-catalog";
+import { selectChatExpert } from "../../lib/expert-selection";
+import { expertImport, expertList, jobsList, listDir, listSessions, openPath, readFileText } from "../../lib/pi-bridge";
 import type { DirEntry, Expert, JobsSnapshot, ProjectGroup } from "../../types";
 
 /** Running sessions and next runs change without the panel doing anything. */
@@ -37,6 +40,25 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
   const [snap, setSnap] = useState<JobsSnapshot | null>(null);
   const [sessionGroups, setSessionGroups] = useState<ProjectGroup[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<ExpertKindFilter>("all");
+
+  const importPackage = async () => {
+    try {
+      const path = await open({ directory: true, title: "选择 WorkBuddy 专家包根目录" });
+      if (typeof path !== "string") return;
+      setImporting(true);
+      const expert = await expertImport(path);
+      setExperts(await expertList());
+      setSelectedId(expert.id);
+      chatStore.pushToast(`已导入「${expert.name}」`, "info");
+    } catch (err) {
+      chatStore.pushToast(`导入专家失败：${errText(err)}`, "error");
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const refresh = useCallback(() => {
     expertList()
@@ -68,16 +90,14 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
 
   const running = snap?.running ?? [];
   const tasks = snap?.tasks ?? [];
-  const cards = expertCards(experts, running, tasks);
+  const cards = expertCards(filterExperts(experts, query, kind), running, tasks);
   const selected = experts.find((e) => e.id === selectedId) ?? null;
 
-  const startSession = (expert: Expert) => {
-    // The engine spawns lazily on the first prompt; the expertId rides on the
-    // chat runtime, so the session (and any crash recovery) runs with the
-    // expert's identity and memory dir.
-    chatStore.newChat({ cwd: expert.workdir, expertId: expert.id });
-    chatStore.pushToast(`已为「${expert.name}」开启新会话`, "info");
-    onLeaveToChat();
+  const startSession = async (expert: Expert) => {
+    try {
+      await selectChatExpert(expert, experts);
+      onLeaveToChat();
+    } catch (e) { chatStore.pushToast(`选择专家失败：${errText(e)}`, "error"); }
   };
 
   /** M2: creating an expert is an ordinary session driven by expert-designer. */
@@ -88,7 +108,7 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
     onLeaveToChat();
     try {
       await chatStore.sendPrompt(
-        "请用 expert-designer 技能，带我创建一个新的数字专家。先按流程问清使命、数据、频率和产出。",
+        "请用 expert-designer 技能，带我创建一个数字专家或专家团。先按流程问清使命、分工、数据、频率和产出。",
       );
     } catch (e) {
       chatStore.pushToast(`没能开始创建会话：${errText(e)}`, "error");
@@ -100,8 +120,11 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
       {/* Expert list */}
       <div className="flex w-72 shrink-0 flex-col border-r border-edge">
         <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-xs font-medium">数字专家</span>
+          <span className="text-xs font-medium">专家市场</span>
           <div className="flex items-center gap-2">
+            <button disabled={importing} onClick={() => void importPackage()} className="text-xs text-dim hover:text-ink disabled:opacity-50">
+              {importing ? "导入中…" : "导入"}
+            </button>
             <button onClick={() => void createExpert()} className="text-xs text-dim hover:text-ink">
               + 新建
             </button>
@@ -110,10 +133,18 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
             </button>
           </div>
         </div>
+        <div className="space-y-2 px-2 pb-2">
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索专家、专家团或专长" aria-label="搜索专家市场"
+            className="w-full rounded-md border border-edge bg-base px-2 py-1.5 text-xs outline-none focus:border-dim" />
+          <div className="flex gap-1">{([['all', '全部'], ['agent', '专家'], ['team', '专家团']] as const).map(([value, label]) => (
+            <button key={value} onClick={() => setKind(value)} aria-pressed={kind === value} className={`rounded px-2 py-1 text-xs ${kind === value ? "bg-card text-ink" : "text-dim hover:bg-card"}`}>{label}</button>
+          ))}</div>
+          <p className="px-1 text-[10px] leading-relaxed text-dim">选择角色后在独立工作目录执行任务。</p>
+        </div>
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
           {cards.length === 0 ? (
             <p className="px-2 py-1 text-xs leading-relaxed text-dim">
-              还没有数字专家。点右上角「+ 新建」，由一个创建会话带你规划并注册。
+              没有匹配的专家。可导入本地专家包，或点「+ 新建」创建专家和专家团。
             </p>
           ) : (
             cards.map((card) => (
@@ -126,6 +157,7 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
               >
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">{card.expert.name}</span>
+                  {card.expert.kind === "team" && <span className="shrink-0 rounded border border-edge px-1 text-[10px] text-dim">专家团</span>}
                   {!card.expert.enabled && <span className="shrink-0 text-[10px] text-dim">已停用</span>}
                   {card.runningCount > 0 && (
                     <span className="flex shrink-0 items-center gap-1 text-[10px] text-[var(--ok)]">
@@ -154,7 +186,7 @@ export default function ExpertsPanel({ onLeaveToChat }: { onLeaveToChat: () => v
             expert={selected}
             snap={snap}
             titles={sessionTitles(sessionGroups)}
-            onStartSession={() => startSession(selected)}
+            onStartSession={() => void startSession(selected)}
           />
         ) : (
           <div className="flex h-full items-center justify-center p-6 text-center text-xs leading-relaxed text-dim">
@@ -178,6 +210,7 @@ function ExpertDetailPanel({
   onStartSession: () => void;
 }) {
   const detail = expertDetail(expert.id, snap?.running ?? [], snap?.tasks ?? [], titles);
+  const definitionDir = expertDefinitionDir(expert);
 
   const [memories, setMemories] = useState<DirEntry[] | null>(null);
   const [memoryNote, setMemoryNote] = useState<string | null>(null);
@@ -187,7 +220,7 @@ function ExpertDetailPanel({
   // missing directory is an ordinary state, shown as a note rather than a toast.
   useEffect(() => {
     let alive = true;
-    listDir(memoryDirPath(expert.workdir))
+    listDir(memoryDirPath(definitionDir))
       .then((entries) => {
         if (!alive) return;
         setMemories(entries.filter((e) => !e.isDir && e.name.endsWith(".md")));
@@ -201,7 +234,7 @@ function ExpertDetailPanel({
     return () => {
       alive = false;
     };
-  }, [expert.workdir]);
+  }, [definitionDir]);
 
   const toggleMemory = async (entry: DirEntry) => {
     if (openMemory?.path === entry.path) {
@@ -224,15 +257,26 @@ function ExpertDetailPanel({
           {!expert.enabled && <span className="shrink-0 text-[10px] text-dim">已停用</span>}
           <button
             onClick={onStartSession}
+            disabled={!expert.enabled}
             className="shrink-0 rounded-md border border-dim px-3 py-1.5 text-sm text-ink hover:bg-base"
           >
-            开始会话
+            使用专家
           </button>
         </div>
         <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-dim">{expert.mission}</p>
-        <div className="mono mt-2 truncate text-[10px] text-dim" title={expert.workdir}>
-          {expert.workdir}
-        </div>
+        {expert.members && expert.members.length > 0 && (
+          <div className="mt-3 flex flex-col gap-1 border-t border-edge pt-2">
+            <div className="text-[10px] text-dim">{expert.kind === "team" ? "团队成员" : "专家角色"}</div>
+            {expert.members.map((member) => (
+              <div key={member.id} className="flex items-center gap-2 text-xs">
+                <span>{member.name}</span>
+                <span className="text-dim">{member.profession}</span>
+                {member.id === expert.entryAgent && expert.kind === "team" && <span className="text-[10px] text-dim">主理人</span>}
+                <span className="mono ml-auto text-[10px] text-dim">{member.id}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 进行中 */}
@@ -299,16 +343,17 @@ function ExpertDetailPanel({
 
       {/* 文件 */}
       <div className="rounded-lg border border-edge bg-card p-3">
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-dim">文件</div>
+        <div className="mb-2 text-[10px] uppercase tracking-wider text-dim">专家文件</div>
+        <p className="mono mb-2 break-all text-[10px] text-dim">{expertDefinitionDir(expert)}</p>
         <button
           onClick={() =>
-            void openPath(expert.workdir, false).catch((err) =>
+            void openPath(expertDefinitionDir(expert), false).catch((err) =>
               chatStore.pushToast(`打开目录失败：${errText(err)}`, "error"),
             )
           }
           className="rounded-md border border-edge px-3 py-1.5 text-xs text-dim hover:bg-base hover:text-ink"
         >
-          打开工作目录
+          打开专家定义目录
         </button>
       </div>
     </div>

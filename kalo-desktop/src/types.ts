@@ -455,6 +455,11 @@ export interface PiExitInfo {
   code: number | null;
 }
 
+/** Payload of `terminal-exit:{id}` — the shell's exit code, null when unknown. */
+export interface TerminalExitInfo {
+  code: number | null;
+}
+
 /** One engine slash command (extension command, skill:, or prompt template). */
 export interface SlashCommand {
   name: string;
@@ -742,13 +747,19 @@ export interface ScheduleTaskInfo extends ScheduleTask {
 export interface Expert {
   id: string;
   name: string;
-  /** The expert's own working directory; sessions/tasks run here. */
-  workdir: string;
+  /** Legacy definition directory, retained as a read fallback. */
+  workdir?: string;
+  /** Role/skill source directory, independent from task cwd. */
+  definitionDir?: string;
   /** What the expert is for, in the creator's words. */
   mission: string;
   /** ISO timestamp of registration. */
   createdAt: string;
   enabled: boolean;
+  kind?: "agent" | "team";
+  entryAgent?: string;
+  members?: { id: string; name: string; profession: string; agentPath: string }[];
+  packageVersion?: string;
 }
 
 // ============================================================================

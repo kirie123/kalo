@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { useChatZoom } from "../lib/chat-zoom";
 import { chatStore } from "../lib/chat-store";
 import { QUICK_ACTIONS, type QuickActionIcon, type QuickActionTone } from "../lib/quick-actions";
+import AskUserPanel from "./AskUserPanel";
 import InputBox from "./InputBox";
 
 /** Tone → icon classes. Written out literally so Tailwind's scanner sees them
@@ -65,6 +66,10 @@ export default function EmptyState() {
         一起完成什么？
       </h1>
       <div className="w-full max-w-3xl">
+        {/* An empty timeline can still hold a pending ask (the engine streams
+            the question, the messages arrive later). Without this the composer
+            was disabled with the question nowhere on screen — a dead input. */}
+        <AskUserPanel />
         <InputBox />
         {/* 只在空会话首屏出现：给第一次用的人几个能直接点的入口。
             填进输入框而不是直接发送——多数场景还要补个代码或链接。 */}

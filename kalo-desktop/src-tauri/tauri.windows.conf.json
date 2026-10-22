@@ -4,7 +4,8 @@
     "targets": ["nsis"],
     "resources": {
       "binaries/pi-x86_64-pc-windows-msvc.exe": "binaries/pi-x86_64-pc-windows-msvc.exe",
-      "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe": "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe"
+      "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe": "binaries/kalo-gateway-x86_64-pc-windows-msvc.exe",
+      "binaries/rg-x86_64-pc-windows-msvc.exe": "binaries/rg-x86_64-pc-windows-msvc.exe"
     }
   }
 }

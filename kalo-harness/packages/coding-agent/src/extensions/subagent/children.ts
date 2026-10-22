@@ -14,6 +14,7 @@
  * Design: doc/2026-09-11-可续写子agent与主agent派生.md
  */
 
+import { randomUUID } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSession } from "../../core/agent-session.ts";
@@ -128,16 +129,14 @@ export function childTranscriptPath(cwd: string, parentSessionId: string, childI
 // ---------------------------------------------------------------------------
 
 const children = new Map<string, ChildHandle>();
-let childSeq = 0;
 
-/** Next child id. Ids are per-process and monotonic, matching job id style. */
+/** Stable across engine restarts; legacy subagent-N ids remain resumable. */
 export function nextChildId(): string {
-	childSeq += 1;
-	return `subagent-${childSeq}`;
+	return `subagent-${randomUUID()}`;
 }
 
 export function register(handle: ChildHandle): void {
-	children.set(handle.id, handle);
+	children.set(JSON.stringify([handle.ownerSession, handle.id]), handle);
 	evictIfNeeded();
 }
 
@@ -149,10 +148,7 @@ export function register(handle: ChildHandle): void {
  * leak whether some other conversation has that child.
  */
 export function lookup(id: string, ownerSession: string): ChildHandle | undefined {
-	const handle = children.get(id);
-	if (!handle) return undefined;
-	if (handle.ownerSession !== ownerSession) return undefined;
-	return handle;
+	return children.get(JSON.stringify([ownerSession, id]));
 }
 
 /** True when a child id has an on-disk session for this parent. */
@@ -161,18 +157,19 @@ export function hasPersisted(cwd: string, parentSessionId: string, childId: stri
 }
 
 export function forget(id: string): void {
-	children.delete(id);
+	for (const [key, handle] of children) {
+		if (handle.id === id) children.delete(key);
+	}
 }
 
 /** Snapshot for tests and diagnostics; never hands out the live map. */
 export function residentIds(): string[] {
-	return [...children.keys()];
+	return [...children.values()].map((handle) => handle.id);
 }
 
 /** Test seam: drop all state between cases. */
 export function resetRegistry(): void {
 	children.clear();
-	childSeq = 0;
 }
 
 /**
@@ -192,7 +189,7 @@ function evictIfNeeded(): void {
 	for (const candidate of candidates) {
 		if (excess <= 0) break;
 		candidate.status = "evicted";
-		children.delete(candidate.id);
+		children.delete(JSON.stringify([candidate.ownerSession, candidate.id]));
 		excess--;
 	}
 }

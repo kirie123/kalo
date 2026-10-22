@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { chatStore } from "../lib/chat-store";
 import {
-  BRIDGE_SCRIPT,
   collectLocalAssets,
   renderDocHtml,
   unresolvedAssets,

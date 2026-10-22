@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>子 Agent 活动面板 · 效果图</title>
+<style>
+  :root {
+    --bg: #171717;
+    --bg-sidebar: #1e1e1e;
+    --bg-card: #212121;
+    --bg-elevated: #262626;
+    --bubble: #2b2b2b;
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #ececec;
+    --text-dim: #9b9b9b;
+    --accent: #ececec;
+    --accent-contrast: #171717;
+    --ok: #4ac26b;
+    --danger: #ff6b6b;
+    --tone-orange: #f0a859;
+    --error-bg: #331b1b;
+    --error-border: #7a3535;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Consolas, "Cascadia Mono", monospace; }
+  .dim { color: var(--text-dim); }
+
+  /* ── 顶栏 ────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 30;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px;
+    background: var(--bg-sidebar);
+    border-bottom: 1px solid var(--border);
+  }
+  .topbar h1 { margin: 0; font-size: 13px; font-weight: 600; }
+  .topbar .spacer { flex: 1; }
+  .seg { display: flex; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-dim);
+    font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .seg button.on { background: var(--bg-elevated); color: var(--text); }
+
+  /* ── 舞台：对话 + 输入框 ─────────────────────────────── */
+  .stage { max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; }
+  .user-bubble {
+    margin-left: auto; max-width: 78%;
+    background: var(--bubble); border-radius: 14px; padding: 9px 14px;
+  }
+  .tool-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; font-size: 13px; color: var(--text-dim); }
+  .tool-row .mark { color: var(--ok); width: 14px; text-align: center; }
+  .tool-row .chip { margin-left: auto; border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; font-size: 10px; }
+  .answer { padding: 8px 2px; font-size: 14px; }
+
+  /* 输入队列 */
+  .queue-head { display: flex; align-items: center; gap: 6px; padding: 0 4px; font-size: 11px; color: var(--text-dim); }
+  .queue-head .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-row {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border); background: var(--bg-card);
+    border-radius: 12px; padding: 6px 10px; font-size: 12px; margin-top: 6px;
+  }
+  .queue-row .idx { color: var(--text-dim); font-size: 11px; }
+  .queue-row .text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .queue-row .pick { color: var(--text-dim); font-size: 11px; }
+
+  /* 插话开关（迁到队列头） */
+  .steer { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 8px; color: var(--text-dim); font-size: 12px; }
+  .steer:hover { background: var(--bg-elevated); color: var(--text); }
+  .steer svg { opacity: .85; }
+
+  /* composer */
+  .composer { margin-top: 8px; border: 1px solid var(--border); background: var(--bg-elevated); border-radius: 20px; box-shadow: 0 2px 4px rgba(0,0,0,.04), 0 10px 28px rgba(0,0,0,.07); }
+  .composer .placeholder { padding: 16px 16px 4px; color: var(--text-dim); font-size: 15px; }
+  .toolbar { display: flex; align-items: center; gap: 12px; padding: 4px 12px 12px; }
+  .icon-btn { display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 8px; color: var(--text-dim); font-size: 12px; }
+  .icon-btn:hover { background: var(--bg-card); color: var(--text); }
+  .icon-btn.orange { color: var(--tone-orange); }
+  .grow { flex: 1; }
+  .agent-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); animation: pulse 1.6s ease-in-out infinite; }
+  .agent-dot.idle { background: var(--border); animation: none; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  .ring { display: flex; align-items: center; gap: 4px; color: var(--text-dim); font-size: 11px; }
+  .footer { display: flex; align-items: center; gap: 4px; padding: 8px 6px 0; font-size: 12px; color: var(--text-dim); }
+  .send { margin-left: 6px; background: var(--accent); color: var(--accent-contrast); border-radius: 999px; width: 30px; height: 30px; display: grid; place-items: center; }
+
+  /* ── Agent map 弹窗 ─────────────────────────────────── */
+  .overlay {
+    position: fixed; inset: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .5); padding: 24px;
+  }
+  .overlay.hidden { display: none; }
+  .modal {
+    display: flex; flex-direction: column; overflow: hidden;
+    width: 100%; max-width: 720px; max-height: 78vh;
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  }
+  .modal-head { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-bottom: 1px solid var(--border); flex: none; }
+  .modal-head .title { font-size: 13px; }
+  .modal-head .sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-dim); }
+  .modal-head .close { color: var(--text-dim); padding: 4px; border-radius: 6px; }
+  .modal-head .close:hover { background: var(--bg-elevated); color: var(--text); }
+  .modal-body { padding: 16px; overflow: auto; }
+  .map { display: flex; gap: 20px; }
+  .main-node { flex: none; width: 208px; border: 1px solid var(--border); background: var(--bg); border-radius: 12px; padding: 10px; align-self: flex-start; }
+  .main-node .name { font-size: 12px; }
+  .main-node .meta { margin-top: 6px; padding-left: 20px; font-size: 11px; color: var(--text-dim); }
+  .kids { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; border-left: 1px solid var(--border); padding-left: 20px; }
+  .kid { position: relative; border: 1px solid var(--border); background: var(--bg); border-radius: 12px; overflow: hidden; }
+  .kid::before { content: ""; position: absolute; left: -20px; top: 16px; width: 20px; height: 1px; background: var(--border); }
+  .kid-head { display: flex; align-items: flex-start; gap: 8px; padding: 10px; }
+  .kid-head .mark { width: 14px; flex: none; text-align: center; margin-top: 2px; }
+  .kid-head .mark.ok { color: var(--ok); }
+  .kid-head .mark.danger { color: var(--danger); }
+  .kid-head .body { flex: 1; min-width: 0; }
+  .kid-head .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kid-head .meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text-dim); }
+  .kid-head .live { font-size: 11px; color: var(--text-dim); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chev { color: var(--text-dim); margin-top: 4px; }
+  .kid-detail { border-top: 1px solid var(--border); padding: 10px 12px; }
+  .prompt { border: 1px solid var(--border); background: var(--bg-card); border-radius: 8px; padding: 8px; font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+  .feed { display: flex; flex-direction: column; gap: 5px; }
+  .feed .row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .feed .row .mark { width: 12px; text-align: center; }
+  .feed .row .mark.ok { color: var(--ok); }
+  .feed .row .what { flex: none; }
+  .feed .row .arg { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed .say { border: 1px solid var(--border); background: var(--bg-card); border-radius: 8px; padding: 6px 9px; font-size: 12px; }
+  .transcript { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; font-size: 11px; color: var(--text-dim); }
+  .transcript .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { padding: 44px 0; text-align: center; }
+  .empty .t { font-size: 12px; }
+  .empty .s { margin-top: 4px; font-size: 11px; color: var(--text-dim); }
+  .spinner {
+    width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--text-dim);
+    border-radius: 50%; display: inline-block; animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>子 Agent 活动面板 · 效果图</h1>
+  <div class="spacer"></div>
+  <div class="seg">
+    <button id="st-rich" class="on">3 个子 agent</button>
+    <button id="st-empty">0 个（空态）</button>
+  </div>
+  <div class="seg">
+    <button id="st-show" class="on">显示 Agent map</button>
+    <button id="st-hide">只看输入框</button>
+  </div>
+</div>
+
+<div class="stage">
+  <div class="user-bubble">截图里的「逐条插话」按钮去掉，换成能看当前会话子 agent 的形式</div>
+  <div class="tool-row"><span class="mark">✓</span><span>派生了 3 个子 agent</span><span class="chip">Sub Agent</span></div>
+  <div class="answer">已按截图改造：输入框工具栏换成「● N 个子 agent」，点开是 Agent map；插话开关移到了上面的队列头。</div>
+
+  <!-- 输入队列：插话开关现在在这里 -->
+  <div class="queue-head" style="margin-top:14px">
+    <span>▤</span>
+    <span class="title">排队中 2 条 · 本轮结束后依次发送</span>
+    <span class="steer">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+        <path d="M8 2l4.5 1.8v4.3c0 2.6-1.8 4.8-4.5 5.7-2.7-.9-4.5-3.1-4.5-5.7V3.8L8 2z" stroke-linejoin="round" />
+        <path d="M6 8l1.6 1.6L10.3 7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      逐条插话
+      <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </span>
+  </div>
+  <div class="queue-row"><span class="idx">1</span><span class="text">顺便把 Room 行 + 沙箱生命周期也画进地图</span><span class="pick">等执行完 ▾</span><span class="dim">✕</span></div>
+  <div class="queue-row"><span class="idx">2</span><span class="text">再跑一次 npm run check</span><span class="pick">等执行完 ▾</span><span class="dim">✕</span></div>
+
+  <!-- 输入框 -->
+  <div class="composer" style="margin-top:10px">
+    <div class="placeholder">Enter 加入队列，本轮结束后自动发送…</div>
+    <div class="toolbar">
+      <span class="icon-btn">＋</span>
+      <span class="icon-btn orange">⚠ 全自动 ▾</span>
+      <span class="icon-btn" id="chip"><span class="agent-dot" id="chip-dot"></span><span id="chip-label">3 个子 agent</span></span>
+      <span class="ring"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.6" stroke-dasharray="27 35" /></svg>35</span>
+      <span class="grow"></span>
+      <span class="dim mono" style="font-size:12px">@cowith</span>
+      <span class="send">■</span>
+    </div>
+  </div>
+  <div class="footer">
+    <span class="icon-btn">▣ cowith ▾</span>
+    <span class="icon-btn">◫ deepseek-v4.1-flash ▾</span>
+  </div>
+</div>
+
+<!-- Agent map -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="title">子 Agent</span>
+      <span class="sub" id="modal-sub">3 个子 agent · 2 个运行中 · 点击节点查看详情</span>
+      <span class="close">✕</span>
+    </div>
+    <div class="modal-body">
+      <div class="map" id="map-rich">
+        <div class="main-node">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="spinner"></span>
+            <span class="name">cowith 房间链路排查</span>
+          </div>
+          <div class="meta mono">deepseek-v4.1-flash · 128.4K tokens</div>
+        </div>
+        <div class="kids">
+          <div class="kid">
+            <div class="kid-head">
+              <span class="mark"><span class="spinner"></span></span>
+              <span class="body">
+                <span class="name">Map room/hall chat message flow</span>
+                <span class="meta"><span class="mono">运行中</span><span class="mono">第 5 步</span><span class="mono">124.8K tokens</span></span>
+                <span class="live mono">grep create_room</span>
+              </span>
+              <span class="chev">▾</span>
+            </div>
+            <div class="kid-detail">
+              <div class="prompt">画出 room/hall 的消息流转：入口 API、ack 路径、ThreadService 落库点。只读探索，输出一份带文件行号的流程说明。</div>
+              <div class="feed">
+                <div class="row"><span class="mark ok">✓</span><span class="what">read</span><span class="arg mono">server/rooms/handler.ts</span></div>
+                <div class="row"><span class="mark ok">✓</span><span class="what">grep</span><span class="arg mono">create_room</span></div>
+                <div class="row"><span class="mark"><span class="spinner"></span></span><span class="what">read</span><span class="arg mono">server/thread/service.ts</span></div>
+              </div>
+              <div class="transcript"><span>过程转录：<span class="mono">~/.kalo/agent/sessions/.../subagent-3.md</span></span><span>⧉</span></div>
+            </div>
+          </div>
+          <div class="kid">
+            <div class="kid-head">
+              <span class="mark"><span class="spinner"></span></span>
+              <span class="body">
+                <span class="name">Map shared workspace &amp; file editing</span>
+                <span class="meta"><span class="mono">运行中</span><span class="mono">第 3 步</span><span class="mono">94.5K tokens</span></span>
+                <span class="live mono">glob docs/proposals/*.html</span>
+              </span>
+              <span class="chev">▸</span>
+            </div>
+          </div>
+          <div class="kid">
+            <div class="kid-head">
+              <span class="mark ok">✓</span>
+              <span class="body">
+                <span class="name">Map sandbox lifecycle mechanism</span>
+                <span class="meta"><span class="mono" style="color:var(--ok)">已完成</span><span class="mono">共 7 步</span><span class="mono">154.1K tokens</span><span>续写 1 次</span></span>
+                <span class="live mono">bash git log --oneline -5</span>
+              </span>
+              <span class="chev">▸</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty" id="map-empty" style="display:none">
+        <div class="t">本会话还没有派生子 agent</div>
+        <div class="s">模型用 agent 工具派生独立任务后，会实时出现在这里</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const overlay = document.getElementById("overlay");
+  const mapRich = document.getElementById("map-rich");
+  const mapEmpty = document.getElementById("map-empty");
+  const sub = document.getElementById("modal-sub");
+  const chip = document.getElementById("chip");
+  const dot = document.getElementById("chip-dot");
+  const label = document.getElementById("chip-label");
+
+  function setState(rich) {
+    mapRich.style.display = rich ? "flex" : "none";
+    mapEmpty.style.display = rich ? "none" : "block";
+    sub.textContent = rich ? "3 个子 agent · 2 个运行中 · 点击节点查看详情" : "0 个子 agent";
+    label.textContent = rich ? "3 个子 agent" : "0 个子 agent";
+    dot.className = rich ? "agent-dot" : "agent-dot idle";
+    document.getElementById("st-rich").classList.toggle("on", rich);
+    document.getElementById("st-empty").classList.toggle("on", !rich);
+  }
+  document.getElementById("st-rich").onclick = () => setState(true);
+  document.getElementById("st-empty").onclick = () => setState(false);
+  document.getElementById("st-show").onclick = () => { overlay.classList.remove("hidden"); show(true); };
+  document.getElementById("st-hide").onclick = () => { overlay.classList.add("hidden"); show(false); };
+  chip.onclick = () => { overlay.classList.remove("hidden"); show(true); };
+  overlay.onclick = (e) => { if (e.target === overlay) { overlay.classList.add("hidden"); show(false); } };
+  function show(on) {
+    document.getElementById("st-show").classList.toggle("on", on);
+    document.getElementById("st-hide").classList.toggle("on", !on);
+  }
+  setState(true);
+</script>
+</body>
+</html>

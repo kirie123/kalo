@@ -44,6 +44,11 @@
 - [ContextRing 加载历史会话后始终显示「–」（上下文长度不刷新）](context-ring-shows-dash-on-history-session.md)
 - [自定义 Provider 的模型「读不到图」（模型定义没声明 image）](custom-provider-image-input.md)
 - [从 UI 建的模型不思考、读不到图、输出被截短、手工字段被抹（模型定义缺能力字段）](custom-provider-model-capabilities.md)
+- [工具产出的卡片（产物/widget 图表）实时流不显示、重开会话才出现（嵌套 mutateTimeline 覆盖）](timeline-card-dropped-nested-mutate.md)
+- [高负载时输入框「看着正常、敲字没反应」（效率模式/流式重解析饿死 UI，不是被禁用）](ui-unresponsive-under-load.md)
+- [dev 窗口与已安装应用同时开着时，网关每秒重启一次（feishu.lock 单实例互斥 + bun 空事件循环退出 0）](gateway-restart-storm-two-instances.md)
+- [重建了 sidecar（pi / 网关）但运行中的 dev 窗口行为没变（运行时用的是 target/<profile>/binaries/ 那份拷贝）](sidecar-rebuild-not-picked-up-in-dev.md)
+- [改完前端行为没变化（跑的是已安装版 %LOCALAPPDATA%\Kalo\kalo.exe，不是 dev 窗口）](edited-ui-not-visible-installed-vs-dev.md)
 
 ### 引擎（kalo-harness / sidecar）
 - [启动后提示「引擎未响应」（解析到了其他平台的 sidecar 二进制）](engine-unresponsive-wrong-platform-binary.md)

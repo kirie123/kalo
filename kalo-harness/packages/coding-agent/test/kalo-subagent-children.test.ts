@@ -114,9 +114,12 @@ describe("subagent children registry", () => {
 	});
 
 	describe("id allocation", () => {
-		it("hands out monotonic subagent-N ids", () => {
-			expect(nextChildId()).toBe("subagent-1");
-			expect(nextChildId()).toBe("subagent-2");
+		it("allocates UUID ids that do not repeat after a registry reset", () => {
+			const first = nextChildId();
+			resetRegistry();
+			const second = nextChildId();
+			expect(first).toMatch(/^subagent-[0-9a-f-]{36}$/);
+			expect(second).not.toBe(first);
 		});
 	});
 
@@ -131,6 +134,13 @@ describe("subagent children registry", () => {
 		it("hides a child from another parent", () => {
 			register(makeHandle("subagent-1", "parent-a", 1));
 			expect(lookup("subagent-1", "parent-b")).toBeUndefined();
+		});
+
+		it("keeps identical legacy ids resident for different owners", () => {
+			register(makeHandle("subagent-1", "parent-a", 1));
+			register(makeHandle("subagent-1", "parent-b", 2));
+			expect(lookup("subagent-1", "parent-a")?.ownerSession).toBe("parent-a");
+			expect(lookup("subagent-1", "parent-b")?.ownerSession).toBe("parent-b");
 		});
 
 		it("returns undefined for an unknown id", () => {

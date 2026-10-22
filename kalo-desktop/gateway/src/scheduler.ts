@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { log } from "./protocol";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +119,42 @@ export function resolveBash(): string {
     if (existsSync(p)) return p;
   }
   return "bash";
+}
+
+/**
+ * Prepend the shell's own directory to the env's PATH. Pure, so it is
+ * testable without spawning anything.
+ *
+ * Spawning the real shell (`Git\usr\bin\bash.exe`) directly — unlike the
+ * `Git\bin\bash.exe` wrapper — does not add `/usr/bin` to PATH. On a machine
+ * where Git is not on PATH (a desktop app launched from Explorer is the
+ * normal case), every coreutil in a job (`tail`, `rm`, `ls`, …) then answers
+ * "command not found". `resolveBash()` deliberately prefers the real shell
+ * (see its comment above), so the spawn env has to carry the shell's dir.
+ *
+ * A non-absolute `shell` (plain `"bash"` resolved from PATH on unix) has no
+ * directory of its own to add; the env is returned untouched.
+ */
+export function prependShellDir(env: NodeJS.ProcessEnv, shell: string): NodeJS.ProcessEnv {
+  if (!isAbsolute(shell)) return env;
+  const dir = dirname(shell);
+  // Windows spells it `Path` in some processes; update the existing key so
+  // the child cannot end up with two case-variant PATH entries.
+  const key = Object.keys(env).find((name) => name.toLowerCase() === "path") ?? "PATH";
+  const current = env[key] ?? "";
+  return { ...env, [key]: current ? `${dir}${delimiter}${current}` : dir };
+}
+
+/**
+ * Spawn env for every bash this gateway starts (jobs, job probes, watch
+ * tasks). `extra` is the per-job env (the engine's PATH, PI_* session vars)
+ * and wins over `process.env` — but the shell's dir is prepended *after*
+ * that merge, so neither source can push the coreutils back out of reach
+ * (the engine's own PATH has no Git dirs either; only the wrapper adds them).
+ */
+export function bashSpawnEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = extra ? { ...process.env, ...extra } : { ...process.env };
+  return prependShellDir(merged, resolveBash());
 }
 
 /** First `bash.exe` on PATH that is not WSL's launcher. */
@@ -465,6 +501,9 @@ export class Scheduler {
 
     const child = spawn(resolveBash(), ["-c", task.script ?? ""], {
       cwd: existsSync(task.cwd) ? task.cwd : undefined,
+      // The real shell needs its own dir on PATH for coreutils; see
+      // `prependShellDir`.
+      env: bashSpawnEnv(),
       windowsHide: true,
     });
     let out = "";

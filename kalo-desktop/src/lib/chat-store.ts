@@ -6,8 +6,8 @@
  * message is persisted). Switching sessions merely changes which runtime's
  * view feeds the UI; parked runtimes keep their engine process alive, so
  * background runs continue and their events keep updating the parked view.
- * Idle parked engines beyond MAX_PARKED are evicted (LRU); streaming or
- * connecting ones never are.
+ * Idle parked engines beyond MAX_PARKED are evicted (LRU); streaming,
+ * connecting or background-kept-alive ones never are.
  *
  * The store is a plain class consumed by React via useSyncExternalStore.
  * The exposed ChatState is a composition: global slice (model catalogs,
@@ -32,10 +32,7 @@ import type {
   RpcSessionState,
   SlashCommand,
   ThinkingLevel,
-  ThinkingContent,
-  TextContent,
   ToolResultMessage,
-  UserMessage,
 } from "../types";
 import { appendAttachment, readAttachmentDrafts, readFileDrafts } from "./attachment-intake";
 import { applyBlockEvent, isBlockEvent, seedMessage } from "./assistant-stream";
@@ -56,11 +53,10 @@ import {
   accumulate,
   createAccumulator,
   summarize,
-  type ChangeAccumulator,
-  type ChangeSummary,
 } from "./changed-files";
 import {
   errText,
+  latestTodos,
   loadLastModel,
   modelErrorHint,
   normPath,
@@ -69,8 +65,11 @@ import {
   sameFlags,
   saveLastModel,
 } from "./chat-store-helpers";
+import { SessionRuntime, type SessionView } from "./chat-session";
+import { publishBashWatch } from "./tool-watch-registry";
 import {
   createSession,
+  expertForSession,
   closeSession,
   onPiEvent,
   onPiExit,
@@ -85,15 +84,17 @@ import {
 } from "./pi-bridge";
 import { applyRetryEnd, applyRetryStart, pushAssistantEntry } from "./retry-fold";
 import { dispatchExtensionUiRequest } from "./extension-ui-dispatch";
+import { selectIdleEvictions } from "./runtime-keep-alive";
 import { pushCompactingNotice, settleCompaction } from "./compaction-entries";
+import { handleSpecialToolResult, parseArtifacts } from "./artifacts";
+import { parseWidget } from "./widgets";
 import type {
   AssistantEntry,
+  ArtifactsEntry,
+  WidgetEntry,
   TimelineEntry,
   ToolCallRecord,
-  ToolGroupEntry,
   TodoItem,
-  TurnUsage,
-  UserEntry,
 } from "./timeline";
 
 // ============================================================================
@@ -121,6 +122,7 @@ export interface ChatState {
   /** The engine-side session id (from get_state), used to highlight history items. */
   engineSessionId?: string;
   cwd: string;
+  expertId?: string;
   sessionName?: string;
   timeline: TimelineEntry[];
   /**
@@ -187,6 +189,13 @@ export interface ChatState {
    * stick-to-bottom flag) when the user switches sessions.
    */
   activeSessionKey: string;
+  /**
+   * Stable identity of the active conversation (see SessionRuntime.uid). Views
+   * that remember state across a session switch key on this: unlike
+   * activeSessionKey it survives the fresh-N -> session-file re-key that
+   * happens when a new chat's file lands on disk.
+   */
+  sessionUid: string;
 }
 
 /**
@@ -195,32 +204,6 @@ export interface ChatState {
  * components keep reading a flat ChatState. currentModel/thinkingLevel/
  * steeringMode live here because each engine process keeps its own values.
  */
-type SessionView = Pick<
-  ChatState,
-  | "sessionId"
-  | "engineSessionId"
-  | "cwd"
-  | "sessionName"
-  | "timeline"
-  | "todos"
-  | "history"
-  | "loadingOlder"
-  | "isStreaming"
-  | "isCompacting"
-  | "currentModel"
-  | "thinkingLevel"
-  | "steeringMode"
-  | "permissionMode"
-  | "extensionQueue"
-  | "pendingAsk"
-  | "inputDraft"
-  | "attachments"
-  | "inputQueue"
-  | "contextUsage"
-  | "sessionFile"
-  | "connecting"
->;
-
 /** Engine-process-global catalogs + app-level bits shared by all runtimes. */
 type GlobalView = Pick<ChatState, "models" | "customModels" | "thinkingLevels" | "toasts" | "commands">;
 
@@ -228,6 +211,7 @@ const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
   "sessionId",
   "engineSessionId",
   "cwd",
+  "expertId",
   "sessionName",
   "timeline",
   "todos",
@@ -254,97 +238,7 @@ function affectsPoolFlags(p: Partial<SessionView>): boolean {
   return "isStreaming" in p || "connecting" in p || "sessionFile" in p || "engineSessionId" in p || "cwd" in p;
 }
 
-/** Session-scoped fields reset for every fresh runtime. */
-function freshView(cwd = ""): SessionView {
-  const saved = loadLastModel();
-  return {
-    sessionId: null,
-    cwd,
-    timeline: [],
-    todos: [],
-    loadingOlder: false,
-    isStreaming: false,
-    isCompacting: false,
-    currentModel: saved ? ({ id: saved.modelId, name: saved.name || saved.modelId, provider: saved.provider } as ModelInfo) : undefined,
-    thinkingLevel: "medium",
-    steeringMode: "one-at-a-time",
-    permissionMode: undefined,
-    extensionQueue: [],
-    pendingAsk: undefined,
-    attachments: [],
-    inputQueue: [],
-    contextUsage: undefined,
-  };
-}
-
-/**
- * One pooled engine session: the view state above plus everything needed to
- * keep it alive in the background (event routing, history window, recovery).
- * Switching sessions never tears a runtime down — only pool eviction,
- * deliberate restart, or app exit kills its engine process.
- */
-class SessionRuntime {
-  /**
-   * Pool key: normalized session file path once known, else `fresh-N`.
-   * Re-keyed by the store when the engine reports its session file.
-   */
-  key: string;
-  view: SessionView;
-  /** Tauri event unlisteners for this runtime's engine process. */
-  unlisteners: Array<() => void> = [];
-  /** Generation guard: bumps on restart/teardown so stale callbacks no-op. */
-  token = 0;
-  /** Engine exited before any message was persisted — nothing to recover from. */
-  dead = false;
-  historyMessages: AgentMessage[] = [];
-  /** Timeline entries after this index are live (post-resume), not history. */
-  historyLiveBase = 0;
-  /** Usage accumulator for the in-flight run (agent_start → agent_settled). */
-  runUsage: TurnUsage | null = null;
-  /** Files written/edited during the in-flight run, folded per path. */
-  runChanges: ChangeAccumulator = createAccumulator();
-  /** Auto-recovery attempts for this runtime's lifecycle (capped). */
-  recoveryCount = 0;
-  /** In-flight lazy engine connect (new chat) of this runtime. */
-  sessionInit: Promise<string> | null = null;
-  /**
-   * Set on the first prompt of a brand-new chat: pi does not write the session
-   * file until the first assistant message, so the sidebar's disk scan cannot
-   * see this session yet. Published as a PendingSession until then. Undefined
-   * for resumed sessions (already on disk) and for chats never prompted.
-   */
-  pending: { title: string; at: number } | null = null;
-  /** Background engine connect of a resume; sendPrompt awaits it. */
-  resumePromise: Promise<void> | null = null;
-  compactionNoticeId: string | null = null;
-  lastActive = Date.now();
-  /** Per-runtime lock: prevents concurrent get_session_stats IPC calls. */
-  contextInflight = false;
-  /**
-   * A prompt is on its way to the engine but `agent_start` has not come back
-   * yet. Counts as "running" for the input queue, so a message typed inside
-   * that window queues instead of racing the run that is about to start.
-   */
-  dispatching = false;
-  /** 用户刚按了停止：本次 settled 不自动发队列（停止 = 别再自己动）。 */
-  queueHold = false;
-  // Per-runtime stream batching (20fps clone flush).
-  flushTimer: ReturnType<typeof setTimeout> | null = null;
-  pendingClones = new Set<string>();
-
-  /**
-   * `expertId` (experts panel's 开始会话) is passed to create_session on every
-   * spawn, including crash recovery, so a recovered engine keeps the expert
-   * identity. A constructor parameter property, to keep this file within its
-   * length budget (the file is over the 800-line limit and may only shrink).
-   */
-  constructor(key: string, cwd = "", public expertId?: string) {
-    this.key = key;
-    this.view = freshView(cwd);
-  }
-}
-
-/** Cap on parked (non-active) idle engines; streaming ones are never evicted. */
+/** Cap on ordinary idle parked engines; protected runtimes do not count. */
 const MAX_PARKED = 4;
 
 const initialGlobal: GlobalView = {
@@ -467,6 +361,7 @@ export class ChatStore {
       runningByFile: stableFlags,
       pendingSessions: stablePending,
       activeSessionKey: this.active.key,
+      sessionUid: this.active.uid,
     };
     this.listeners.forEach((l) => l());
   }
@@ -477,11 +372,8 @@ export class ChatStore {
    */
   private set(partial: Partial<ChatState>) {
     for (const [k, v] of Object.entries(partial)) {
-      if (SESSION_VIEW_KEYS.has(k as keyof SessionView)) {
-        (this.active.view as Record<string, unknown>)[k] = v;
-      } else {
-        (this.global as Record<string, unknown>)[k] = v;
-      }
+      const target = SESSION_VIEW_KEYS.has(k as keyof SessionView) ? this.active.view : this.global;
+      (target as Record<string, unknown>)[k] = v;
     }
     this.commit();
   }
@@ -517,6 +409,7 @@ export class ChatStore {
 
   private detachRt(rt: SessionRuntime) {
     rt.token++;
+    rt.backgroundKeepAlive = false;
     rt.unlisteners.forEach((u) => u());
     rt.unlisteners = [];
   }
@@ -531,16 +424,9 @@ export class ChatStore {
     this.commit();
   }
 
-  /** Evict idle parked engines beyond MAX_PARKED; streaming ones are never evicted. */
+  /** Only ordinary idle runtimes participate in the parked LRU. */
   private evictIdle() {
-    const parked = [...this.runtimes.values()].filter(
-      (rt) => rt !== this.active && !rt.view.isStreaming && !rt.view.connecting,
-    );
-    if (parked.length <= MAX_PARKED) return;
-    parked.sort((a, b) => a.lastActive - b.lastActive);
-    for (const rt of parked.slice(0, parked.length - MAX_PARKED)) {
-      void this.killRt(rt);
-    }
+    selectIdleEvictions(this.runtimes.values(), this.active, MAX_PARKED).forEach((rt) => void this.killRt(rt));
   }
 
   /**
@@ -560,6 +446,13 @@ export class ChatStore {
     this.active = rt;
     this.commit();
     this.evictIdle();
+  }
+
+  selectExpert(expertId: string | undefined, cwd: string) {
+    const rt = this.active;
+    if (rt.view.isStreaming || rt.view.isCompacting || rt.view.connecting) throw new Error("请等待当前任务结束后切换专家");
+    if (rt.view.timeline.length || rt.view.sessionId) this.newChat({ cwd, expertId });
+    else this.setRt(rt, { cwd, expertId });
   }
 
   /**
@@ -623,7 +516,6 @@ export class ChatStore {
       rt.historyMessages = [];
       rt.historyLiveBase = 0;
     }
-    rt.token++;
     const token = rt.token;
     this.setRt(rt, {
       sessionId,
@@ -648,7 +540,9 @@ export class ChatStore {
         else u();
       });
 
-    track(onPiEvent(sessionId, (payload) => this.handlePiPayload(payload, rt)));
+    track(onPiEvent(sessionId, (payload) => {
+      if (!rt.dead && token === rt.token) this.handlePiPayload(payload, rt);
+    }));
     track(
       onPiStderr(sessionId, (line) => {
         if (rt === this.active) console.error("[pi stderr]", line);
@@ -670,6 +564,7 @@ export class ChatStore {
    * too — the recovered engine keeps feeding the parked view.
    */
   private async handleEngineExit(rt: SessionRuntime, deadSid: string, info: PiExitInfo) {
+    this.detachRt(rt);
     rejectSessionPending(deadSid, new Error("engine process exited"));
     this.finalizeStreamingEntries(rt);
     this.setRt(rt, { isStreaming: false, isCompacting: false, sessionId: null, pendingAsk: undefined });
@@ -736,7 +631,7 @@ export class ChatStore {
     for (const delay of [0, 500, 1500]) {
       if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       try {
-        const sid = await createSession(cwd, rt.expertId);
+        const sid = await createSession(cwd, rt.view.expertId);
         this.attachSession(rt, sid, cwd, opts);
         return sid;
       } catch (err) {
@@ -848,6 +743,8 @@ export class ChatStore {
     // continuable; the timeline rendered in phase A stays untouched.
     rt.resumePromise = (async () => {
       try {
+        const expertId = await expertForSession(sessionPath);
+        this.setRt(rt, { expertId: expertId ?? undefined });
         localStorage.setItem("kalo.lastCwd", cwd);
         const sid = await this.spawnSession(rt, cwd, { keepTimeline: true });
         await this.waitForEngine(sid);
@@ -1485,6 +1382,7 @@ export class ChatStore {
         setExtensionQueue: (queue) => this.setRt(rt, { extensionQueue: queue }),
         currentQueue: () => rt.view.extensionQueue,
         setInputDraft: (text) => this.setRt(rt, { inputDraft: text }),
+        setBackgroundKeepAlive: (keepAlive) => { rt.backgroundKeepAlive = keepAlive; if (!keepAlive) this.evictIdle(); },
       },
       rt !== this.active,
       (msg, kind) => this.pushToast(msg, kind),
@@ -1530,28 +1428,30 @@ export class ChatStore {
       case "tool_execution_update":
         this.applyToolPartial(ev.toolCallId, ev.partialResult, rt);
         break;
-      case "tool_execution_end":
+      case "tool_execution_end": {
+        // Update the tool record first, then push any artifact/widget cards as
+        // separate top-level mutateTimeline calls. Doing the pushes inside the
+        // updateToolRecord callback nests mutateTimeline: the inner commit lands
+        // the card, then the outer commit overwrites the timeline with a stale
+        // snapshot taken before the push, silently dropping the card.
+        let done: ToolCallRecord | null = null;
         this.updateToolRecord(
           ev.toolCallId,
           (rec) => {
-            const done: ToolCallRecord = {
-              ...rec,
-              status: ev.isError ? "error" : "success",
-              result: ev.result,
-            };
-            // Fold file mutations into this run's summary while the args and
-            // the result are together in one place.
-            accumulate(rt.runChanges, done, rt.view.cwd);
+            done = { ...rec, status: ev.isError ? "error" : "success", result: ev.result };
             return done;
           },
           rt,
         );
-        // A todo_write result carries the whole replacement plan.
-        if (ev.toolName === "todo_write" && !ev.isError) {
-          const todos = readTodos(ev.result);
-          if (todos) this.setRt(rt, { todos });
+        if (done) {
+          publishBashWatch(ev.toolName, ev.toolCallId, { status: ev.isError ? "error" : "success", result: ev.result });
+          accumulate(rt.runChanges, done, rt.view.cwd);
+          handleSpecialToolResult(done, { setTodos: (t) => this.setRt(rt, { todos: t }), pushArtifacts: (s) => this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "artifacts", summary: s } satisfies ArtifactsEntry), rt) }, { uid: rt.uid, cwd: rt.view.cwd });
+          const widgetSummary = parseWidget(done);
+          if (widgetSummary) this.mutateTimeline((tl) => tl.push({ id: nextEntryId(), kind: "widget", summary: widgetSummary } satisfies WidgetEntry), rt);
         }
         break;
+      }
 
       case "compaction_start":
         rt.compactionNoticeId = nextEntryId();
@@ -1730,7 +1630,7 @@ export class ChatStore {
   // --------------------------------------------------------------------------
 
   private onToolStart(toolCallId: string, toolName: string, args: any, rt: SessionRuntime) {
-    const rec: ToolCallRecord = { toolCallId, toolName, args, status: "running" };
+    const rec: ToolCallRecord = { toolCallId, toolName, args, status: "running", startedAt: Date.now() };
     this.mutateTimeline((t) => {
       const last = t[t.length - 1];
       // Consecutive calls of the same tool collapse into one group.
@@ -1751,6 +1651,7 @@ export class ChatStore {
       const rec = e.calls.find((c) => c.toolCallId === toolCallId);
       if (!rec) continue;
       rec.partialResult = partialResult;
+      publishBashWatch(rec.toolName, toolCallId, { status: "running", partialResult });
       this.queueTimelineFlush(e.id, rt);
       return;
     }
@@ -1775,35 +1676,6 @@ export class ChatStore {
 // ============================================================================
 // History reconstruction (get_messages -> timeline)
 // ============================================================================
-
-/**
- * The whole-list plan snapshot carried by a `todo_write` tool result
- * (`details.todos`, mirroring the harness extension). Returns null when the
- * payload isn't the expected shape, so a malformed result leaves the last
- * good plan on screen instead of blanking it.
- */
-function readTodos(result: any): TodoItem[] | null {
-  const todos = result?.details?.todos;
-  if (!Array.isArray(todos)) return null;
-  const ok = todos.every(
-    (t: any) =>
-      t &&
-      typeof t.content === "string" &&
-      (t.status === "pending" || t.status === "in_progress" || t.status === "completed"),
-  );
-  return ok ? (todos as TodoItem[]) : null;
-}
-
-/** Replay the plan from a loaded history page: the last todo_write wins. */
-function latestTodos(messages: AgentMessage[]): TodoItem[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== "toolResult" || m.toolName !== "todo_write" || m.isError) continue;
-    const todos = readTodos({ details: m.details });
-    if (todos) return todos;
-  }
-  return [];
-}
 
 function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
   const t: TimelineEntry[] = [];
@@ -1848,19 +1720,12 @@ function buildTimeline(messages: AgentMessage[]): TimelineEntry[] {
     } else if (m.role === "toolResult") {
       const result = { content: m.content, details: m.details, isError: m.isError };
       const rec = pendingCalls.get(m.toolCallId);
-      if (rec) {
-        rec.status = m.isError ? "error" : "success";
-        rec.result = result;
-        pendingCalls.delete(m.toolCallId);
-      } else {
-        addCall({
-          toolCallId: m.toolCallId,
-          toolName: m.toolName,
-          args: {},
-          status: m.isError ? "error" : "success",
-          result,
-        });
-      }
+      const settled: ToolCallRecord = { toolCallId: m.toolCallId, toolName: m.toolName, args: rec?.args ?? {}, status: m.isError ? "error" : "success", result };
+      if (rec) { rec.status = settled.status; rec.result = result; pendingCalls.delete(m.toolCallId); } else { addCall(settled); }
+      const artifactsSummary = parseArtifacts(settled);
+      if (artifactsSummary) t.push({ id: nextEntryId(), kind: "artifacts", summary: artifactsSummary } satisfies ArtifactsEntry);
+      const widgetSummary = parseWidget(settled);
+      if (widgetSummary) t.push({ id: nextEntryId(), kind: "widget", summary: widgetSummary } satisfies WidgetEntry);
     }
   }
 

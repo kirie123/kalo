@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 export interface LightboxImage {
@@ -13,18 +14,34 @@ export interface LightboxImage {
  * Portaled to <body> so the chat area's zoom transform doesn't scale a
  * viewport-sized overlay past the actual viewport.
  */
-export default function ImageLightbox({ image, onClose }: { image: LightboxImage; onClose: () => void }) {
+export default function ImageLightbox({ image, onClose }: { image: LightboxImage | { name: string; src: string }; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement;
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.stopPropagation(); onCloseRef.current(); }
+      if (event.key === "Tab") { event.preventDefault(); closeRef.current?.focus(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      if (previous instanceof HTMLElement) previous.focus();
+    };
+  }, []);
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8" onClick={onClose}>
+    <div role="dialog" aria-modal="true" aria-label={image.name} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-8" onClick={onClose}>
       <div className="flex max-h-full max-w-full flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
         <img
-          src={`data:${image.mimeType};base64,${image.dataBase64}`}
+          src={"src" in image ? image.src : `data:${image.mimeType};base64,${image.dataBase64}`}
           alt={image.name}
           className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain shadow-2xl"
         />
         <div className="flex items-center gap-3 text-xs text-white/80">
           <span>{image.name}</span>
-          <button onClick={onClose} className="rounded border border-white/30 px-2 py-0.5 hover:bg-white/10">
+          <button ref={closeRef} onClick={onClose} className="rounded border border-white/30 px-2 py-0.5 hover:bg-white/10">
             关闭
           </button>
         </div>

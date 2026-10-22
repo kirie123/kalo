@@ -18,7 +18,7 @@
  *   gateway_pair_start / gateway_pair_cancel / gateway_status / gateway_unbind
  *   schedule_list / schedule_upsert / schedule_remove / schedule_run
  *   feed_list / feed_upsert / feed_remove / feed_run
- *   expert_list / expert_upsert / expert_remove
+ *   expert_list / expert_upsert / expert_remove / expert_import { path } -> Expert
  *   list_knowledge_cards / list_knowledge_domains / search_knowledge
  *   read_knowledge_card / write_knowledge_card / delete_knowledge_card
  *   read_mcp_config / write_mcp_config / read_mcp_status
@@ -29,6 +29,7 @@
  *   list_dir { path } -> DirEntry[]
  *   read_file_text { path, maxBytes? } -> { text, truncated, binary }
  *   write_file_text { path, contents } -> void   ("save as" target)
+ *   write_file_bytes { path, dataBase64 } -> void ("save as image" PNG target)
  *   read_text_since { path, offset, maxBytes? } -> { text, offset, size, reset }
  *   dir_diff_names { a, b, ignore? } -> { changed, added, removed, truncated }
  *   read_attachment { path } -> AttachmentDraft (image base64, or a path ref)
@@ -36,11 +37,20 @@
  *   open_path { path, reveal } -> void
  *   git_status { cwd } -> GitStatus | null   (null = not a repo)
  *   git_diff { cwd, relPath } -> string      (unified diff vs HEAD)
+ *   terminal_open { id, cwd, cols, rows } / terminal_write { id, data }
+ *   terminal_resize { id, cols, rows } / terminal_close { id }
+ *
+ * tool details contract (engine → desktop via AgentToolResult.details):
+ *   present_files result.details -> PresentFilesDetails { artifacts: ArtifactItem[]; explanation? }
+ *     ArtifactItem: { kind, path, name, fileKind?, bytes?, missing?, primary }
+ *     Lands in session jsonl; replays on history load; auto-open emitted live only.
  *
  * events:
  *   pi-event:{sessionId}  — one stdout JSON line (response or event)
  *   pi-stderr:{sessionId} — string
  *   pi-exit:{sessionId}   — { code: number | null }
+ *   terminal-output:{id}  — string (batched pty output, ~16ms window)
+ *   terminal-exit:{id}    — { code: number | null }
  *   gateway-status        — GatewayStatus (sidecar lifecycle, pairing QR)
  *   schedule-status       — ScheduleTaskInfo[] (full task-table snapshot)
  *   schedule-error        — string (async schedule_upsert validation failure)
@@ -89,6 +99,7 @@ import type {
   SessionPage,
   SkillInstallReport,
   SkillMeta,
+  TerminalExitInfo,
   TextSince,
 } from "../types";
 
@@ -270,6 +281,11 @@ export function readFileText(path: string, maxBytes?: number): Promise<FileTextC
 /** Save UTF-8 text to a user-picked path ("save as"), creating parent dirs. */
 export function writeFileText(path: string, contents: string): Promise<void> {
   return invoke<void>("write_file_text", { path, contents });
+}
+
+/** Save binary bytes (base64) to a user-picked path — e.g. a widget exported to PNG. */
+export function writeFileBytes(path: string, dataBase64: string): Promise<void> {
+  return invoke<void>("write_file_bytes", { path, dataBase64 });
 }
 
 /** Whole file as base64, for image / office / pdf previews. */
@@ -456,6 +472,15 @@ export function onFeedError(cb: (message: string) => void) {
 /** The expert registry (id / name / workdir / mission / enabled). */
 export function expertList(): Promise<Expert[]> {
   return invoke<Expert[]>("expert_list", {});
+}
+
+/** Import a local WorkBuddy expert/team package into Kalo's managed workspace. */
+export function expertImport(path: string): Promise<Expert> {
+  return invoke<Expert>("expert_import", { path });
+}
+
+export function expertForSession(path: string): Promise<string | null> {
+  return invoke<string | null>("expert_for_session", { path });
 }
 
 /** Create or replace one expert (whole object). */
@@ -684,4 +709,39 @@ export function onPiStderr(sessionId: string, cb: (line: string) => void) {
 
 export function onPiExit(sessionId: string, cb: (info: PiExitInfo) => void) {
   return listen<PiExitInfo>(`pi-exit:${sessionId}`, (e) => cb(e.payload));
+}
+
+// ============================================================================
+// Embedded terminals (doc/2026-10-02-桌面终端与长命令实时可见.md)
+// ============================================================================
+
+/**
+ * Start a shell under a PTY. `id` is the frontend-generated tab id; output
+ * arrives as `terminal-output:{id}` batches, the exit code as
+ * `terminal-exit:{id}`. cwd falls back to the app's default when null/missing.
+ */
+export function terminalOpen(args: { id: string; cwd: string | null; cols: number; rows: number }) {
+  return invoke<void>("terminal_open", args);
+}
+
+/** Keyboard input. Call sites fire-and-forget; Rust keeps keystrokes in order. */
+export function terminalWrite(id: string, data: string) {
+  return invoke<void>("terminal_write", { id, data });
+}
+
+export function terminalResize(id: string, cols: number, rows: number) {
+  return invoke<void>("terminal_resize", { id, cols, rows });
+}
+
+/** Close a tab: kills the shell tree and forgets the session. */
+export function terminalClose(id: string) {
+  return invoke<void>("terminal_close", { id });
+}
+
+export function onTerminalOutput(id: string, cb: (chunk: string) => void) {
+  return listen<string>(`terminal-output:${id}`, (e) => cb(e.payload));
+}
+
+export function onTerminalExit(id: string, cb: (info: TerminalExitInfo) => void) {
+  return listen<TerminalExitInfo>(`terminal-exit:${id}`, (e) => cb(e.payload));
 }

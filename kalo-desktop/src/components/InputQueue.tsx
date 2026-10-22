@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { queuedPreview, type QueuedInput } from "../lib/input-queue";
 import ImageLightbox, { type LightboxImage } from "./ImageLightbox";
+import SteeringPicker from "./SteeringPicker";
 
 /**
  * 输入队列（doc/2026-09-13-输入队列.md）：运行中敲下的消息排在输入框上方，默认等
  * 本轮跑完再依次发出。每条是一个条形控件——左侧是内容（图片缩略图 + 文本预览），
- * 右侧是投递方式下拉（等执行完 / 立即插入）与删除。
+ * 右侧是投递方式下拉（等执行完 / 立即插入）与删除。头部右侧是「逐条插话 / 一次全
+ * 送」开关：它只作用于这个队列，所以跟着队列走（doc/2026-09-30-子agent活动面板.md）。
  *
  * 空队列时不渲染任何东西：不打扰只想说一句话的人。
  */
@@ -23,9 +25,10 @@ export default function InputQueue() {
     <div className="mb-2 flex flex-col gap-1.5">
       <div className="flex items-center gap-1.5 px-1 text-[11px] text-dim">
         <QueueIcon />
-        <span>
+        <span className="min-w-0 flex-1 truncate">
           排队中 {queue.length} 条 · {isStreaming ? "本轮结束后依次发送" : "会话已空闲，可逐条立即发送"}
         </span>
+        <SteeringPicker />
       </div>
       {queue.map((item, i) => (
         <QueueRow

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { chatStore } from "../lib/chat-store";
+import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { addProject, cwdBasename } from "../lib/projects";
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
 
 /** Add a project bookmark (name + working directory) to the sidebar. */
 export default function NewProjectModal({ onClose }: Props) {
+  const backdrop = usePinnedBackdrop("点「取消」或「确定」关闭这个窗口");
   const [name, setName] = useState("");
   const [cwd, setCwd] = useState("");
 
@@ -35,7 +37,7 @@ export default function NewProjectModal({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" onClick={() => onClose(false)}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" {...backdrop}>
       <div
         className="w-[440px] max-w-[92vw] rounded-xl border border-edge bg-card p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}

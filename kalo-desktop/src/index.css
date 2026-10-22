@@ -123,9 +123,17 @@ body {
    ========================================================================== */
 
 .markdown {
-  line-height: 1.7;
+  line-height: 1.75;
   word-break: break-word;
 }
+
+.delivered-image { display: inline-block; max-width: 100%; vertical-align: middle; }
+.delivered-image > img {
+  display: block; width: auto; height: auto; max-width: min(320px, 100%); max-height: 240px;
+  object-fit: contain; border-radius: 10px; cursor: zoom-in;
+  border: 1px solid var(--border);
+}
+.delivered-image > img:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .markdown > :first-child {
   margin-top: 0;
 }
@@ -355,27 +363,65 @@ body {
 }
 
 /* ==========================================================================
-   Work segment (parent bubble over consecutive thinking / tool rows)
+   Conversation process: quiet activity rows, readable prose, visible results
    ========================================================================== */
 
 .work-segment {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  transition: border-color 0.18s ease;
+  min-width: 0;
+  margin: 12px 0;
 }
-/* color-mix keeps the accent readable in both themes; browsers without it
-   simply keep the neutral --border above. */
-.work-segment:hover {
-  border-color: color-mix(in srgb, var(--text-dim) 40%, var(--border));
+.work-segment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: left;
 }
-.work-segment.is-running {
-  border-color: color-mix(in srgb, var(--tone-blue) 45%, var(--border));
+.work-segment-head:disabled {
+  cursor: default;
 }
-.work-segment-head:hover {
-  background: color-mix(in srgb, var(--text-dim) 8%, transparent);
+.work-segment-head:not(:disabled):hover {
+  color: var(--text);
 }
-.work-segment-stat {
-  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+.work-segment-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 2px;
+}
+.assistant-message {
+  min-width: 0;
+  margin: 8px 0 14px;
+}
+.assistant-message.is-process {
+  margin: 0;
+}
+.assistant-message.is-process .thinking-block {
+  margin: 0;
+}
+.assistant-message.is-process .thinking-block > button {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+.conversation-transcript > .user-message {
+  margin: 12px 0 20px;
+}
+.tool-activity {
+  min-width: 0;
+  font-size: 13px;
+}
+.tool-activity-details {
+  margin-top: 4px;
+  padding: 4px 0;
+}
+.work-segment-head:focus-visible,
+.tool-activity button:focus-visible {
+  outline: 2px solid var(--tone-blue);
+  outline-offset: 3px;
 }
 
 /* ==========================================================================

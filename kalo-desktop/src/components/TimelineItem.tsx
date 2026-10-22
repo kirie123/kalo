@@ -1,19 +1,19 @@
 import { memo } from "react";
 import type { TimelineEntry } from "../lib/timeline";
+import ArtifactsCard from "./ArtifactsCard";
 import AssistantMessage from "./AssistantMessage";
 import ChangedFilesCard from "./ChangedFilesCard";
 import CompactionBubble from "./CompactionBubble";
 import RetryNotice from "./RetryNotice";
-import ToolCallGroup, { ToolCallList } from "./ToolCallGroup";
+import ToolCallGroup from "./ToolCallGroup";
 import UserBubble from "./UserBubble";
+import WidgetCard from "./WidgetCard";
 
 /**
  * Renders one timeline entry. Used both at top level (MessageList) and inside a
  * work segment (WorkSegment).
  *
- * `inSegment` drops the tool-group shell: the segment header already carries
- * the per-tool counts, so keeping the group header would stack two summaries
- * over one row. Everything else renders identically in both places.
+ * `inSegment` uses quiet activity rows within the expanded whole-run process.
  *
  * Memoized: the store's throttled flush clones only mutated entries, so
  * untouched timeline items skip re-rendering entirely during streaming.
@@ -38,14 +38,11 @@ const TimelineItem = memo(function TimelineItem({
           usage={entry.usage}
           copyText={copyText}
           errorRetried={entry.retriedError}
+          compact={inSegment}
         />
       );
     case "toolGroup":
-      return inSegment ? (
-        <ToolCallList calls={entry.calls} />
-      ) : (
-        <ToolCallGroup toolName={entry.toolName} calls={entry.calls} />
-      );
+      return <ToolCallGroup toolName={entry.toolName} calls={entry.calls} compact={inSegment} />;
     case "retry":
       return (
         <RetryNotice
@@ -62,8 +59,17 @@ const TimelineItem = memo(function TimelineItem({
       return <CompactionBubble entry={entry} />;
     case "changes":
       return (
-        <ChangedFilesCard files={entry.files} totalAdded={entry.totalAdded} totalRemoved={entry.totalRemoved} />
+        <ChangedFilesCard
+          files={entry.files}
+          totalAdded={entry.totalAdded}
+          totalRemoved={entry.totalRemoved}
+          artifacts={entry.artifacts}
+        />
       );
+    case "artifacts":
+      return <ArtifactsCard summary={entry.summary} />;
+    case "widget":
+      return <WidgetCard summary={entry.summary} />;
   }
 });
 

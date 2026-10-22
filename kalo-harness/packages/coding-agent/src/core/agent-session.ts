@@ -106,6 +106,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { FileReadState } from "./tools/file-read-state.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -333,6 +334,11 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	/**
+	 * Session-scoped read tracking for the read-before-edit guard. Created once and
+	 * reused across tool rebuilds so a file read earlier in the session stays valid.
+	 */
+	private readonly _fileReadState = new FileReadState();
 	/** Consecutive compaction failures (structural or ineffective). Reset on effective compaction. */
 	private _compactionConsecutiveFailures = 0;
 	/** Max consecutive failures before disabling auto-compaction. */
@@ -2091,6 +2097,15 @@ export class AgentSession {
 			}
 
 			if (this._overflowRecoveryAttempted) {
+				// The compact-and-retry already ran once and the model is still
+				// truncating. Count this toward the circuit breaker so a wedged
+				// context (provider repeatedly returns length/overflow) cannot loop
+				// forever, and surface the terminal banner for the UI.
+				this._compactionConsecutiveFailures++;
+				this._anchorAutoCompactionBackoff();
+				if (this._compactionConsecutiveFailures >= this._compactionCircuitBreakerThreshold) {
+					this._compactionCircuitBreakerTripped = true;
+				}
 				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
@@ -2099,7 +2114,19 @@ export class AgentSession {
 					willRetry: false,
 					errorMessage:
 						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+					circuitBreakerTripped: this._compactionCircuitBreakerTripped,
 				});
+				// Not yet tripped: fall back to a threshold-style compaction (no
+				// retry) that drops to the recent-keep window. This reclaims context
+				// even when the overflow-retry path is exhausted, instead of giving
+				// up outright. Once the breaker trips, _runAutoCompaction no-ops.
+				if (!this._compactionCircuitBreakerTripped) {
+					const messages = this.agent.state.messages;
+					if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+						this.agent.state.messages = messages.slice(0, -1);
+					}
+					return await this._runAutoCompaction("threshold", false);
+				}
 				return false;
 			}
 
@@ -2697,8 +2724,10 @@ export class AgentSession {
 					]),
 				)
 			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
+					read: { autoResizeImages, readState: this._fileReadState },
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					edit: { readState: this._fileReadState },
+					write: { readState: this._fileReadState },
 				});
 
 		this._baseToolDefinitions = new Map(

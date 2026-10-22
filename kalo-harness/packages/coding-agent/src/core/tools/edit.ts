@@ -22,6 +22,7 @@ import {
 } from "./edit-diff.ts";
 import type { EditMatchStrategy } from "./edit-match-strategies.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { type FileReadState, signatureOf } from "./file-read-state.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { renderToolPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -101,6 +102,14 @@ const defaultEditOperations: EditOperations = {
 export interface EditToolOptions {
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
+	/**
+	 * Shared read-tracking state. When provided, the edit tool refuses to modify
+	 * a file that has not been read in this session, or that changed on disk
+	 * since it was last read — the model must read it (again) first. This mirrors
+	 * Claude Code's read-before-edit guard and stops the model from editing a
+	 * block it reconstructed from a fragment or a compacted memory.
+	 */
+	readState?: FileReadState;
 }
 
 const APPROXIMATE_MATCH_NOTES: Record<Exclude<EditMatchStrategy, "exact">, string> = {
@@ -354,6 +363,26 @@ export function createEditToolDefinition(
 				const rawContent = buffer.toString("utf-8");
 				throwIfAborted();
 
+				// Read-before-edit guard: refuse to edit a file the model has not read
+				// this session, or that changed on disk since it was last read. Comparing
+				// the recorded signature to the file's *current* content also catches the
+				// case where a previous read was evicted by context compaction, which is
+				// what stops the model editing a block it reconstructed from a grep
+				// fragment or a compacted memory rather than the real bytes.
+				if (options?.readState) {
+					const recorded = options.readState.get(absolutePath);
+					if (recorded === undefined) {
+						throw new Error(
+							`File has not been read in this session: ${path}. Use the read tool to load its current contents before editing, so oldText matches the file exactly.`,
+						);
+					}
+					if (recorded !== signatureOf(rawContent)) {
+						throw new Error(
+							`File has changed since it was last read: ${path}. Use the read tool to reload its current contents before editing.`,
+						);
+					}
+				}
+
 				// Strip BOM before matching. The model will not include an invisible BOM in oldText.
 				const { bom, text: content } = stripBom(rawContent);
 				const originalEnding = detectLineEnding(content);
@@ -368,6 +397,8 @@ export function createEditToolDefinition(
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 				await ops.writeFile(absolutePath, finalContent);
 				throwIfAborted();
+				// Keep the read-state current so consecutive edits on this file succeed.
+				options?.readState?.record(absolutePath, finalContent);
 
 				const diffResult = generateDiffString(baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);

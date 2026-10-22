@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { CompactionEntry } from "../lib/timeline";
-import { MarkdownBlock } from "./AssistantMessage";
+import { MarkdownBlock } from "./MarkdownBlock";
 
 /**
  * Persistent bubble marking one context compaction.

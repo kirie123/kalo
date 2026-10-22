@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Pre-dev/build guard: make sure the pi engine and kalo-gateway sidecars are
- * staged into kalo-desktop/src-tauri/binaries/ before `tauri dev|build`.
+ * staged into kalo-desktop/src-tauri/binaries/ before `tauri dev|build`, and
+ * that the bundled ripgrep binary is staged alongside them.
  * (The Tauri build script hard-fails when bundle resources are missing.)
  *
  * Fast path: binaries present → exits immediately.
@@ -9,6 +10,7 @@
  *   1. install kalo-harness dependencies if node_modules is missing
  *   2. scripts/build-engine.sh  → engine + runtime resources
  *   3. scripts/build-gateway.sh → gateway sidecar
+ *   4. scripts/fetch-ripgrep.mjs → bundled rg (stamp fast-path afterwards)
  *
  * Run via bun at the repo root: `bun scripts/ensure-engine.mjs`
  */
@@ -201,3 +203,11 @@ if (FORCE || gatewayStale()) {
 } else {
   console.log("[ensure-engine] kalo-gateway up to date");
 }
+
+// --- bundled tools (ripgrep) ---
+// The engine's system prompt steers the model to `rg`; without a shipped
+// binary the release silently degrades to `grep -r` over the whole workspace.
+// fetch-ripgrep.mjs is idempotent via its own stamp (fast no-op after the
+// first run), verifies the pinned SHA256, and prints actionable hints when it
+// cannot stage (KALO_RG_FROM for offline archives, KALO_SKIP_RG=1 to opt out).
+run(process.execPath, ["scripts/fetch-ripgrep.mjs"], ROOT);

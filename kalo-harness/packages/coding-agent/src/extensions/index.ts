@@ -6,7 +6,9 @@ import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
 import memoryExtension from "./memory/index.ts";
 import permissionExtension from "./permission/index.ts";
+import presentFilesExtension from "./present-files/index.ts";
 import sessionNamerExtension from "./session-namer/index.ts";
+import showWidgetExtension from "./show-widget/index.ts";
 import skillExtension from "./skill/index.ts";
 import subagentExtension from "./subagent/index.ts";
 import todoExtension from "./todo/index.ts";
@@ -24,5 +26,7 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "subagent", factory: subagentExtension, hidden: true },
 	{ name: "todo", factory: todoExtension, hidden: true },
 	{ name: "ask-user", factory: askUserExtension, hidden: true },
+	{ name: "present-files", factory: presentFilesExtension, hidden: true },
+	{ name: "show-widget", factory: showWidgetExtension, hidden: true },
 	{ name: "session-namer", factory: sessionNamerExtension, hidden: true },
 ];

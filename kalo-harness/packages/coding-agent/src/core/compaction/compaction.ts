@@ -685,8 +685,9 @@ function buildSerializedSummarizationMessages(
 	llmMessages: Message[],
 	basePrompt: string,
 	previousSummary: string | undefined,
+	stripThinking = false,
 ): Message[] {
-	const conversationText = serializeConversation(llmMessages);
+	const conversationText = serializeConversation(llmMessages, { stripThinking });
 
 	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
 	if (previousSummary) {
@@ -733,6 +734,58 @@ function buildReusedSummarizationMessages(
 	];
 }
 
+/**
+ * Output tokens reserved for the summary response itself when sizing the
+ * summarization request. Mirrors Claude Code's MAX_OUTPUT_TOKENS_FOR_SUMMARY.
+ */
+const SUMMARY_OUTPUT_RESERVE = 20_000;
+
+/** Rough token estimate for a raw prompt string (~4 chars/token). */
+function estimatePromptTokens(text: string | undefined): number {
+	return text ? Math.ceil(text.length / 4) : 0;
+}
+
+/**
+ * Drop the oldest messages from the summarization input until the request is
+ * expected to fit the summarizer model's context window (minus a reserved output
+ * budget and the prompt overhead). Always keeps at least the most recent message.
+ * Returns the input unchanged when the model reports no window or it already fits.
+ */
+export function trimOldestToFitSummaryWindow(
+	messages: AgentMessage[],
+	model: Model<any>,
+	basePrompt: string,
+	previousSummary: string | undefined,
+): AgentMessage[] {
+	const contextWindow = model.contextWindow ?? 0;
+	if (contextWindow <= 0 || messages.length <= 1) {
+		return messages;
+	}
+	const reservedOutput = Math.min(
+		model.maxTokens > 0 ? model.maxTokens : SUMMARY_OUTPUT_RESERVE,
+		SUMMARY_OUTPUT_RESERVE,
+	);
+	const promptOverhead = estimatePromptTokens(basePrompt) + estimatePromptTokens(previousSummary);
+	const budget = contextWindow - reservedOutput - promptOverhead;
+	if (budget <= 0) {
+		// Pathologically small window: keep only the most recent message.
+		return messages.slice(-1);
+	}
+
+	let total = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+	if (total <= budget) {
+		return messages;
+	}
+
+	let startIndex = 0;
+	// Drop from the oldest end, but never drop the final message.
+	while (startIndex < messages.length - 1 && total > budget) {
+		total -= estimateTokens(messages[startIndex]);
+		startIndex++;
+	}
+	return messages.slice(startIndex);
+}
+
 /** Generate or update a conversation summary and return its provider usage. */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
@@ -749,6 +802,7 @@ export async function generateSummaryWithUsage(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	reuseMessages?: boolean,
+	stripThinking = false,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -761,12 +815,20 @@ export async function generateSummaryWithUsage(
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
+	// The summarization request is sent to the same model whose window we are
+	// trying to relieve. When the segment to summarize is itself near/over the
+	// context window, the request would overflow and compaction would fail exactly
+	// when it is needed most. Drop the oldest messages from the summary input until
+	// it fits the model's window minus a reserved output budget. The dropped tail
+	// is being compacted away anyway, so losing it from the summary is acceptable.
+	const messagesForSummary = trimOldestToFitSummaryWindow(currentMessages, model, basePrompt, previousSummary);
+
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
+	const llmMessages = convertToLlm(messagesForSummary);
 
 	const summarizationMessages = reuseMessages
 		? buildReusedSummarizationMessages(llmMessages, basePrompt, previousSummary)
-		: buildSerializedSummarizationMessages(llmMessages, basePrompt, previousSummary);
+		: buildSerializedSummarizationMessages(llmMessages, basePrompt, previousSummary, stripThinking);
 
 	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, env, signal, thinkingLevel);
 
@@ -911,6 +973,108 @@ Summarize the prefix to provide context for the retained suffix:
 
 Be concise. Focus on what's needed to understand the kept suffix.`;
 
+/** Zero-valued usage for a compaction that did not call the LLM. */
+function emptyUsage(): Usage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+/** True when an error is a user/abort cancellation rather than a provider failure. */
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+	if (signal?.aborted) return true;
+	const message = error instanceof Error ? error.message : String(error);
+	return /\babort/i.test(message) || /cancell?ed/i.test(message);
+}
+
+/** Local, non-LLM summary used when the model declines or fails to summarize. */
+function buildLocalFallbackSummaryText(): string {
+	return (
+		"**Automatic summary unavailable.** The model could not summarize the older " +
+		"conversation (it may have been blocked by a content filter, or the request failed " +
+		"after retries). Older messages were dropped to reclaim context; the most recent " +
+		"messages are preserved after this checkpoint. Recover any earlier details you need " +
+		"from the session file referenced below using the `read` tool."
+	);
+}
+
+/**
+ * Produce a history summary with graceful degradation:
+ *  1. Normal attempt (keeps prompt-cache alignment when reuseMessages is on).
+ *  2. On a non-abort failure, retry once with a sanitized request: serialized
+ *     (no cache reuse) and with the model's chain-of-thought stripped. The most
+ *     common non-overflow refusal is the ToS classifier flagging the model's own
+ *     reasoning echoed back for summarization; dropping it usually clears it.
+ *  3. If that also fails, fall back to a local, non-LLM summary so compaction
+ *     always makes progress (recent messages + file ops + session-file pointer
+ *     are still kept, so context is genuinely reclaimed and details recoverable).
+ * User aborts are never swallowed — they propagate so cancellation still works.
+ */
+async function generateHistorySummaryResilient(
+	messages: AgentMessage[],
+	model: Model<any>,
+	reserveTokens: number,
+	apiKey: string | undefined,
+	headers: Record<string, string> | undefined,
+	signal: AbortSignal | undefined,
+	customInstructions: string | undefined,
+	previousSummary: string | undefined,
+	thinkingLevel: ThinkingLevel | undefined,
+	streamFn: StreamFn | undefined,
+	env: Record<string, string> | undefined,
+	retry: RetryPolicy | undefined,
+	callbacks: RetryCallbacks | undefined,
+	reuseMessages: boolean | undefined,
+): Promise<{ text: string; usage: Usage }> {
+	try {
+		return await generateSummaryWithUsage(
+			messages,
+			model,
+			reserveTokens,
+			apiKey,
+			headers,
+			signal,
+			customInstructions,
+			previousSummary,
+			thinkingLevel,
+			streamFn,
+			env,
+			retry,
+			callbacks,
+			reuseMessages,
+		);
+	} catch (error) {
+		if (isAbortError(error, signal)) throw error;
+		try {
+			return await generateSummaryWithUsage(
+				messages,
+				model,
+				reserveTokens,
+				apiKey,
+				headers,
+				signal,
+				customInstructions,
+				previousSummary,
+				thinkingLevel,
+				streamFn,
+				env,
+				retry,
+				callbacks,
+				false, // serialized: no prompt-cache reuse for the sanitized retry
+				true, // stripThinking: drop chain-of-thought that trips content filters
+			);
+		} catch (retryError) {
+			if (isAbortError(retryError, signal)) throw retryError;
+			return { text: buildLocalFallbackSummaryText(), usage: emptyUsage() };
+		}
+	}
+}
+
 /**
  * Generate summaries for compaction using prepared data.
  * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
@@ -955,7 +1119,7 @@ export async function compact(
 		let historyText = "No prior history.";
 		let historyUsage: Usage | undefined;
 		if (messagesToSummarize.length > 0) {
-			const historyResult = await generateSummaryWithUsage(
+			const historyResult = await generateHistorySummaryResilient(
 				messagesToSummarize,
 				model,
 				settings.reserveTokens,
@@ -974,26 +1138,39 @@ export async function compact(
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
 		}
-		const turnPrefixResult = await generateTurnPrefixSummary(
-			turnPrefixMessages,
-			model,
-			settings.reserveTokens,
-			apiKey,
-			headers,
-			env,
-			signal,
-			thinkingLevel,
-			streamFn,
-			retry,
-			callbacks,
-			reuseMessages,
-		);
+		// The turn-prefix summary is best-effort context for the retained suffix; if
+		// the model declines/fails (and it is not a user abort), keep going with a
+		// placeholder rather than failing the whole compaction.
+		let turnPrefixText: string;
+		let turnPrefixUsage: Usage;
+		try {
+			const turnPrefixResult = await generateTurnPrefixSummary(
+				turnPrefixMessages,
+				model,
+				settings.reserveTokens,
+				apiKey,
+				headers,
+				env,
+				signal,
+				thinkingLevel,
+				streamFn,
+				retry,
+				callbacks,
+				reuseMessages,
+			);
+			turnPrefixText = turnPrefixResult.text;
+			turnPrefixUsage = turnPrefixResult.usage;
+		} catch (error) {
+			if (isAbortError(error, signal)) throw error;
+			turnPrefixText = "[Turn prefix summary unavailable — see the session file below for details.]";
+			turnPrefixUsage = emptyUsage();
+		}
 		// Merge into single summary
-		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
-		summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixResult.usage) : turnPrefixResult.usage;
+		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixText}`;
+		summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixUsage) : turnPrefixUsage;
 	} else {
 		// Just generate history summary
-		const result = await generateSummaryWithUsage(
+		const result = await generateHistorySummaryResilient(
 			messagesToSummarize,
 			model,
 			settings.reserveTokens,

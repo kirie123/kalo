@@ -132,7 +132,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		expect(continueSpy).not.toHaveBeenCalled();
 	});
 
-	it("should not compact repeatedly after overflow recovery already attempted", async () => {
+	it("escalates to a threshold compaction and counts the failure after overflow recovery already attempted", async () => {
 		const model = session.model!;
 		const overflowMessage: AssistantMessage = {
 			role: "assistant",
@@ -178,7 +178,12 @@ describe("AgentSession auto-compaction queue resume", () => {
 		await checkCompaction(overflowMessage);
 		await checkCompaction({ ...overflowMessage, timestamp: Date.now() + 1 });
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		// First check runs the compact-and-retry ("overflow"); the second, with
+		// recovery already attempted, still surfaces the terminal banner but now
+		// escalates to a threshold compaction (drop-oldest) instead of giving up.
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(2);
+		expect(runAutoCompactionSpy.mock.calls[0]).toEqual(["overflow", true]);
+		expect(runAutoCompactionSpy.mock.calls[1]).toEqual(["threshold", false]);
 		expect(events).toContainEqual({
 			type: "compaction_end",
 			reason: "overflow",

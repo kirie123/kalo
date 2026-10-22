@@ -45,13 +45,19 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(
+		Type.Number({
+			description:
+				"Timeout in seconds (optional, no default timeout). Foreground requires a positive finite number; " +
+				"background accepts only omitted, null, or 0 for no timeout.",
+		}),
+	),
 	run_in_background: Type.Optional(
 		Type.Boolean({
 			description:
 				"Start the command as a background job and return its job id immediately instead of waiting. " +
 				"Read its output with job_output; completion is announced in-session. " +
-				"Cannot be combined with timeout, and needs the Kalo gateway.",
+				"Timeout must be omitted, null, or 0 (no timeout); all other values are rejected. Needs the Kalo gateway.",
 		}),
 	),
 });
@@ -352,7 +358,7 @@ export function createBashToolDefinition(
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. Set run_in_background to start a long-running command as a job instead of waiting for it.`,
+		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. Set run_in_background to start a long-running command as a job instead of waiting for it. Background timeout must be omitted, null, or 0 (no timeout); all other values are rejected. Foreground timeout must be positive and finite.`,
 		promptSnippet: bashToolSystemPromptContribution.snippet,
 		promptGuidelines: exposeSessionEnvironment
 			? [...bashToolSystemPromptContribution.guidelines, ...(backgroundStarter ? [BACKGROUND_BASH_GUIDELINE] : [])]
@@ -369,10 +375,10 @@ export function createBashToolDefinition(
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
 			if (run_in_background) {
-				if (timeout !== undefined) {
+				if (timeout !== undefined && timeout !== null && timeout !== 0) {
 					throw new Error(
-						"run_in_background cannot be combined with timeout: a background job has no timeout. " +
-							"Drop timeout and stop the job with job_kill instead.",
+						"run_in_background cannot be combined with timeout except omitted, null, or 0: a background job has no timeout. " +
+							"Drop timeout or set it to 0, and stop the job with job_kill instead.",
 					);
 				}
 				if (!backgroundStarter) {

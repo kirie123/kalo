@@ -37,11 +37,13 @@ kalo-desktop/
 
 - 每文件 `#[cfg(test)] mod tests` 就近放单测；`cargo test` 只跑 `src-tauri` 下的测试。
 - 错误处理：返回 `Result<T, E>`，用户可见错误带可操作提示。
-- 涉及路径/进程/权限的改动，默认同时按 Windows 与 macOS 行为评估（根 AGENTS.md 的双平台等价契约）。OS 差异收敛在窄适配层：`sidecar.rs`、`proc.rs`、`files.rs::open_path`、`market_env.rs::resolve_bash`；home 目录一律 `USERPROFILE` 回退 `HOME`；打包后的资源根一律 `resources.rs`（`resource_dir()`），**不要把 `CARGO_MANIFEST_DIR` 留在 release 查找链里**——它在打包机上会解析成功，让唯一能测试 bundle 的那台机器恰好测不出问题。
+- 涉及路径/进程/权限的改动，默认同时按 Windows 与 macOS 行为评估（根 AGENTS.md 的双平台等价契约）。OS 差异收敛在窄适配层：`sidecar.rs`、`proc.rs`、`files.rs::open_path`、`market_env.rs::resolve_bash`、`priority.rs`（UI 进程优先级 / EcoQoS，Windows 专属，非 Windows 空实现）；home 目录一律 `USERPROFILE` 回退 `HOME`；打包后的资源根一律 `resources.rs`（`resource_dir()`），**不要把 `CARGO_MANIFEST_DIR` 留在 release 查找链里**——它在打包机上会解析成功，让唯一能测试 bundle 的那台机器恰好测不出问题。
 
 ## 检查命令
 
-- 前端类型：`npx tsc --noEmit`（`src/` 下）
+- 前端类型：`npx tsc --noEmit`（`src/` 下；已开 `noUnusedLocals`——声明了却没人用的组件/常量/导入会直接报错，
+  这是「重构时丢掉一处渲染」那类静默回归的唯一机器信号：`open` 还留着、`{open && <Detail/>}` 被删掉，
+  人类评审看不出来，编译器会报 `'Detail' is declared but its value is never read`，见 commit 4fb281c）
 - 前端测试：`npm test`（vitest run）
 - Rust：`cargo check` / `cargo test`（`src-tauri/` 下）
 - 收尾：跑一次改动影响的检查即可；改 lib 跑 vitest，改 Rust 跑 cargo test，不要全量重复跑。

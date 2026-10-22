@@ -441,6 +441,49 @@ describe("agentLoop with AgentMessage", () => {
 		expect(messages[messages.length - 1].role).toBe("assistant");
 	});
 
+	it("stops auto-continuing after repeated length-truncated tool calls", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return { content: [{ type: "text", text: `echoed: ${params.value}` }], details: { value: params.value } };
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		// The model is wedged: every response is a length-truncated tool call. The
+		// loop must not continue forever — it caps consecutive truncations and ends.
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				callIndex++;
+				const message = createAssistantMessage(
+					[{ type: "toolCall", id: `tool-${callIndex}`, name: "echo", arguments: { value: "hel" } }],
+					"length",
+				);
+				stream.push({ type: "done", reason: "length", message });
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, streamFn);
+		for await (const event of stream) {
+			events.push(event);
+		}
+		await stream.result();
+
+		// Capped at MAX_CONSECUTIVE_LENGTH_STOPS (3) rather than looping unbounded.
+		expect(callIndex).toBe(3);
+		expect(events.some((e) => e.type === "agent_end")).toBe(true);
+	});
+
 	it("should execute mutated beforeToolCall args without revalidation", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: Array<string | number> = [];

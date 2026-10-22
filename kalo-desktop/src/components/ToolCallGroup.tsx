@@ -1,31 +1,46 @@
-import { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeKatex from "rehype-katex";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import {
-  type AgentActivityItem,
-  type CompactionActivityItem,
-  compactionActivityView,
-} from "../lib/subagent-activity";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AgentActivityItem } from "../lib/subagent-activity";
 import type { ToolCallRecord } from "../lib/timeline";
 import { callTodos, groupTitle, rowLabel } from "../lib/tool-labels";
-import { CodeRenderer } from "./AssistantMessage";
+import { panelTabs } from "../lib/panel-tabs";
+import { capToolOutput, contentText } from "../lib/tool-output";
+import AgentActivityFeed from "./AgentActivityFeed";
 import DiffView, { diffStats, extractDiff, resultText } from "./DiffView";
 import { TodoStatusIcon } from "./TodoPanel";
 
-/** Right-side chip label naming the concrete tool, e.g. "Read File". */
-const TOOL_CHIPS: Record<string, string> = {
-  read: "Read File",
-  write: "Write File",
-  edit: "Edit",
-  bash: "Bash",
-  grep: "Grep",
-  glob: "Glob",
-  ls: "LS",
-  agent: "Sub Agent",
-  todo_write: "Todo",
-};
+/** Muted outline icons identify actions without adding tool-name badges. */
+function ToolIcon({ name }: { name: string }) {
+  const path = name === "bash" ? "M3 4l4 4-4 4M9 12h4"
+    : name === "edit" || name === "write" ? "M10 2l4 4-8 8H2v-4zM8 4l4 4"
+      : name === "read" || name === "ls" ? "M3 2h7l3 3v9H3zM9 2v4h4M5 9h5M5 11h4"
+        : name === "web_fetch" ? "M2 8h12M8 1a7 7 0 100 14A7 7 0 008 1M8 1c-4 4-4 10 0 14M8 1c4 4 4 10 0 14"
+          : "M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z";
+  return <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true"><path d={path} strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+/**
+ * Seconds a running bash may stay silent before its row unfolds on its own.
+ * Long commands are exactly the ones whose row the user wants to watch; below
+ * this threshold auto-expanding is noise (most commands finish in a second).
+ */
+const AUTO_OPEN_AFTER_SEC = 30;
+
+/** Elapsed seconds while a call is running; null when unknown or settled. */
+function runningSeconds(rec: ToolCallRecord, now: number): number | null {
+  if (rec.status !== "running" || typeof rec.startedAt !== "number") return null;
+  return Math.max(0, Math.floor((now - rec.startedAt) / 1000));
+}
+
+/** Open (or focus) the terminal mirror for one bash call, seeding its stream. */
+function openBashInTerminal(rec: ToolCallRecord) {
+  panelTabs.openWatchTab({
+    toolCallId: rec.toolCallId,
+    command: typeof rec.args?.command === "string" ? rec.args.command : "",
+    status: rec.status,
+    partialResult: rec.partialResult,
+    result: rec.result,
+  });
+}
 
 /**
  * Live step count for a subagent call: partial updates while running,
@@ -42,19 +57,10 @@ function agentSteps(rec: ToolCallRecord): number | null {
 function StatusMark({ rec }: { rec: ToolCallRecord }) {
   if (rec.status === "running") return <span className="spinner" />;
   if (rec.status === "error") return <span className="text-[var(--danger)]">✗</span>;
-  return <span className="text-[var(--ok)]">✓</span>;
+  return <ToolIcon name={rec.toolName} />;
 }
 
-/**
- * The call rows without the group shell, for use inside a work segment.
- *
- * The segment header already summarizes the same calls as chips ("读取了 2 个
- * 文件"), and a segment is routinely cut into single-call groups by the
- * thinking blocks between them — so the per-group header there degenerates
- * into "读取了 1 个文件" stacked above the one row it describes. Dropping it
- * removes a nesting level and restores strict chronological order inside the
- * segment (doc/2026-09-13-工作段母气泡.md).
- */
+/** Individual calls are revealed on demand below the activity summary. */
 export function ToolCallList({ calls }: { calls: ToolCallRecord[] }) {
   return (
     <div className="flex flex-col text-[13px]">
@@ -65,25 +71,25 @@ export function ToolCallList({ calls }: { calls: ToolCallRecord[] }) {
   );
 }
 
-export default function ToolCallGroup({ toolName, calls }: { toolName: string; calls: ToolCallRecord[] }) {
-  // Groups start expanded so the user can follow what the agent is doing.
-  const [open, setOpen] = useState(true);
+export default function ToolCallGroup({ toolName, calls, compact = false }: { toolName: string; calls: ToolCallRecord[]; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
   const anyRunning = calls.some((c) => c.status === "running");
   const anyError = calls.some((c) => c.status === "error");
 
   return (
-    <div className="py-0.5 text-[13px]">
+    <div className={`tool-activity ${compact ? "is-compact" : ""}`}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-card"
+        aria-expanded={open}
+        className="tool-activity-heading flex w-full items-center gap-2 py-1.5 text-left text-dim hover:text-ink"
       >
-        <span className="w-4 shrink-0 text-center">
+        <span className="grid w-4 shrink-0 place-items-center">
           {anyRunning ? (
             <span className="spinner" />
           ) : anyError ? (
             <span className="text-[var(--danger)]">✗</span>
           ) : (
-            <span className="text-[var(--ok)]">✓</span>
+            <ToolIcon name={toolName} />
           )}
         </span>
         <span className="text-dim">{groupTitle(toolName, calls.length)}</span>
@@ -94,16 +100,14 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
           fill="none"
           stroke="currentColor"
           strokeWidth="1.5"
-          className={`ml-auto shrink-0 text-dim transition-transform ${open ? "" : "-rotate-90"}`}
+          className={`shrink-0 text-dim transition-transform ${open ? "" : "-rotate-90"}`}
         >
           <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
       {open && (
-        <div className="ml-6 flex flex-col border-l border-edge pl-2">
-          {calls.map((rec, i) => (
-            <ToolCallRow key={rec.toolCallId} rec={rec} isLast={i === calls.length - 1} />
-          ))}
+        <div className="tool-activity-details ml-6 flex max-h-80 flex-col overflow-y-auto">
+          <ToolCallList calls={calls} />
         </div>
       )}
     </div>
@@ -111,7 +115,7 @@ export default function ToolCallGroup({ toolName, calls }: { toolName: string; c
 }
 
 function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) {
-  // Call details start closed, except edits (inline diff) and the newest
+  // Call details start closed, except the newest
   // todo_write. Consecutive todo_write calls collapse into one group, so
   // expanding every row would stack the same list over and over; only the
   // current plan is worth showing unfolded.
@@ -121,25 +125,46 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
   // the surrounding conversation. Progress stays visible in the row itself via
   // the spinner and the "第 N 步" chip; click to open the feed on demand.
   const [open, setOpen] = useState(
-    rec.toolName === "edit" || (rec.toolName === "todo_write" && isLast),
+    rec.toolName === "todo_write" && isLast,
   );
   const diff = extractDiff(rec.result) ?? extractDiff(rec.partialResult);
   const stats = diff ? diffStats(diff) : null;
-  const chip = TOOL_CHIPS[rec.toolName] ?? rec.toolName;
   const steps = rec.toolName === "agent" ? agentSteps(rec) : null;
+  // Set once the user clicks the row: the 30s auto-expand must not fight a
+  // deliberate collapse (doc/2026-10-02-桌面终端与长命令实时可见.md §2.3).
+  const userToggled = useRef(false);
+  const [now, setNow] = useState(() => Date.now());
+  const elapsedSec = runningSeconds(rec, now);
+
+  useEffect(() => {
+    if (rec.status !== "running") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [rec.status]);
+
+  useEffect(() => {
+    if (elapsedSec !== null && elapsedSec >= AUTO_OPEN_AFTER_SEC && !userToggled.current) setOpen(true);
+  }, [elapsedSec]);
 
   return (
-    <div className="rounded-md">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-card"
-      >
-        <span className="w-4 shrink-0 text-center text-[11px]">
-          <StatusMark rec={rec} />
-        </span>
-        <span className="mono min-w-0 flex-1 truncate text-xs text-dim group-hover:text-ink">
-          {rowLabel(rec)}
-        </span>
+    <>
+      <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-card">
+        <button
+          aria-expanded={open}
+          title={rowLabel(rec)}
+          onClick={() => {
+            userToggled.current = true;
+            setOpen((v) => !v);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <span className="grid w-4 shrink-0 place-items-center text-[11px] text-dim">
+            <StatusMark rec={rec} />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13px] text-dim group-hover:text-ink">
+            {rowLabel(rec)}
+          </span>
+        </button>
         {stats && (
           <span className="mono shrink-0 text-xs">
             <span className="text-[var(--diff-add-text)]">+{stats.add}</span>{" "}
@@ -155,84 +180,74 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
             {rec.status === "running" ? `第 ${steps} 步` : `共 ${steps} 步`}
           </span>
         )}
-        <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim">
-          {chip}
-        </span>
-      </button>
+        {elapsedSec !== null && elapsedSec >= 5 && (
+          <span className="mono shrink-0 text-[10px] tabular-nums text-dim">已运行 {elapsedSec}s</span>
+        )}
+        {rec.toolName === "bash" && (
+          <button
+            onClick={() => openBashInTerminal(rec)}
+            title="在终端中打开"
+            className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <path d="M2.5 3.5l4 4-4 4M8.5 12.5h5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {/* Below the row, not inside it: the row is the flex/hover line, and a
+          multi-line detail inside it would be stretched into a column. */}
       {open && <ToolCallDetail rec={rec} diff={diff} />}
-    </div>
+    </>
   );
 }
 
 /**
- * One compaction inside a subagent's activity feed.
+ * Tool output in a `<pre>`, capped to a head/tail window with an explicit way
+ * out. Results are unbounded (build logs, file dumps) and every character
+ * stays in the DOM for the life of the session, so the window is what keeps a
+ * log-heavy session cheap to scroll (doc/2026-10-01-高负载下界面响应与输入可见性.md).
  *
- * Children run their own auto-compaction (doc/2026-09-18-子agent压缩气泡.md), and
- * this card is the only place a user could notice it. Visual language follows
- * the main session's CompactionBubble: dashed pill, summary expands downward.
+ * `live` keeps a running command's newest line in view as output arrives.
  */
-function CompactionActivityRow({ item }: { item: CompactionActivityItem }) {
-  const [open, setOpen] = useState(false);
-  const view = compactionActivityView(item);
-  const expandable = Boolean(item.summary);
-
+function OutputPre({
+  text,
+  maxHeight = "max-h-72",
+  dim = false,
+  live = false,
+}: {
+  text: string;
+  maxHeight?: string;
+  dim?: boolean;
+  live?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const capped = useMemo(() => capToolOutput(text), [text]);
+  const preRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (!live) return;
+    const el = preRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [live, text]);
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2 text-xs">
-        <span className="w-3 shrink-0 text-center text-[11px]">
-          {item.status === "running" ? (
-            <span className="spinner" />
-          ) : item.status === "failed" ? (
-            <span className="text-[var(--danger)]">✗</span>
-          ) : (
-            <span className="text-[var(--ok)]">✓</span>
-          )}
-        </span>
+    <>
+      <pre
+        ref={preRef}
+        className={`mono ${maxHeight} overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs ${
+          dim ? "text-dim" : ""
+        }`}
+      >
+        {expanded ? text : capped.text}
+      </pre>
+      {capped.truncated && !expanded && (
         <button
-          type="button"
-          disabled={!expandable}
-          aria-expanded={expandable ? open : undefined}
-          title={expandable ? (open ? "收起压缩摘要" : "展开压缩摘要") : undefined}
-          onClick={() => setOpen((v) => !v)}
-          className={`flex min-w-0 items-center gap-1.5 rounded-full border border-dashed border-edge bg-card/60 px-2.5 py-0.5 text-dim ${
-            expandable ? "hover:bg-card hover:text-ink" : "cursor-default"
-          }`}
+          onClick={() => setExpanded(true)}
+          className="mt-1 self-start rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim hover:bg-card"
         >
-          <span className="truncate">{view.label}</span>
-          {view.meta && <span className="mono shrink-0 text-[10px]">{view.meta}</span>}
-          {expandable && (
-            <svg
-              width="9"
-              height="9"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
-            >
-              <path d="M3.5 6.5L8 11l4.5-4.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
+          显示全部（另有 {capped.hiddenChars.toLocaleString()} 字符 / {capped.hiddenLines.toLocaleString()} 行）
         </button>
-      </div>
-      {open && item.summary && (
-        <div className="markdown ml-5 rounded-md border border-edge bg-card px-2.5 py-1.5 text-xs">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
-            components={{
-              code: CodeRenderer as any,
-              pre: ({ children }) => <>{children}</>,
-            }}
-          >
-            {item.summary}
-          </ReactMarkdown>
-          {item.summaryTruncated && (
-            <div className="mt-1 text-[10px] text-dim">摘要已截断，完整内容见子 agent 会话文件</div>
-          )}
-        </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -242,42 +257,8 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
       rec.result?.details?.activity ?? rec.partialResult?.details?.activity;
     if (activity?.length) {
       return (
-        <div className="mb-1 ml-6 mt-1 flex flex-col gap-1">
-          {activity.map((item, i) =>
-            item.kind === "tool" ? (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <span className="w-3 shrink-0 text-center text-[11px]">
-                  {item.status === "running" ? (
-                    <span className="spinner" />
-                  ) : item.status === "error" ? (
-                    <span className="text-[var(--danger)]">✗</span>
-                  ) : (
-                    <span className="text-[var(--ok)]">✓</span>
-                  )}
-                </span>
-                <span className="shrink-0 text-dim">{item.name}</span>
-                <span className="mono min-w-0 flex-1 truncate text-dim">{item.label}</span>
-              </div>
-            ) : item.kind === "compaction" ? (
-              <CompactionActivityRow key={i} item={item} />
-            ) : item.kind === "text" ? (
-              <div
-                key={i}
-                className="markdown rounded-md border border-edge bg-card px-2.5 py-1.5 text-xs"
-              >
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[rehypeKatex]}
-                  components={{
-                    code: CodeRenderer as any,
-                    pre: ({ children }) => <>{children}</>,
-                  }}
-                >
-                  {item.text}
-                </ReactMarkdown>
-              </div>
-            ) : null,
-          )}
+        <div className="mb-1 ml-6 mt-1">
+          <AgentActivityFeed activity={activity} />
         </div>
       );
     }
@@ -311,15 +292,16 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   }
 
   if (rec.toolName === "bash") {
-    const output = resultText(rec.result) || resultText(rec.partialResult);
+    // Settled result first (it carries the truncation footer); while running,
+    // the partial's text blocks. No JSON fallback here: a fresh partial is
+    // `{"content": []}`, and pretty-printed JSON reads as a debug leak.
+    const output = resultText(rec.result) || contentText(rec.partialResult);
     return (
-      <div className="mb-1 ml-6 mt-1">
+      <div className="mb-1 ml-6 mt-1 flex flex-col">
         {output ? (
-          <pre className="mono max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs">
-            {output}
-          </pre>
+          <OutputPre text={output} live={rec.status === "running"} />
         ) : (
-          <div className="text-xs text-dim">{rec.status === "running" ? "运行中…" : "（无输出）"}</div>
+          <div className="text-xs text-dim">{rec.status === "running" ? "运行中…（暂无输出）" : "（无输出）"}</div>
         )}
       </div>
     );
@@ -329,14 +311,8 @@ function ToolCallDetail({ rec, diff }: { rec: ToolCallRecord; diff?: string }) {
   const output = resultText(rec.result) || resultText(rec.partialResult);
   return (
     <div className="mb-1 ml-6 mt-1 flex flex-col gap-1">
-      <pre className="mono max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs text-dim">
-        {JSON.stringify(rec.args ?? {}, null, 2)}
-      </pre>
-      {output && (
-        <pre className="mono max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-edge bg-card p-2 text-xs">
-          {output}
-        </pre>
-      )}
+      <OutputPre text={JSON.stringify(rec.args ?? {}, null, 2)} maxHeight="max-h-40" dim />
+      {output && <OutputPre text={output} />}
     </div>
   );
 }

@@ -30,6 +30,16 @@ import type {
  */
 const MAX_THINKING_CHANNEL_TOOL_NUDGES = 2;
 
+/**
+ * Consecutive `length` (output-truncated) stops tolerated before the loop stops
+ * auto-continuing and ends the turn. A model whose output is repeatedly cut off
+ * usually means the context is at the window limit: continuing just re-issues
+ * ever-larger requests that grow the context further (each failed turn appends a
+ * "re-issue" tool result), a death spiral. Ending the turn hands control back to
+ * the caller's agent_end handling (compaction / overflow recovery).
+ */
+const MAX_CONSECUTIVE_LENGTH_STOPS = 3;
+
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
 /**
@@ -172,6 +182,8 @@ async function runLoop(
 	let config = initialConfig;
 	let firstTurn = true;
 	let thinkingChannelNudges = 0;
+	// Count back-to-back output-truncated ("length") stops. Reset on any other stop.
+	let consecutiveLengthStops = 0;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -211,6 +223,17 @@ async function runLoop(
 			// Check for tool calls
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
 
+			// Track back-to-back output truncations. Once the model keeps hitting the
+			// output limit, auto-continuing only inflates the context (each retry adds
+			// a "re-issue" tool result), so cap it and let the turn end so the caller's
+			// agent_end handling (compaction / overflow recovery) can intervene.
+			if (message.stopReason === "length") {
+				consecutiveLengthStops++;
+			} else {
+				consecutiveLengthStops = 0;
+			}
+			const lengthLimitReached = consecutiveLengthStops >= MAX_CONSECUTIVE_LENGTH_STOPS;
+
 			const toolResults: ToolResultMessage[] = [];
 			hasMoreToolCalls = false;
 			if (toolCalls.length > 0) {
@@ -222,13 +245,14 @@ async function runLoop(
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
-				hasMoreToolCalls = !executedToolBatch.terminate;
+				// Do not auto-continue after too many consecutive truncations.
+				hasMoreToolCalls = !executedToolBatch.terminate && !lengthLimitReached;
 
 				for (const result of toolResults) {
 					currentContext.messages.push(result);
 					newMessages.push(result);
 				}
-			} else if (message.stopReason === "length") {
+			} else if (message.stopReason === "length" && !lengthLimitReached) {
 				// Output was truncated but no tool calls: inject continuation message
 				const continuationMessage: AgentMessage = {
 					role: "user",
@@ -243,6 +267,9 @@ async function runLoop(
 				currentContext.messages.push(continuationMessage);
 				newMessages.push(continuationMessage);
 				hasMoreToolCalls = true; // Force continuation
+			} else if (message.stopReason === "length") {
+				// Truncation cap reached: stop continuing so the turn ends (agent_end).
+				hasMoreToolCalls = false;
 			} else {
 				// No tool calls and clean stop: check if message has any visible content
 				const hasText = message.content.some((c) => c.type === "text" && c.text.trim().length > 0);

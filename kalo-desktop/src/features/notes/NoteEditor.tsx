@@ -11,7 +11,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import { CodeRenderer } from "../../components/AssistantMessage";
+import { CodeRenderer } from "../../components/MarkdownBlock";
 import { openPath } from "../../lib/pi-bridge";
 
 export default function NoteEditor({

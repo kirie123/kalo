@@ -7,7 +7,8 @@
  * directly unit-testable.
  */
 
-import type { AttachmentDraft, PendingSession } from "../types";
+import type { AgentMessage, AttachmentDraft, PendingSession } from "../types";
+import type { TodoItem } from "./timeline";
 
 /** Normalize a path for pool keys / file matching (Windows-safe). */
 export function normPath(p: string): string {
@@ -38,6 +39,35 @@ export function promptTitle(text: string): string {
 
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The whole-list plan snapshot carried by a `todo_write` tool result
+ * (`details.todos`, mirroring the harness extension). Returns null when the
+ * payload isn't the expected shape, so a malformed result leaves the last
+ * good plan on screen instead of blanking it.
+ */
+export function readTodos(result: any): TodoItem[] | null {
+  const todos = result?.details?.todos;
+  if (!Array.isArray(todos)) return null;
+  const ok = todos.every(
+    (t: any) =>
+      t &&
+      typeof t.content === "string" &&
+      (t.status === "pending" || t.status === "in_progress" || t.status === "completed"),
+  );
+  return ok ? (todos as TodoItem[]) : null;
+}
+
+/** Replay the plan from a loaded history page: the last todo_write wins. */
+export function latestTodos(messages: AgentMessage[]): TodoItem[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "toolResult" || m.toolName !== "todo_write" || m.isError) continue;
+    const todos = readTodos({ details: m.details });
+    if (todos) return todos;
+  }
+  return [];
 }
 
 /** 引擎的 set_model 报错翻译成用户能照着做的提示。 */
