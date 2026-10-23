@@ -129,6 +129,8 @@ export default function TaskEditModal({ task, onClose }: Props) {
       // Run history is preserved across edits.
       lastRun: task?.lastRun,
       lastResult: task?.lastResult,
+      lastOutput: task?.lastOutput,
+      expertId: task?.expertId,
     };
     setSaving(true);
     try {

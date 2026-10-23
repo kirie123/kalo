@@ -32,9 +32,9 @@ export type InCommand =
   | { cmd: "event"; sessionId: string; cwd: string; payload: any }
   | { cmd: "session_exit"; sessionId: string; code: number | null }
   // Scheduler (P0-A)
-  | { cmd: "schedule_upsert"; task: ScheduleTask }
-  | { cmd: "schedule_remove"; id: string }
-  | { cmd: "schedule_run"; id: string }
+  | { cmd: "schedule_upsert"; task: ScheduleTask; requestId?: string }
+  | { cmd: "schedule_remove"; id: string; requestId?: string }
+  | { cmd: "schedule_run"; id: string; requestId?: string }
   | { cmd: "schedule_list" }
   // Rust bookkeeping replies for scheduler-requested headless sessions
   | { cmd: "session_started"; taskId: string; sessionId: string }
@@ -65,6 +65,8 @@ export type OutMessage =
   // Scheduler (P0-A)
   | { type: "schedule_status"; tasks: ScheduleTaskInfo[] }
   | { type: "schedule_error"; message: string }
+  | { type: "schedule_reply"; requestId: string; ok: boolean; error?: string }
+  | { type: "session_close"; sessionId: string }
   | {
       type: "session_request";
       taskId: string;

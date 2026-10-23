@@ -403,8 +403,8 @@ export function scheduleList(): Promise<ScheduleTaskInfo[]> {
 }
 
 /**
- * Create or replace one task (whole object). Invalid input does not reject
- * here — the gateway reports it asynchronously as a `schedule-error` event.
+ * Create or replace one task (whole object). Resolves after gateway validation
+ * and persistence; invalid input and disk failures reject the promise.
  */
 export function scheduleUpsert(task: ScheduleTask): Promise<void> {
   return invoke<void>("schedule_upsert", { task });

@@ -19,10 +19,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { log } from "./protocol";
+import { terminateProcessTree } from "./process-tree";
 
 // ---------------------------------------------------------------------------
 // Task model (mirrors ~/.kalo/agent/schedules.json)
@@ -75,6 +77,14 @@ interface RuntimeState {
   lastAlertAt: number;
   /** re-entrancy guard: a task never overlaps with itself. */
   running: boolean;
+  cancel?: () => void;
+  error?: string;
+}
+
+interface AgentAttempt {
+  task: ScheduleTask;
+  runtime: RuntimeState;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const TICK_MS = 30_000;
@@ -312,20 +322,22 @@ export interface SchedulerDeps {
   /** Push a watch alert to the user (Feishu text). May be offline-capable. */
   sendAlert: (task: ScheduleTask, output: string) => void;
   /** Ask upstream (Rust) to spawn a headless pi session for an agent task. */
-  requestAgentSession: (task: ScheduleTask) => void;
+  requestAgentSession: (task: ScheduleTask, requestId: string) => void;
   /** Called whenever the task table changes (snapshot broadcast hook). */
   onChange: () => void;
   now?: () => number;
   /** Override the schedules.json path (tests). */
   storeFile?: string;
+  agentStartTimeoutMs?: number;
+  watchTimeoutMs?: number;
 }
 
 export class Scheduler {
   private tasks = new Map<string, ScheduleTask>();
   private runtime = new Map<string, RuntimeState>();
   /** agent tasks awaiting their session bookkeeping: taskId → sessionId. */
-  private pendingSessions = new Map<string, string>();
-  private sessionToTask = new Map<string, string>();
+  private pendingSessions = new Map<string, AgentAttempt>();
+  private sessionToTask = new Map<string, AgentAttempt>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly now: () => number;
   private readonly storeFile: string;
@@ -381,6 +393,9 @@ export class Scheduler {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    for (const attempt of this.pendingSessions.values()) clearTimeout(attempt.timer);
+    this.pendingSessions.clear();
+    for (const rt of this.runtime.values()) rt.cancel?.();
   }
 
   list(): ScheduleTaskInfo[] {
@@ -399,17 +414,32 @@ export class Scheduler {
     if (err) return `cron 无效：${err}`;
     if (task.kind === "watch" && !task.script?.trim()) return "watch 任务需要 script";
     if (task.kind === "agent" && !task.prompt?.trim()) return "agent 任务需要 prompt";
-    this.tasks.set(task.id, task);
-    this.runtime.set(task.id, this.freshRuntime(task));
-    this.save();
+    const previous = this.tasks.get(task.id);
+    if (previous) {
+      task.lastRun = previous.lastRun;
+      task.lastResult = previous.lastResult;
+      task.lastOutput = previous.lastOutput;
+    }
+    const nextTasks = new Map(this.tasks).set(task.id, task);
+    try { this.save(nextTasks); } catch (error) { return `保存任务失败：${error instanceof Error ? error.message : String(error)}`; }
+    // Keep the object captured by a running callback and its re-entrancy lock alive.
+    const active = previous ? Object.assign(previous, task) : task;
+    this.tasks.set(task.id, active);
+    const rt = this.runtime.get(task.id);
+    if (rt) rt.nextRunAt = this.nextRun(active);
+    else this.runtime.set(task.id, this.freshRuntime(active));
     this.deps.onChange();
     return null;
   }
 
   remove(id: string): void {
+    this.save(new Map([...this.tasks].filter(([key]) => key !== id)));
+    this.runtime.get(id)?.cancel?.();
+    for (const [key, attempt] of this.pendingSessions) {
+      if (attempt.task.id === id) { clearTimeout(attempt.timer); this.pendingSessions.delete(key); }
+    }
     this.tasks.delete(id);
     this.runtime.delete(id);
-    this.save();
     this.deps.onChange();
   }
 
@@ -417,7 +447,8 @@ export class Scheduler {
   runNow(id: string): string | null {
     const task = this.tasks.get(id);
     if (!task) return `未知任务：${id}`;
-    this.execute(task);
+    if (this.runtime.get(id)?.running) return "任务正在运行，请等待当前执行完成";
+    this.execute(task, true);
     return null;
   }
 
@@ -435,32 +466,59 @@ export class Scheduler {
   }
 
   /** Rust confirmed the headless session for an agent task. */
-  handleSessionStarted(taskId: string, sessionId: string): void {
-    this.pendingSessions.delete(taskId);
-    this.sessionToTask.set(sessionId, taskId);
+  handleSessionStarted(requestId: string, sessionId: string): boolean {
+    const attempt = this.pendingSessions.get(requestId);
+    if (!attempt) return false;
+    clearTimeout(attempt.timer);
+    this.pendingSessions.delete(requestId);
+    this.sessionToTask.set(sessionId, attempt);
+    return true;
   }
 
   /** Rust failed to spawn the headless session for an agent task. */
-  handleSessionStartFailed(taskId: string, error: string): void {
-    this.pendingSessions.delete(taskId);
-    const task = this.tasks.get(taskId);
-    if (task) {
-      task.lastOutput = `agent 会话启动失败：${error}`;
-      this.finishRun(task, "error");
+  handleSessionStartFailed(requestId: string, error: string): void {
+    const attempt = this.pendingSessions.get(requestId);
+    if (!attempt) return;
+    clearTimeout(attempt.timer);
+    this.pendingSessions.delete(requestId);
+    attempt.task.lastOutput = `agent 会话启动失败：${error}`;
+    this.finishRun(attempt.task, "error");
+  }
+
+  /** RPC sessions stay alive after a run. Only agent_settled finishes retries and continuations. */
+  ownsSession(sessionId: string): boolean {
+    const attempt = this.sessionToTask.get(sessionId);
+    return Boolean(attempt && this.tasks.get(attempt.task.id) === attempt.task);
+  }
+
+  handleEvent(sessionId: string, payload: unknown): boolean {
+    const attempt = this.sessionToTask.get(sessionId);
+    if (!attempt || !payload || typeof payload !== "object") return false;
+    const event = payload as { type?: string; id?: string; success?: boolean; error?: string; messages?: Array<{ role?: string; stopReason?: string; errorMessage?: string }> };
+    if (event.type === "response" && event.success === false && /^(sched-model-|sched-prompt-)/.test(event.id ?? "")) {
+      this.sessionToTask.delete(sessionId);
+      attempt.task.lastOutput = `agent 请求失败：${event.error || "请检查模型与任务配置"}`;
+      this.finishRun(attempt.task, "error");
+      return true;
     }
-    log(`agent task ${taskId} failed to start: ${error}`);
+    if (event.type === "agent_end") {
+      const last = Array.isArray(event.messages) ? [...event.messages].reverse().find((message) => message?.role === "assistant") : undefined;
+      attempt.runtime.error = last?.stopReason === "error" || last?.stopReason === "aborted" ? last.errorMessage || "agent 执行失败或已中止" : undefined;
+    }
+    if (event.type !== "agent_settled") return false;
+    this.sessionToTask.delete(sessionId);
+    attempt.task.lastOutput = attempt.runtime.error;
+    this.finishRun(attempt.task, attempt.runtime.error ? "error" : "ok");
+    return true;
   }
 
   /** Engine exit for any session; settles agent-task bookkeeping. */
   handleSessionExit(sessionId: string, code: number | null): void {
-    const taskId = this.sessionToTask.get(sessionId);
-    if (!taskId) return;
+    const attempt = this.sessionToTask.get(sessionId);
+    if (!attempt) return;
     this.sessionToTask.delete(sessionId);
-    const task = this.tasks.get(taskId);
-    if (task) {
-      task.lastOutput = code === 0 ? undefined : `agent 会话异常退出（code=${code ?? "未知"}）`;
-      this.finishRun(task, code === 0 ? "ok" : "error");
-    }
+    attempt.task.lastOutput = `agent 在完成前退出（code=${code ?? "未知"}）`;
+    this.finishRun(attempt.task, "error");
   }
 
   // ------------------------------------------------------------------ //
@@ -482,14 +540,15 @@ export class Scheduler {
     }
   }
 
-  private execute(task: ScheduleTask): void {
+  private execute(task: ScheduleTask, manual = false): void {
     const rt = this.runtime.get(task.id);
     if (!rt || rt.running) return;
     if (task.kind === "watch") {
       const cooldownMs = (task.cooldownMin ?? 0) * 60_000;
-      if (cooldownMs > 0 && this.now() - rt.lastAlertAt < cooldownMs) return;
+      if (!manual && cooldownMs > 0 && this.now() - rt.lastAlertAt < cooldownMs) return;
       this.runWatch(task, rt);
     } else {
+      rt.error = undefined;
       this.runAgent(task, rt);
     }
   }
@@ -499,12 +558,22 @@ export class Scheduler {
     task.lastRun = new Date(this.now()).toISOString();
     this.deps.onChange();
 
+    try { if (!statSync(task.cwd).isDirectory()) throw new Error("不是文件夹"); }
+    catch {
+      rt.lastAlertAt = this.now();
+      task.lastOutput = `工作目录不可用：${task.cwd}，请修正目录后重试`;
+      this.finishRun(task, "error");
+      this.deps.sendAlert(task, task.lastOutput);
+      return;
+    }
+
     const child = spawn(resolveBash(), ["-c", task.script ?? ""], {
-      cwd: existsSync(task.cwd) ? task.cwd : undefined,
+      cwd: task.cwd,
       // The real shell needs its own dir on PATH for coreutils; see
       // `prependShellDir`.
       env: bashSpawnEnv(),
       windowsHide: true,
+      detached: true,
     });
     let out = "";
     let err = "";
@@ -512,17 +581,18 @@ export class Scheduler {
     const killTimer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      child.kill();
-      rt.running = false;
       // Cooldown applies to failures too, not just to matches: a task whose
       // environment is broken fails on *every* tick, and without this a
       // 5-minute task pushes 288 identical alerts a day.
       rt.lastAlertAt = this.now();
-      this.finishRun(task, "error");
-      const body = `⏱️ 脚本执行超过 ${WATCH_TIMEOUT_MS / 1000}s，已强制终止`;
-      task.lastOutput = body;
-      this.deps.sendAlert(task, body);
-    }, WATCH_TIMEOUT_MS);
+      let body = `脚本执行超时（${(this.deps.watchTimeoutMs ?? WATCH_TIMEOUT_MS) / 1000}s），已请求终止`;
+      const stopping = child.pid ? terminateProcessTree(child.pid) : Promise.resolve();
+      void stopping.catch((error: unknown) => { body += `\n停止失败，请检查进程：${String(error)}`; }).then(() => {
+        task.lastOutput = body;
+        if (this.finishRun(task, "error")) this.deps.sendAlert(task, body);
+      });
+    }, this.deps.watchTimeoutMs ?? WATCH_TIMEOUT_MS);
+    rt.cancel = () => { settled = true; clearTimeout(killTimer); if (child.pid) void terminateProcessTree(child.pid).catch((error) => log("watch termination failed", error)); };
 
     child.stdout?.on("data", (c) => {
       if (out.length < MAX_BUFFER) out += c.toString();
@@ -536,15 +606,16 @@ export class Scheduler {
       clearTimeout(killTimer);
       rt.running = false;
       rt.lastAlertAt = this.now();
-      this.finishRun(task, "error");
       const body = `❌ 脚本无法启动：${e.message}（需要系统可用 bash）`;
       task.lastOutput = body;
-      this.deps.sendAlert(task, body);
+      if (this.finishRun(task, "error")) this.deps.sendAlert(task, body);
     });
     child.on("close", () => {
       if (settled) return;
       settled = true;
       clearTimeout(killTimer);
+      rt.cancel = undefined;
+      if (this.tasks.get(task.id) !== task) return;
       rt.running = false;
       const output = out.trim();
       if (output) {
@@ -573,34 +644,44 @@ export class Scheduler {
     rt.running = true;
     task.lastRun = new Date(this.now()).toISOString();
     this.deps.onChange();
-    this.pendingSessions.set(task.id, "");
-    this.deps.requestAgentSession(task);
+    const requestId = `schedule:${task.id}:${randomUUID()}`;
     // rt.running is released by handleSessionExit / handleSessionStartFailed;
     // the timeout below guarantees release even if upstream never answers.
-    setTimeout(() => {
-      if (this.pendingSessions.has(task.id)) {
-        this.pendingSessions.delete(task.id);
+    const timer = setTimeout(() => {
+      if (this.pendingSessions.has(requestId)) {
+        this.pendingSessions.delete(requestId);
         rt.running = false;
         task.lastOutput = "agent 会话启动超时（120s 无响应）";
         this.finishRun(task, "error");
         log(`agent task ${task.id}: session_request timed out`);
       }
-    }, 120_000);
+    }, this.deps.agentStartTimeoutMs ?? 120_000);
+    timer.unref();
+    this.pendingSessions.set(requestId, { task, runtime: rt, timer });
+    try { this.deps.requestAgentSession({ ...task }, requestId); }
+    catch (error) { this.handleSessionStartFailed(requestId, error instanceof Error ? error.message : String(error)); }
   }
 
-  private finishRun(task: ScheduleTask, result: TaskResult): void {
+  private finishRun(task: ScheduleTask, result: TaskResult): boolean {
+    if (this.tasks.get(task.id) !== task) return false;
     const rt = this.runtime.get(task.id);
-    if (rt) rt.running = false;
+    if (rt) { rt.running = false; rt.cancel = undefined; }
     task.lastRun = task.lastRun ?? new Date(this.now()).toISOString();
     task.lastResult = result;
-    this.save();
+    try { this.save(); }
+    catch (error) {
+      task.lastResult = "error";
+      task.lastOutput = `${task.lastOutput ?? ""}\n执行结果未能保存，请检查磁盘空间和目录权限：${String(error)}`.trim();
+      log("cannot persist task result", error);
+    }
     this.deps.onChange();
+    return true;
   }
 
-  private save(): void {
+  private save(tasks = this.tasks): void {
     mkdirSync(dirname(this.storeFile), { recursive: true });
     const tmp = this.storeFile + ".tmp";
-    writeFileSync(tmp, JSON.stringify({ tasks: [...this.tasks.values()] }, null, 2) + "\n");
+    writeFileSync(tmp, JSON.stringify({ tasks: [...tasks.values()] }, null, 2) + "\n");
     renameSync(tmp, this.storeFile);
   }
 }

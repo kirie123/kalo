@@ -41,6 +41,7 @@ import {
 // prefers the real shell, which does not add its coreutils to PATH itself
 // (`bashSpawnEnv`).
 import { bashSpawnEnv, resolveBash } from "../scheduler";
+import { terminateProcessTree } from "../process-tree";
 
 const TICK_MS = 5_000;
 const PROBE_TIMEOUT_MS = 60_000;
@@ -266,7 +267,12 @@ export class GatewayJobBackend implements JobRegistry {
       // A producer throw propagates without changing job state beyond stopping.
       hooks.cancel(reason);
     } else if (rec.pid) {
-      killTree(rec.pid);
+      void terminateProcessTree(rec.pid).catch((error: unknown) => {
+        if (rec.status !== "stopping") return;
+        rec.detail = `停止进程失败，请重试：${error instanceof Error ? error.message : String(error)}`;
+        this.store.save(rec);
+        this.changed(rec.ownerSession);
+      });
     }
     return "requested";
   }
@@ -548,23 +554,6 @@ export function isAlive(pid: number): boolean {
     return true;
   } catch (err: any) {
     return err?.code === "EPERM"; // Alive but owned by another user.
-  }
-}
-
-/** Terminate a job's whole process tree (the command may have spawned children). */
-function killTree(pid: number): void {
-  try {
-    if (process.platform === "win32") {
-      spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).unref();
-    } else {
-      process.kill(-pid, "SIGTERM");
-    }
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      /* already gone */
-    }
   }
 }
 

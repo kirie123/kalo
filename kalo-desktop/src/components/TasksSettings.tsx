@@ -37,6 +37,12 @@ function errText(err: unknown): string {
  */
 export default function TasksSettings() {
   const [tasks, setTasks] = useState<ScheduleTaskInfo[] | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const reload = useCallback(async () => {
+    setLoadError("");
+    try { setTasks(await scheduleList()); }
+    catch (err) { setLoadError(`加载任务失败：${errText(err)}`); }
+  }, []);
   /** undefined = closed, null = creating, info = editing. */
   const [editing, setEditing] = useState<ScheduleTaskInfo | null | undefined>(undefined);
   /** Task id whose lastOutput is expanded inline. */
@@ -46,16 +52,16 @@ export default function TasksSettings() {
   const [menuFor, setMenuFor] = useState<ScheduleTaskInfo | null>(null);
 
   useEffect(() => {
-    scheduleList()
-      .then(setTasks)
-      .catch((err) => chatStore.pushToast(`加载任务失败：${errText(err)}`, "error"));
     const unStatus = onScheduleStatus(setTasks);
     const unError = onScheduleError((msg) => chatStore.pushToast(msg, "error"));
+    let active = true;
+    void Promise.all([unStatus, unError]).then(() => { if (active) void reload(); }).catch((err) => { if (active) setLoadError(`任务状态连接失败：${errText(err)}`); });
     return () => {
-      void unStatus.then((f) => f());
-      void unError.then((f) => f());
+      active = false;
+      void unStatus.then((f) => f()).catch(() => {});
+      void unError.then((f) => f()).catch(() => {});
     };
-  }, []);
+  }, [reload]);
 
   const toggle = useCallback(async (t: ScheduleTaskInfo) => {
     try {
@@ -86,7 +92,7 @@ export default function TasksSettings() {
 
   return (
     <Section title="定时任务">
-      {tasks === null ? (
+      {loadError ? <p role="alert" className="text-xs text-[var(--danger)]">{loadError} <button className="underline" onClick={() => void reload()}>重试</button></p> : tasks === null ? (
         <p className="text-xs text-dim">加载中…</p>
       ) : tasks.length === 0 ? (
         <p className="mb-2 text-xs text-dim">
