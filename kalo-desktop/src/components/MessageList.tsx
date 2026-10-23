@@ -37,7 +37,7 @@ export default function MessageList() {
     isCompacting,
   ]);
 
-  // Group whole-run progress; final replies and deliverables remain outside.
+  // Fold adjacent activity; every prose message stays visible in sequence.
   const rows = useMemo(
     () => foldConversationTurns(foldRunArtifacts(timeline, isStreaming || isCompacting), isStreaming || isCompacting),
     [timeline, isStreaming, isCompacting],

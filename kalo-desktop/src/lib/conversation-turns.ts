@@ -26,46 +26,40 @@ export function processStartedAt(entries: TimelineEntry[]): number | undefined {
   return first;
 }
 
-/** View-only grouping. A whole run includes progress prose, not only adjacent tool calls. */
+/** Group adjacent activity, keeping every prose message and deliverable in place. */
 export function foldConversationTurns(timeline: TimelineEntry[], live: boolean): ConversationRow[] {
   const rows: ConversationRow[] = [];
   let run: TimelineEntry[] = [];
 
-  const flush = (running: boolean) => {
-    if (run.length === 0) return;
-    let lastTool = -1;
-    let final = -1;
-    run.forEach((entry, index) => { if (entry.kind === "toolGroup") lastTool = index; });
-    if (!running) {
-      for (let i = run.length - 1; i > lastTool; i--) {
-        const entry = run[i];
-        if (entry.kind === "assistant" && isFailure(entry)) break;
-        if (entry.kind === "assistant" && hasText(entry) && entry.message.stopReason !== "toolUse"
-          && !entry.message.content.some((block) => block.type === "toolCall")) {
-          final = i;
-          break;
-        }
+  const flush = (active: boolean) => {
+    let process: TimelineEntry[] = [];
+    const flushProcess = (tail: boolean) => {
+      if (process.length === 0) return;
+      const stats = segmentStats(process);
+      rows.push({ kind: "segment", id: process[0].id, entries: process, stats,
+        running: active && (tail || stats.running), startedAt: processStartedAt(process) });
+      process = [];
+    };
+    for (const entry of run) {
+      if (entry.kind === "toolGroup") {
+        if (entry.calls.length > 0) process.push(entry);
+        continue;
       }
+      if (entry.kind === "assistant" && !isFailure(entry) && !hasText(entry)) {
+        // Tool-call placeholders must not add rows or change the group's identity.
+        if (entry.message.content.some((block) => block.type === "thinking" && block.thinking.trim())) {
+          process.push(entry.usage ? { ...entry, usage: undefined } : entry);
+        }
+        if (!entry.usage) continue;
+        flushProcess(false);
+        rows.push({ kind: "entry", entry: { ...entry, message: { ...entry.message,
+          content: entry.message.content.filter((block) => block.type !== "thinking") } } });
+        continue;
+      }
+      flushProcess(false);
+      rows.push({ kind: "entry", entry });
     }
-
-    const process: TimelineEntry[] = [];
-    const output: TimelineEntry[] = [];
-    run.forEach((entry, index) => {
-      if (index === final && entry.kind === "assistant") {
-        const thinking = entry.message.content.filter((block) => block.type === "thinking" && block.thinking.trim());
-        if (thinking.length > 0) {
-          process.push({ ...entry, id: `${entry.id}:thinking`, usage: undefined, message: { ...entry.message, content: thinking } });
-          output.push({ ...entry, message: { ...entry.message, content: entry.message.content.filter((block) => block.type !== "thinking") } });
-        } else output.push(entry);
-      } else if ((entry.kind === "assistant" && !isFailure(entry))
-        || entry.kind === "toolGroup" || entry.kind === "retry" || entry.kind === "compaction") {
-        process.push(entry);
-      } else output.push(entry);
-    });
-    if (process.length > 0) {
-      rows.push({ kind: "segment", id: run[0].id, entries: process, stats: segmentStats(process), running, startedAt: processStartedAt(run) });
-    }
-    rows.push(...output.map((entry): ConversationRow => ({ kind: "entry", entry })));
+    flushProcess(true);
     run = [];
   };
 

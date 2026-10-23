@@ -1,11 +1,12 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { formatProcessDuration } from "../lib/conversation-turns";
+import { activitySummary, syncActivityDisclosure } from "../lib/activity-disclosure";
 import type { TimelineEntry } from "../lib/timeline";
-import { toolChips } from "../lib/tool-labels";
 import { sameSegmentEntries, type SegmentStats } from "../lib/work-segment";
 import TimelineItem from "./TimelineItem";
+import { ToolCallList } from "./ToolCallGroup";
 
-/** A live run stays open. Once settled, only its process folds; results live outside. */
+/** Adjacent tools fold together; prose and deliverables remain in the transcript. */
 function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
   entries: TimelineEntry[];
   stats: SegmentStats;
@@ -13,10 +14,11 @@ function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
   startedAt?: number;
   onScrollAdjust?: (deltaY: number) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [disclosure, setDisclosure] = useState({ running, open: running });
   const [now, setNow] = useState(Date.now);
   const [finishedAt, setFinishedAt] = useState<number>();
-  const open = running || expanded;
+  const current = syncActivityDisclosure(disclosure, running);
+  const open = current.open;
   const contentId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const anchorTop = useRef<number | null>(null);
@@ -30,11 +32,11 @@ function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
   }, [running, startedAt]);
 
   useLayoutEffect(() => {
+    if (disclosure !== current) setDisclosure(current);
     if (wasRunning.current && !running) {
       setFinishedAt(Date.now());
     }
     if (running && !wasRunning.current) {
-      setExpanded(false);
       setFinishedAt(undefined);
     }
     wasRunning.current = running;
@@ -48,34 +50,39 @@ function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
   });
 
   const toggle = () => {
-    if (running) return;
     anchorTop.current = rootRef.current?.getBoundingClientRect().top ?? null;
-    setExpanded((value) => !value);
+    setDisclosure({ running, open: !open });
   };
   const duration = startedAt !== undefined && (running || finishedAt !== undefined)
     ? formatProcessDuration((running ? now : finishedAt!) - startedAt) : undefined;
-  const label = running ? `正在处理${duration ? ` ${duration}` : ""}` : duration ? `用时 ${duration}` : "工作过程";
-  const summary = toolChips(stats.tools).map((chip) => chip.label).join("，");
+  const summary = activitySummary(stats);
+  const iconPath = stats.tools[0]?.name === "bash" ? "M3 4l4 4-4 4M9 12h4"
+    : stats.tools.some((tool) => tool.name === "edit" || tool.name === "write") ? "M10 2l4 4-8 8H2v-4zM8 4l4 4"
+      : "M3 3h10v10H3zM5 6h6M5 9h4";
 
   return (
     <section ref={rootRef} className={`work-segment ${running ? "is-running" : ""}`} aria-label="任务过程">
       <button
         type="button"
         onClick={toggle}
-        disabled={running}
         aria-expanded={open}
         aria-controls={contentId}
-        title={running ? "运行中持续展示进展" : summary || "展开查看处理过程"}
+        aria-label={`${running ? "正在处理：" : ""}${summary.full}${stats.error ? "，含失败步骤" : ""}`}
+        title={`${summary.full}${duration ? ` · ${running ? "已运行" : "用时"} ${duration}` : ""}`}
         className="work-segment-head"
       >
-        <span>{label}</span>
-        {stats.error && <span className="text-[var(--danger)]">含失败步骤</span>}
-        {!running && <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={open ? "rotate-90" : ""} aria-hidden="true"><path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-        {running && <span className="spinner" aria-hidden="true" />}
+        <span className="activity-group-icon" aria-hidden="true">
+          {running ? <span className="spinner" /> : <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2"><path d={iconPath} strokeLinecap="round" strokeLinejoin="round" /></svg>}
+        </span>
+        <span className="activity-group-label">{summary.label}</span>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`activity-group-chevron ${open ? "rotate-90" : ""}`} aria-hidden="true"><path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        {stats.error && <span className="activity-group-error">含失败步骤</span>}
       </button>
       {open && (
         <div id={contentId} className="work-segment-body">
-          {entries.map((entry) => <TimelineItem key={entry.id} entry={entry} inSegment />)}
+          {entries.map((entry) => entry.kind === "toolGroup"
+            ? <div key={entry.id} className="activity-call-list"><ToolCallList calls={entry.calls} /></div>
+            : <TimelineItem key={entry.id} entry={entry} inSegment />)}
         </div>
       )}
     </section>
