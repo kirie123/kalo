@@ -27,31 +27,16 @@ export function todayLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-/** Frontmatter + section skeleton prefilled for a new note. */
+/** A blank writing surface; Markdown metadata stays available in source mode. */
 export function noteTemplate(domain: string, title: string): string {
   return [
     "---",
-    `title: ${title}`,
+    `title: ${title.replace(/[\r\n]/g, " ")}`,
     `domain: ${domain}`,
     "tags: []",
     `date: ${todayLocal()}`,
     "status: seed",
-    "source_session: ",
     "---",
-    "",
-    "## 背景",
-    "",
-    "",
-    "",
-    "## 结论",
-    "",
-    "",
-    "",
-    "## 证据",
-    "",
-    "",
-    "",
-    "## 反例边界",
     "",
   ].join("\n");
 }

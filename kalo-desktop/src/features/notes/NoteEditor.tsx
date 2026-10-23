@@ -1,122 +1,134 @@
-/**
- * Right column: one note, as markdown source or rendered preview.
- *
- * The source textarea is the editor — no rich-text layer, no bidirectional
- * serializer. What the agent writes and what the user edits are the same
- * bytes, which is the whole point of keeping markdown as the source of truth.
- */
-
-import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import AppIcon from "../../components/AppIcon";
+import DeliveredImage from "../../components/DeliveredImage";
 import { CodeRenderer } from "../../components/MarkdownBlock";
+import { chatStore } from "../../lib/chat-store";
 import { openPath } from "../../lib/pi-bridge";
+import { imageMarkdown, noteBlocks, noteTitle, replaceNoteRange, resolveNoteImage, splitNote, updateNote } from "./document";
+import { copyNoteImage, importNoteImage } from "./images";
+import { errText } from "./template";
+import { useNoteDrop } from "./useNoteDrop";
 
-export default function NoteEditor({
-  relPath,
-  absPath,
-  text,
-  loading,
-  dirty,
-  saving,
-  onChange,
-  onSave,
-  onDelete,
-}: {
-  relPath: string;
-  /** Absolute path, for 在文件管理器中显示; empty until app_paths resolves. */
-  absPath: string;
-  text: string;
-  loading: boolean;
-  dirty: boolean;
-  saving: boolean;
-  onChange: (text: string) => void;
-  onSave: () => void;
-  onDelete: () => void;
-}) {
-  const [mode, setMode] = useState<"source" | "preview">("source");
-
-  // Switching notes lands you back in source view; a preview left over from
-  // the previous note reads as if the new one failed to open for editing.
-  useEffect(() => setMode("source"), [relPath]);
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1.5 border-b border-edge px-3 py-2">
-        <span className="mono min-w-0 flex-1 truncate text-[11px] text-dim" title={relPath}>
-          {relPath}
-          {dirty && <span className="text-accent"> ●</span>}
-        </span>
-        <Toggle active={mode === "source"} onClick={() => setMode("source")} label="源码" />
-        <Toggle active={mode === "preview"} onClick={() => setMode("preview")} label="预览" />
-        <button
-          onClick={onSave}
-          disabled={!dirty || saving}
-          className="rounded-md border border-edge px-2 py-1 text-xs text-dim hover:text-ink disabled:opacity-40"
-        >
-          {saving ? "保存中…" : "保存"}
-        </button>
-        {absPath && (
-          <button
-            onClick={() => void openPath(absPath, true)}
-            title="在文件管理器中显示"
-            className="rounded-md border border-edge px-2 py-1 text-xs text-dim hover:text-ink"
-          >
-            定位
-          </button>
-        )}
-        <button
-          onClick={onDelete}
-          className="rounded-md border border-edge px-2 py-1 text-xs text-dim hover:text-[var(--danger)]"
-        >
-          删除
-        </button>
-      </div>
-
-      {loading ? (
-        <p className="px-3 py-4 text-xs text-dim">加载中…</p>
-      ) : mode === "source" ? (
-        <textarea
-          value={text}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-              e.preventDefault();
-              onSave();
-            }
-          }}
-          spellCheck={false}
-          className="mono min-h-0 flex-1 resize-none bg-base px-3 py-2 text-[13px] leading-relaxed outline-none"
-        />
-      ) : (
-        <div className="markdown min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeKatex]}
-            components={{
-              code: CodeRenderer as any,
-              pre: ({ children }) => <>{children}</>,
-            }}
-          >
-            {text}
-          </ReactMarkdown>
-        </div>
-      )}
-    </div>
-  );
+interface Props {
+  relPath: string; absPath: string; text: string; loading: boolean; dirty: boolean; saving: boolean; error: string;
+  onChange: (text: string) => void; onSave: () => void; onDelete: () => void;
 }
 
-function Toggle({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-md border px-2 py-1 text-xs ${
-        active ? "border-dim text-ink" : "border-edge text-dim hover:text-ink"
-      }`}
-    >
-      {label}
-    </button>
-  );
+export default function NoteEditor({ relPath, absPath, text, loading, dirty, saving, error, onChange, onSave, onDelete }: Props) {
+  const [mode, setMode] = useState<"edit" | "preview" | "source">("edit");
+  const [importing, setImporting] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const sourceInput = useRef<HTMLTextAreaElement>(null);
+  const latest = useRef(text);
+  const caret = useRef<{ start: number; end: number } | null>(null);
+  const alive = useRef(true);
+  const importLock = useRef(false);
+  const editorArea = useRef<HTMLElement>(null);
+  latest.current = text;
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const body = splitNote(text).body;
+  const blocks = noteBlocks(body);
+
+  const change = (next: string) => { latest.current = next; onChange(next); };
+  const changeBody = (next: string) => change(updateNote(latest.current, { body: next }));
+
+  const insert = (value: string, wrap = false) => {
+    const { body: currentBody } = splitNote(latest.current);
+    if (mode === "source" && sourceInput.current) {
+      const { selectionStart: start, selectionEnd: end } = sourceInput.current;
+      change(replaceNoteRange(latest.current, start, end, wrap ? `**${latest.current.slice(start, end) || "文字"}**` : value));
+      return;
+    }
+    const start = Math.min(caret.current?.start ?? currentBody.length, currentBody.length);
+    const end = Math.min(caret.current?.end ?? start, currentBody.length);
+    const inserted = wrap ? `**${currentBody.slice(start, end) || "文字"}**` : value;
+    changeBody(replaceNoteRange(currentBody, start, end, inserted));
+    caret.current = { start: start + inserted.length, end: start + inserted.length };
+  };
+
+  const addImages = async (sources: Array<File | string>) => {
+    if (loading || mode === "preview" || importLock.current || !sources.length) return;
+    importLock.current = true;
+    setImporting(true);
+    try {
+      for (const source of sources) {
+        const image = typeof source === "string" ? await copyNoteImage(source) : await importNoteImage(source);
+        if (!alive.current) return;
+        insert(`\n\n${imageMarkdown(image.path, image.name)}\n\n`);
+      }
+    } catch (err) { if (alive.current) chatStore.pushToast(`添加图片失败：${errText(err)}`, "error"); }
+    finally { importLock.current = false; if (alive.current) setImporting(false); }
+  };
+  const dragging = useNoteDrop(editorArea, (paths) => { void addImages(paths); }, loading || importing || mode === "preview");
+
+  return <section ref={editorArea} className={`note-editor ${dragging ? "note-dragging" : ""}`} aria-label="笔记编辑器"
+    onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!loading) onSave(); } }}
+    onPaste={(event) => {
+      const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+      if (images.length) { event.preventDefault(); void addImages(images); }
+    }}
+    onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
+    onDrop={(event) => {
+      if (event.dataTransfer.files.length) { event.preventDefault(); void addImages(Array.from(event.dataTransfer.files)); }
+    }}>
+    {dragging && <div className="note-drop-hint">松开，将图片加入当前笔记</div>}
+    <header className="note-toolbar">
+      <div className="note-tools">
+        <Tool label="加粗（Markdown）" disabled={loading || mode === "preview"} onClick={() => insert("", true)}><b>B</b></Tool>
+        <Tool label="添加待办清单" disabled={loading || mode === "preview"} onClick={() => insert("\n- [ ] ")}><AppIcon name="checklist" /></Tool>
+        <Tool label={importing ? "正在导入图片" : "插入图片，也可粘贴或拖入"} disabled={loading || importing || mode === "preview"} onClick={() => fileInput.current?.click()}><AppIcon name="image" /></Tool>
+      </div>
+      <div className="note-view-modes" aria-label="笔记视图">{([['edit', '编辑'], ['preview', '预览'], ['source', '源码']] as const).map(([value, label]) => <button key={value} aria-pressed={mode === value} disabled={loading || importing} onClick={() => { setMode(value); caret.current = null; }}>{label}</button>)}</div>
+      <div className="note-tools note-actions">
+        <button className="note-save" disabled={loading || saving || !dirty} onClick={onSave}>{saving ? "保存中…" : dirty ? "保存" : "已保存"}</button>
+        {absPath && <Tool label="在文件管理器中显示" disabled={loading} onClick={() => void openPath(absPath, true).catch((err) => chatStore.pushToast(`打开位置失败：${errText(err)}`, "error"))}><AppIcon name="folder" /></Tool>}
+        <Tool label="删除笔记" disabled={loading || importing} onClick={onDelete}><AppIcon name="trash" size={17} /></Tool>
+      </div>
+      <input type="file" ref={fileInput} accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addImages(files); }} />
+    </header>
+    {error && <div className="note-save-error" role="alert">{error} <button onClick={onSave} disabled={saving}>重试保存</button></div>}
+    {loading ? <div className="note-loading" role="status">正在打开笔记…</div>
+      : mode === "source" ? <textarea ref={sourceInput} className="note-source mono" aria-label="Markdown 源码" value={text} onChange={(event) => change(event.target.value)} spellCheck={false} />
+      : <div className="note-scroll"><div className="note-paper">
+        <div className="note-meta">{importing ? "正在导入图片…" : "个人笔记 · 随手记下，自在整理"}</div>
+        {mode === "edit" ? <>
+          <input className="note-title" aria-label="笔记标题" value={noteTitle(text, "")} placeholder="未命名笔记" onFocus={(event) => { if (event.target.value === "未命名笔记") event.target.select(); }} onChange={(event) => change(updateNote(latest.current, { title: event.target.value }))} />
+          <div className="note-blocks">{blocks.map((block, index) => block.kind === "text"
+            ? <AutoText key={index} value={block.value} placeholder={index === 0 ? "从这里开始记录…" : "继续写下你的想法…"}
+              onChange={(value) => changeBody(replaceNoteRange(splitNote(latest.current).body, block.start, block.end, value))}
+              onSelect={(start, end) => { caret.current = { start: block.start + start, end: block.start + end }; }} />
+            : <figure className="note-image-block" key={index}>
+              <DeliveredImage source={resolveNoteImage(block.source, absPath)} alt={block.alt || "笔记图片"} />
+              <figcaption><span>{block.alt || "图片"}</span><button onClick={() => changeBody(replaceNoteRange(splitNote(latest.current).body, block.start, block.end, ""))} aria-label="从笔记移除图片" title="仅移除笔记内引用，保留原附件"><AppIcon name="trash" size={14} /></button></figcaption>
+            </figure>)}</div>
+        </> : <><h1 className="note-title">{noteTitle(text)}</h1><div className="markdown note-preview"><ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
+          urlTransform={(url, key) => key === "src" ? url : defaultUrlTransform(url)}
+          components={{ code: CodeRenderer as any, pre: ({ children }) => <>{children}</>, img: ({ src, alt }) => <DeliveredImage source={resolveNoteImage(src || "", absPath)} alt={alt} /> }}
+        >{body}</ReactMarkdown></div></>}
+      </div></div>}
+    <footer className="note-status"><span title={relPath}>{relPath}</span><span role="status">{error ? "保存失败 · 草稿保留" : saving ? "保存中…" : dirty ? "正在编辑 · 即将自动保存" : "已保存到本地"}</span></footer>
+  </section>;
+}
+
+function Tool({ label, onClick, children, disabled }: { label: string; onClick: () => void; children: ReactNode; disabled?: boolean }) {
+  return <button className="note-tool" title={label} aria-label={label} onMouseDown={(event) => event.preventDefault()} disabled={disabled} onClick={onClick}>{children}</button>;
+}
+
+function AutoText({ value, onChange, onSelect, placeholder }: { value: string; onChange: (value: string) => void; onSelect: (start: number, end: number) => void; placeholder: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const input = ref.current;
+    if (!input) return;
+    const resize = () => { input.style.height = "0"; input.style.height = `${Math.max(36, input.scrollHeight)}px`; };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(input.parentElement!);
+    return () => observer.disconnect();
+  }, [value]);
+  return <textarea ref={ref} rows={1} className="note-text-block" aria-label="笔记正文" value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} onSelect={(event) => onSelect(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} />;
 }

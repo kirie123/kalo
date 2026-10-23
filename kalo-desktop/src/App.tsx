@@ -11,12 +11,12 @@ import NotesPanel from "./features/notes/NotesPanel";
 import OnboardingOverlay from "./features/onboarding/OnboardingOverlay";
 import { markOnboardingDone, shouldShowOnboarding } from "./features/onboarding/state";
 import SettingsPage, {
-  applyTheme,
-  loadTheme,
-  THEME_OPTIONS,
   type SettingsTab,
-  type ThemePref,
 } from "./components/SettingsPage";
+import { THEME_OPTIONS } from "./components/AppearanceSettings";
+import NavigationRail, { type AppPage } from "./components/NavigationRail";
+import { applyAppearance, loadSkin, loadTheme } from "./features/appearance/preferences";
+import type { SkinPref, ThemePref } from "./lib/appearance";
 import Sidebar from "./components/Sidebar";
 import RightPanel from "./components/RightPanel";
 import TasksSettings from "./components/TasksSettings";
@@ -45,7 +45,7 @@ export default function App() {
     pendingSessions: s.pendingSessions,
     hasMessages: s.timeline.length > 0,
   }));
-  const [page, setPage] = useState<"chat" | "settings" | "era" | "notes" | "automation" | "experts">("chat");
+  const [page, setPage] = useState<AppPage>("chat");
   // undefined → SettingsPage restores the last visited tab.
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -55,6 +55,7 @@ export default function App() {
   const panel = usePanelTabs();
   const [projects, setProjects] = useState<ProjectGroup[]>([]);
   const [theme, setTheme] = useState<ThemePref>(() => loadTheme());
+  const [skin, setSkin] = useState<SkinPref>(() => loadSkin());
   // null = 还没问过 ~/.kalo/onboarding.json；"first" 首次自动弹，
   // "review" 是从帮助菜单点开的（关闭时不写标记）。
   const [onboarding, setOnboarding] = useState<null | "first" | "review">(null);
@@ -81,14 +82,15 @@ export default function App() {
 
   // Apply theme to <html>; in "system" mode also follow OS changes.
   useEffect(() => {
-    applyTheme(theme);
+    applyAppearance(theme, skin);
     localStorage.setItem("kalo.theme", theme);
+    localStorage.setItem("kalo.skin", skin);
     if (theme !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyTheme("system");
+    const onChange = () => applyAppearance("system", skin);
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, [theme]);
+  }, [theme, skin]);
 
   // Project/session list for the sidebar; refreshed on mount, when the
   // active session changes, when a run settles (new files appear) and when
@@ -257,7 +259,7 @@ export default function App() {
           { kind: "sep" },
           { kind: "item", label: "聊天", checked: page === "chat", onClick: () => setPage("chat") },
           { kind: "item", label: "自动化", checked: page === "automation", onClick: onOpenAutomation },
-          { kind: "item", label: "知识笔记", checked: page === "notes", onClick: onOpenNotes },
+          { kind: "item", label: "笔记", checked: page === "notes", onClick: onOpenNotes },
           { kind: "item", label: "数字专家", checked: page === "experts", onClick: onOpenExperts },
           { kind: "item", label: "演化", checked: page === "era", onClick: onOpenEra },
           { kind: "sep" },
@@ -306,7 +308,7 @@ export default function App() {
       : page === "era"
         ? "演化"
         : page === "notes"
-          ? "知识笔记"
+          ? "笔记"
           : page === "experts"
             ? "数字专家"
             : page === "automation"
@@ -319,31 +321,13 @@ export default function App() {
     <OnboardingOverlay onClose={closeOnboarding} reviewing={onboarding === "review"} />
   );
 
-  // Settings takes over the whole window — no session sidebar next to it.
-  if (page === "settings") {
-    return (
-      <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
-        <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
-        <div className="relative flex min-h-0 flex-1">
-          <SettingsPage
-            theme={theme}
-            onThemeChange={setTheme}
-            onBack={() => setPage("chat")}
-            initialTab={settingsTab}
-          />
-          {overlay}
-        </div>
-        <ToastContainer />
-        <ExtensionModal />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-base text-ink">
+    <div className="desktop-shell flex h-screen flex-col overflow-hidden text-ink">
       <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
       <div className="relative flex min-h-0 flex-1">
-        <Sidebar
+        <NavigationRail page={page} onNavigate={(next) => next === "settings" ? onOpenSettings() : setPage(next)} />
+        <div className="app-surface">
+        {page === "chat" && <Sidebar
           collapsed={sidebarCollapsed}
           width={sidebarW}
           onToggleCollapsed={onToggleCollapsed}
@@ -356,19 +340,10 @@ export default function App() {
           onSelectSession={onSelectSession}
           onDeleteSession={onDeleteSession}
           onRenameSession={onRenameSession}
-          onOpenAutomation={onOpenAutomation}
-          automationActive={page === "automation"}
-          onOpenEra={onOpenEra}
-          eraActive={page === "era"}
-          onOpenNotes={onOpenNotes}
-          notesActive={page === "notes"}
-          onOpenExperts={onOpenExperts}
-          expertsActive={page === "experts"}
-          onOpenSettings={onOpenSettings}
-        />
+        />}
 
         {/* Sidebar splitter */}
-        {!sidebarCollapsed && (
+        {page === "chat" && !sidebarCollapsed && (
           <div
             onMouseDown={(e) =>
               startColumnDrag(e, sidebarW, { min: 200, max: 480, persistKey: "kalo.layout.sidebarW" }, setSidebarW)
@@ -379,9 +354,9 @@ export default function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
-          <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-4">
-            <span className="mono truncate text-xs text-dim" title={chat.cwd || undefined}>
-              {page === "era" ? "演化" : page === "notes" ? "知识笔记 · ~/.kalo/knowledge" : page === "experts" ? "数字专家 · ~/.kalo/experts.json" : page === "automation" ? "自动化 · 定时任务与数据源" : chat.cwd || "未选择目录"}
+          {page !== "settings" && <header className="workspace-header flex shrink-0 items-center justify-between gap-2 border-b border-edge px-5">
+            <span className="truncate text-xs text-dim" title={chat.cwd || undefined}>
+              {page === "era" ? "演化实验" : page === "notes" ? "个人空间 / 笔记" : page === "experts" ? "数字专家" : page === "automation" ? "自动化 · 定时任务与数据源" : cwdBasename(chat.cwd) || "个人工作空间"}
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
@@ -402,11 +377,13 @@ export default function App() {
                 </button>
               )}
             </div>
-          </header>
+          </header>}
 
           <div className="flex min-h-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col">
-              {page === "era" ? (
+              {page === "settings" ? (
+                <SettingsPage theme={theme} skin={skin} onThemeChange={setTheme} onSkinChange={setSkin} onBack={() => setPage("chat")} initialTab={settingsTab} />
+              ) : page === "era" ? (
                 <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                   <EraPanel onLeaveToChat={() => setPage("chat")} />
                 </div>
@@ -441,6 +418,7 @@ export default function App() {
             {page === "chat" && <RightPanel hidden={!panel.open} />}
           </div>
         </main>
+        </div>
 
         {/* 必须留在这个 relative 容器里：引导层是 absolute inset-0，挂到外面
             会锚到视口、从 y=0 铺起，右上角的「跳过 / 关闭」就钻到 TitleBar 底下。 */}

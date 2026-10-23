@@ -68,8 +68,9 @@ export default function TitleBar({
   return (
     <div
       data-tauri-drag-region
-      className="relative z-[100] flex h-8 shrink-0 select-none items-center border-b border-edge bg-sidebar"
+      className="desktop-titlebar relative z-[100] flex shrink-0 select-none items-center"
     >
+      <div data-tauri-drag-region className="titlebar-brand"><span>K</span><b>Kalo</b></div>
       {/* Menu bar — clickable, so it must not carry the drag-region flag. */}
       {menus && menus.length > 0 && <MenuBar menus={menus} />}
 
@@ -196,8 +197,8 @@ function WindowButton({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className={`flex h-8 w-11 items-center justify-center text-dim ${
-        danger ? "hover:bg-[#c42b1c] hover:text-white" : "hover:bg-card hover:text-ink"
+      className={`window-control flex w-11 items-center justify-center text-dim ${
+        danger ? "window-control-danger" : "hover:bg-card hover:text-ink"
       }`}
     >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.1">

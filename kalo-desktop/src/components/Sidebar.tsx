@@ -1,5 +1,4 @@
 import { memo, useRef, useState, type ReactNode } from "react";
-import { chatStore } from "../lib/chat-store";
 import { cwdBasename, listProjects, normalizeCwd, removeProject, type ProjectEntry } from "../lib/projects";
 import {
   mergeSessionRows,
@@ -34,25 +33,7 @@ interface SidebarProps {
   onDeleteSession: (session: SessionSummary) => void;
   /** Rename one session's title (live sessions via the engine, others on disk). */
   onRenameSession: (session: SessionSummary, name: string) => void;
-  /** 「自动化」— takes over the main pane with the 定时任务 table. */
-  onOpenAutomation: () => void;
-  /** True while the automation page is the current page. */
-  automationActive?: boolean;
-  /** 「演化」— takes over the main pane with the era panel. */
-  onOpenEra: () => void;
-  /** True while the era panel is the current page, so the button reads as selected. */
-  eraActive?: boolean;
-  /** 「知识笔记」— takes over the main pane with the notes workspace. */
-  onOpenNotes: () => void;
-  /** True while the notes panel is the current page. */
-  notesActive?: boolean;
-  /** 「数字专家」— takes over the main pane with the experts panel. */
-  onOpenExperts: () => void;
-  /** True while the experts panel is the current page. */
-  expertsActive?: boolean;
-  onOpenSettings: () => void;
 }
-
 /** Same normalization as chat-store's normPath (pool keys). */
 const normPath = (p: string) => p.replace(/\\/g, "/").toLowerCase();
 
@@ -89,10 +70,6 @@ function formatRelativeTime(ms: number): string {
   return `${Math.floor(months / 12)} 年`;
 }
 
-function notImplemented() {
-  chatStore.pushToast("该功能暂未实现", "info");
-}
-
 /**
  * Memoized: App re-renders whenever the chat shell's fields change, but the
  * sidebar only depends on the session list, the active id and the run flags.
@@ -111,15 +88,6 @@ export default memo(function Sidebar({
   onSelectSession,
   onDeleteSession,
   onRenameSession,
-  onOpenAutomation,
-  automationActive,
-  onOpenEra,
-  eraActive,
-  onOpenNotes,
-  notesActive,
-  onOpenExperts,
-  expertsActive,
-  onOpenSettings,
 }: SidebarProps) {
   const [projects, setProjects] = useState<ProjectEntry[]>(() => listProjects());
   const [showNewProject, setShowNewProject] = useState(false);
@@ -203,12 +171,12 @@ export default memo(function Sidebar({
 
   return (
     <aside
-      className="flex shrink-0 flex-col border-r border-edge bg-sidebar"
+      className="session-sidebar flex shrink-0 flex-col border-r border-edge bg-sidebar"
       style={width ? { width } : undefined}
     >
       {/* Top row — wordmark, left-aligned with the nav items' icon column. */}
-      <div className="flex items-center justify-between pl-4 pr-3 pt-2">
-        <span className="select-none text-base font-semibold tracking-tight text-ink">Kalo</span>
+      <div className="flex items-center justify-between pl-5 pr-3 pt-5 pb-2">
+        <span className="select-none text-lg font-semibold tracking-tight text-ink">工作空间</span>
         <button
           onClick={onToggleCollapsed}
           title="折叠侧边栏"
@@ -222,11 +190,6 @@ export default memo(function Sidebar({
 
       <div className="mt-2 flex flex-col gap-0.5 px-2">
         <SideButton onClick={onNewChat} icon={<PencilIcon />} label="新对话" />
-        <SideButton onClick={notImplemented} icon={<SearchIcon />} label="搜索" />
-        <SideButton onClick={onOpenAutomation} icon={<ClockIcon />} label="自动化" active={automationActive} />
-        <SideButton onClick={onOpenNotes} icon={<BookIcon />} label="知识笔记" active={notesActive} />
-        <SideButton onClick={onOpenExperts} icon={<ExpertIcon />} label="专家市场" active={expertsActive} />
-        <SideButton onClick={onOpenEra} icon={<EvolveIcon />} label="演化" active={eraActive} />
       </div>
 
       {/* Projects + chats share one scroll area */}
@@ -320,9 +283,7 @@ export default memo(function Sidebar({
       </div>
 
       {/* Bottom */}
-      <div className="border-t border-edge px-2 py-2">
-        <SideButton onClick={onOpenSettings} icon={<GearIcon />} label="设置" />
-      </div>
+      <div className="border-t border-edge px-5 py-4 text-xs text-dim">本地工作空间</div>
 
       {showNewProject && (
         <NewProjectModal
@@ -657,65 +618,6 @@ function PencilIcon() {
         d="M11.3 2.3a1.4 1.4 0 012 0l.4.4a1.4 1.4 0 010 2L6 12.4 3 13l.6-3L11.3 2.3z"
         strokeLinecap="round"
         strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function SearchIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-      <circle cx="7" cy="7" r="4.5" />
-      <path d="M10.5 10.5L14 14" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ClockIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-      <circle cx="8" cy="8" r="5.5" />
-      <path d="M8 4.8V8l2.2 1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** A rising staircase: repeated improvement, one step per generation. */
-function EvolveIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-      <path d="M2 13h3v-3h3V7h3V4h3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** An open book: the knowledge library. */
-function BookIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-      <path d="M8 4.2S6.8 3 4.6 3H2v9h2.6C6.8 12 8 13 8 13s1.2-1 3.4-1H14V3h-2.6C9.2 3 8 4.2 8 4.2z" strokeLinejoin="round" />
-      <path d="M8 4.2V13" />
-    </svg>
-  );
-}
-
-/** A person silhouette with a badge: a named, long-lived expert identity. */
-function ExpertIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-      <circle cx="8" cy="5" r="2.5" />
-      <path d="M3 13.5c.8-2.4 2.8-3.7 5-3.7s4.2 1.3 5 3.7" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function GearIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-      <circle cx="8" cy="8" r="2.2" />
-      <path
-        d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"
-        strokeLinecap="round"
       />
     </svg>
   );

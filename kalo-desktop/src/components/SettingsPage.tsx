@@ -19,35 +19,19 @@ import PermissionSettings from "./PermissionSettings";
 import ProviderEditModal from "./ProviderEditModal";
 import SkillEditModal from "./SkillEditModal";
 import TasksSettings from "./TasksSettings";
-
-export type ThemePref = "system" | "light" | "dark";
-
-const THEME_KEY = "kalo.theme";
-
-export function loadTheme(): ThemePref {
-  const v = localStorage.getItem(THEME_KEY);
-  return v === "light" || v === "dark" ? v : "system";
-}
-
-/** Apply the theme by toggling the `dark` class on <html>. */
-export function applyTheme(pref: ThemePref) {
-  const dark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.classList.toggle("dark", dark);
-}
+import AppearanceSettings from "./AppearanceSettings";
+import AppIcon, { type IconName } from "./AppIcon";
+import type { SkinPref, ThemePref } from "../lib/appearance";
 
 interface SettingsPageProps {
   theme: ThemePref;
+  skin: SkinPref;
+  onSkinChange: (t: SkinPref) => void;
   onThemeChange: (t: ThemePref) => void;
   onBack: () => void;
   /** Open straight on this tab (e.g. 侧边栏「自动化」→ 任务); otherwise the last visited one. */
   initialTab?: SettingsTab;
 }
-
-export const THEME_OPTIONS: Array<{ value: ThemePref; label: string }> = [
-  { value: "system", label: "跟随系统" },
-  { value: "light", label: "浅色" },
-  { value: "dark", label: "深色" },
-];
 
 /** Left navigation tabs; the key is persisted across visits. */
 export type SettingsTab =
@@ -61,16 +45,16 @@ export type SettingsTab =
   | "mcp"
   | "about";
 
-const TABS: Array<{ id: SettingsTab; label: string }> = [
-  { id: "models", label: "模型" },
-  { id: "skills", label: "Skills" },
-  { id: "memory", label: "记忆" },
-  { id: "permission", label: "权限" },
-  { id: "appearance", label: "外观" },
-  { id: "gateway", label: "IM 网关" },
-  { id: "tasks", label: "任务" },
-  { id: "mcp", label: "MCP" },
-  { id: "about", label: "关于" },
+const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
+  { id: "models", label: "模型", icon: "model" },
+  { id: "skills", label: "技能", icon: "puzzle" },
+  { id: "memory", label: "记忆", icon: "memory" },
+  { id: "permission", label: "权限", icon: "shield" },
+  { id: "appearance", label: "外观", icon: "palette" },
+  { id: "gateway", label: "IM 网关", icon: "inbox" },
+  { id: "tasks", label: "任务", icon: "clock" },
+  { id: "mcp", label: "MCP", icon: "plug" },
+  { id: "about", label: "关于", icon: "info" },
 ];
 
 const TAB_KEY = "kalo.settings.tab";
@@ -80,8 +64,10 @@ function loadTab(): SettingsTab {
   return TABS.some((t) => t.id === v) ? (v as SettingsTab) : "models";
 }
 
-export default function SettingsPage({ theme, onThemeChange, onBack, initialTab }: SettingsPageProps) {
+export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange, onBack, initialTab }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>(() => initialTab ?? loadTab());
+  const [query, setQuery] = useState("");
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
 
   const selectTab = (id: SettingsTab) => {
     setTab(id);
@@ -89,19 +75,23 @@ export default function SettingsPage({ theme, onThemeChange, onBack, initialTab 
   };
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="settings-workspace flex min-h-0 flex-1">
       {/* Left: tab navigation with the back button pinned to the bottom. */}
-      <aside className="flex w-48 shrink-0 flex-col border-r border-edge bg-card/40">
-        <div className="px-4 pb-1 pt-4 text-xs font-medium uppercase tracking-wider text-dim">设置</div>
-        <nav className="flex flex-col gap-0.5 px-2 py-2">
-          {TABS.map((t) => (
+      <aside className="settings-sidebar flex shrink-0 flex-col border-r border-edge bg-sidebar">
+        <div className="sidebar-heading">设置</div>
+        <label className="sidebar-search"><AppIcon name="search" size={16} /><input aria-label="搜索设置分类" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索设置" /></label>
+        <div className="px-5 pb-2 pt-4 text-xs text-dim">偏好与连接</div>
+        <nav className="flex flex-col gap-1 overflow-y-auto px-3 py-1">
+          {TABS.filter((t) => `${t.label} ${t.id}`.toLowerCase().includes(query.toLowerCase().trim())).map((t) => (
             <button
               key={t.id}
               onClick={() => selectTab(t.id)}
-              className={`rounded-md px-3 py-1.5 text-left text-sm ${
-                tab === t.id ? "bg-base font-medium text-ink" : "text-dim hover:bg-base/60 hover:text-ink"
+              aria-current={tab === t.id ? "page" : undefined}
+              className={`settings-nav-item flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ${
+                tab === t.id ? "selected font-medium text-ink" : "text-dim hover:bg-card hover:text-ink"
               }`}
             >
+              <AppIcon name={t.icon} size={17} />
               {t.label}
             </button>
           ))}
@@ -122,12 +112,14 @@ export default function SettingsPage({ theme, onThemeChange, onBack, initialTab 
 
       {/* Right: the active tab's panel. */}
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-6 py-6">
+        <div className="settings-content mx-auto">
+          <h1>{TABS.find((t) => t.id === tab)?.label}</h1>
+          <p className="settings-description">按照自己的习惯，安排这个工作空间。</p>
           {tab === "models" && <ModelSettings />}
           {tab === "skills" && <SkillsSettings />}
           {tab === "memory" && <MemorySettings />}
           {tab === "permission" && <PermissionSettings />}
-          {tab === "appearance" && <AppearanceSettings theme={theme} onThemeChange={onThemeChange} />}
+          {tab === "appearance" && <AppearanceSettings theme={theme} skin={skin} onThemeChange={onThemeChange} onSkinChange={onSkinChange} />}
           {tab === "gateway" && <GatewaySettings />}
           {tab === "tasks" && <TasksSettings />}
           {tab === "mcp" && <McpSettings />}
@@ -141,30 +133,6 @@ export default function SettingsPage({ theme, onThemeChange, onBack, initialTab 
 // ============================================================================
 // Appearance tab
 // ============================================================================
-
-function AppearanceSettings({ theme, onThemeChange }: { theme: ThemePref; onThemeChange: (t: ThemePref) => void }) {
-  return (
-    <>
-      <Section title="外观">
-        <div className="flex gap-2">
-          {THEME_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => onThemeChange(opt.value)}
-              className={`rounded-md border px-3 py-1.5 text-sm ${
-                theme === opt.value
-                  ? "border-dim bg-base text-ink"
-                  : "border-edge text-dim hover:text-ink"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </Section>
-    </>
-  );
-}
 
 // ============================================================================
 // About tab
