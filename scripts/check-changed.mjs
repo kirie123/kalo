@@ -16,6 +16,7 @@
  */
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { packageStep } from "./check-runtime.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const argv = process.argv.slice(2);
@@ -49,6 +50,9 @@ for (const f of files) {
   if (f.startsWith("kalo-desktop/src-tauri/") && f.endsWith(".rs")) {
     plan.add("desktop-rust"); // cargo check
   }
+  if (f.startsWith("kalo-desktop/gateway/") && (f.endsWith(".ts") || f.endsWith(".json"))) {
+    plan.add("gateway");
+  }
   if (f.startsWith("scripts/") || f.startsWith("AGENTS.md") || f === ".quality-baseline.json") {
     plan.add("machine-checks"); // file-length + bridge-contract
   }
@@ -80,11 +84,16 @@ const run = (label, cmd, args, cwd) => {
 
 let ok = true;
 if (plan.has("desktop-ts")) {
-  ok = run("TypeScript typecheck", "node_modules/.bin/tsc", ["--noEmit"], path.join(ROOT, "kalo-desktop")) && ok;
-  ok = run("Vitest 单测", "node_modules/.bin/vitest", ["run"], path.join(ROOT, "kalo-desktop")) && ok;
+  ok = run(...packageStep("TypeScript typecheck", "typescript", "bin/tsc", ["--noEmit"], path.join(ROOT, "kalo-desktop"))) && ok;
+  ok = run(...packageStep("Vitest 单测", "vitest", "vitest.mjs", ["run"], path.join(ROOT, "kalo-desktop"))) && ok;
+}
+if (plan.has("gateway")) {
+  ok = run(...packageStep("Gateway typecheck", "typescript", "bin/tsc", ["--noEmit"], path.join(ROOT, "kalo-desktop/gateway"))) && ok;
+  ok = run("Gateway 单测", "bun", ["test"], path.join(ROOT, "kalo-desktop/gateway")) && ok;
 }
 if (plan.has("desktop-rust")) {
   ok = run("Rust cargo check", "cargo", ["check"], path.join(ROOT, "kalo-desktop/src-tauri")) && ok;
+  if (argv.includes("--with-tests")) ok = run("Rust cargo test", "cargo", ["test"], path.join(ROOT, "kalo-desktop/src-tauri")) && ok;
 }
 if (plan.has("machine-checks")) {
   ok = run("文件行数 ratchet", process.execPath, ["scripts/check-file-length.mjs", "--strict"], ROOT) && ok;
