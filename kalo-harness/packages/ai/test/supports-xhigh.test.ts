@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getModel, getSupportedThinkingLevels } from "../src/compat.ts";
+import { legacyOpenCodeGoKimi } from "./opencode-go-fixtures.ts";
 
 describe("getSupportedThinkingLevels", () => {
 	it("includes max but not xhigh for Anthropic Opus 4.6 on anthropic-messages API", () => {
@@ -88,16 +89,21 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "low", "high", "max"]);
 	});
 
-	it("includes only high/max plus off for DeepSeek V4 Flash on opencode-go", () => {
-		const model = getModel("opencode-go", "deepseek-v4-flash");
+	it("includes only high/max plus off for DeepSeek V4.1 Flash on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4.1-flash");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "high", "max"]);
 	});
 
 	it("includes only high plus off for OpenCode Go Kimi K2.6", () => {
-		const model = getModel("opencode-go", "kimi-k2.6");
+		const model = legacyOpenCodeGoKimi;
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toEqual(["off", "high"]);
+	});
+
+	it("includes only max for current OpenCode Go Kimi K3", () => {
+		const model = getModel("opencode-go", "kimi-k3");
+		expect(getSupportedThinkingLevels(model)).toEqual(["max"]);
 	});
 
 	it("excludes thinking off for Moonshot Kimi K2.7 Code models", () => {

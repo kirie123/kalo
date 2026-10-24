@@ -5,6 +5,7 @@ import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts"
 import { getModel, stream } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
 import type { Context, Model } from "../src/types.ts";
+import { legacyOpenCodeGoKimi } from "./opencode-go-fixtures.ts";
 
 class PayloadCaptured extends Error {
 	constructor() {
@@ -498,7 +499,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			MODELS.opencode["kimi-k2.5"],
 			MODELS.opencode["kimi-k2.6"],
 			MODELS.opencode["minimax-m2.7"],
-			MODELS["opencode-go"]["kimi-k2.6"],
+			legacyOpenCodeGoKimi,
 		] as const)("should omit long cache retention for $provider/$id", async (metadata) => {
 			const model = metadata as Model<"openai-completions">;
 			let capturedPayload: OpenAICompletionsCachePayload | undefined;
