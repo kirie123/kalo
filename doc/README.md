@@ -95,8 +95,9 @@
 
 ## 运行时与平台
 
-- [后台子 Agent 生命周期与可靠投递（源码已实现、未打包；权限恢复、resume、结果确认与进程内保活）](2026-10-13-后台子agent生命周期与可靠投递.md)
-- [subagent-19 工具失败审计（历史 timeout 冲突、空参数循环与 token 核算；文末含修复状态）](2026-10-13-subagent-19工具失败审计.md)
+- [OpenCode Go 模型目录与协议注册一致性（修复 Gemini Google API 导致的 TS2322 构建错误）](2026-10-13-opencode-go协议注册修复.md)
+- [后台子 Agent 生命周期与可靠投递（排队续写、权限恢复、通知确认与进程内保活）](2026-10-13-后台子agent生命周期与可靠投递.md)
+- [subagent-19 工具失败审计（历史 timeout 冲突、空参数循环与 token 核算；文末含当前修复边界）](2026-10-13-subagent-19工具失败审计.md)
 - [macOS 平台支持（dev 可跑）与 sidecar 命名契约](2026-09-12-macos-平台支持.md)
 - [macOS `.app` / `.dmg` 打包与运行时资源定位](2026-09-15-macos-app-打包与资源定位.md)
 - [自定义 Provider 的模型能力配置（思考 / 图片 / 最大输出 / Bearer 鉴权头）](2026-09-11-provider模型能力配置.md)
