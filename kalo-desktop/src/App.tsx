@@ -392,16 +392,13 @@ export default function App() {
               ) : page === "experts" ? (
                 <ExpertsPanel onLeaveToChat={() => setPage("chat")} />
               ) : page === "automation" ? (
-                <div className="flex min-h-0 flex-1">
+                <div className="automation-page flex min-h-0 flex-1">
                   {/* 左栏：设置（任务 + 数据源），靠左不再居中 */}
-                  <div className="min-w-0 flex-1 overflow-y-auto">
-                    <div className="max-w-2xl px-6 py-6">
-                      <TasksSettings />
-                      <FeedsSettings />
-                    </div>
+                  <div className="automation-main min-w-0 flex-1 overflow-y-auto">
+                    <TasksSettings workbench><FeedsSettings /></TasksSettings>
                   </div>
                   {/* 右栏：运行状态（窄屏隐藏，与顶栏跑马灯同一取舍） */}
-                  <div className="hidden w-80 shrink-0 overflow-y-auto border-l border-edge lg:block">
+                  <div className="automation-run-status shrink-0 overflow-y-auto border-l border-edge">
                     <TaskRunPanel />
                   </div>
                 </div>

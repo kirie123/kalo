@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { chatStore } from "../lib/chat-store";
 import { usePinnedBackdrop } from "../lib/modal-backdrop";
 import { scheduleUpsert } from "../lib/pi-bridge";
@@ -7,17 +8,18 @@ import {
   defaultSpec,
   describeCron,
   parseSpec,
-  validateSpec,
   WEEKDAY_LABELS,
   type ScheduleFreq,
   type ScheduleSpec,
 } from "../lib/schedule-spec";
-import type { ScheduleTask, ScheduleTaskInfo, ScheduleTaskKind } from "../types";
+import type { ScheduleTaskInfo, ScheduleTaskKind } from "../types";
+import { prepareScheduleTask } from "../lib/schedule-task-draft";
 
 interface Props {
   /** Given when editing an existing task; undefined for "new task". */
   task?: ScheduleTaskInfo;
   onClose: (saved: boolean) => void;
+  embedded?: boolean;
 }
 
 function errText(err: unknown): string {
@@ -25,13 +27,13 @@ function errText(err: unknown): string {
 }
 
 const KIND_LABEL: Record<ScheduleTaskKind, string> = {
-  watch: "watch（脚本告警）",
-  agent: "agent（LLM 会话）",
+  watch: "脚本任务",
+  agent: "AI 任务",
 };
 
 const KIND_HINT: Record<ScheduleTaskKind, string> = {
-  watch: "本地执行下面的 bash 脚本，标准输出非空时推送告警，零 token。",
-  agent: "到点唤起一个无头 LLM 会话执行下面的 Prompt。",
+  watch: "定时执行本地脚本，有输出时发送告警。",
+  agent: "描述要做的事，让 AI 在指定时间自动完成。",
 };
 
 const FREQ_LABEL: Record<ScheduleFreq, string> = {
@@ -62,83 +64,36 @@ function clamp(raw: string, lo: number, hi: number): number {
 }
 
 /** Create/edit form for one scheduled task, saved via schedule_upsert. */
-export default function TaskEditModal({ task, onClose }: Props) {
-  const backdrop = usePinnedBackdrop("点「取消」或「保存」关闭这个窗口");
+export default function TaskEditModal({ task, onClose, embedded = false }: Props) {
+  const backdrop = usePinnedBackdrop(`请用「取消」或「${task ? "保存更改" : "创建任务"}」结束编辑`);
   const [name, setName] = useState(task?.name ?? "");
-  const [id, setId] = useState(task?.id ?? "");
-  const [kind, setKind] = useState<ScheduleTaskKind>(task?.kind ?? "watch");
+  const [id, setId] = useState(() => task?.id ?? `task-${crypto.randomUUID()}`);
+  const [kind, setKind] = useState<ScheduleTaskKind>(task?.kind ?? "agent");
   const [schedule, setSchedule] = useState<ScheduleSpec>(() =>
     task?.schedule ? parseSpec(task.schedule) : defaultSpec(),
   );
-  const [cwd, setCwd] = useState(task?.cwd ?? "");
+  const [cwd, setCwd] = useState(task?.cwd ?? chatStore.getSnapshot().cwd);
   const [script, setScript] = useState(task?.script ?? "");
   const [cooldownMin, setCooldownMin] = useState(task?.cooldownMin != null ? String(task.cooldownMin) : "");
   const [prompt, setPrompt] = useState(task?.prompt ?? "");
   const [model, setModel] = useState(task?.model ?? "");
   const [enabled, setEnabled] = useState(task?.enabled ?? true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const save = async () => {
     if (saving) return;
-    const trimmedId = id.trim();
-    if (!task && !/^[\w-]{1,64}$/.test(trimmedId)) {
-      chatStore.pushToast("ID 只能包含字母、数字、下划线、连字符（1-64 字符）", "warning");
-      return;
-    }
-    if (!name.trim()) {
-      chatStore.pushToast("名称不能为空", "warning");
-      return;
-    }
-    const scheduleErr = validateSpec(schedule);
-    if (scheduleErr) {
-      chatStore.pushToast(scheduleErr, "warning");
-      return;
-    }
-    const trimmedSchedule = buildCron(schedule);
-    if (!cwd.trim()) {
-      chatStore.pushToast("工作目录不能为空", "warning");
-      return;
-    }
-    if (kind === "watch" && !script.trim()) {
-      chatStore.pushToast("watch 任务需要填写脚本", "warning");
-      return;
-    }
-    if (kind === "agent" && !prompt.trim()) {
-      chatStore.pushToast("agent 任务需要填写 Prompt", "warning");
-      return;
-    }
-    const cooldown = cooldownMin.trim() ? Number(cooldownMin) : undefined;
-    if (cooldown !== undefined && (!Number.isFinite(cooldown) || cooldown < 0)) {
-      chatStore.pushToast("冷却分钟数无效", "warning");
-      return;
-    }
-
-    const next: ScheduleTask = {
-      id: task ? task.id : trimmedId,
-      name: name.trim(),
-      kind,
-      schedule: trimmedSchedule,
-      cwd: cwd.trim(),
-      enabled,
-      // Kind-specific fields; stale fields of the other kind are cleared.
-      script: kind === "watch" ? script : undefined,
-      matchMode: kind === "watch" ? "nonEmpty" : undefined,
-      cooldownMin: kind === "watch" ? cooldown : undefined,
-      prompt: kind === "agent" ? prompt : undefined,
-      model: kind === "agent" ? model.trim() || null : undefined,
-      // Run history is preserved across edits.
-      lastRun: task?.lastRun,
-      lastResult: task?.lastResult,
-      lastOutput: task?.lastOutput,
-      expertId: task?.expertId,
-    };
+    setError("");
+    const result = prepareScheduleTask({ id, name, kind, schedule, cwd, script, cooldownMin, prompt, model, enabled }, task);
+    if (!result.ok) { setError(result.error); return; }
+    const next = result.task;
     setSaving(true);
     try {
       await scheduleUpsert(next);
       chatStore.pushToast("任务已保存", "info");
       onClose(true);
     } catch (err) {
-      chatStore.pushToast(`保存失败：${errText(err)}`, "error");
+      setError(`保存失败：${errText(err)}`);
     } finally {
       setSaving(false);
     }
@@ -149,38 +104,33 @@ export default function TaskEditModal({ task, onClose }: Props) {
   const selectCls = "rounded-md border border-edge bg-base px-2 py-1 text-sm outline-none focus:border-dim";
   const labelCls = "mb-1 mt-3 text-xs text-dim";
 
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50" {...backdrop}>
+  const content = (
       <div
-        className="flex max-h-[85vh] w-[640px] max-w-[92vw] flex-col overflow-y-auto rounded-xl border border-edge bg-card p-5 shadow-2xl"
+        className={embedded ? "task-editor task-editor-embedded" : "task-editor task-editor-modal"}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-base font-semibold">{task ? `编辑任务：${task.name}` : "新建任务"}</h3>
+        <h3 className="task-editor-title">{task ? "编辑定时任务" : "创建定时任务"}</h3>
+        <p className="task-editor-intro">{task ? task.name : "写下要做的事，再选一个自动运行的时间。"}</p>
+        {error && <div className="task-editor-error" role="alert">{error}</div>}
+        <fieldset disabled={saving} className="task-editor-fields">
 
         <div className={labelCls}>名称</div>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="如：股价异动监控"
-          autoFocus={!task}
+          autoFocus={!embedded}
+          aria-label="任务名称"
           className={inputCls}
-        />
-
-        <div className={labelCls}>ID{task && "（不可修改）"}</div>
-        <input
-          value={id}
-          onChange={(e) => setId(e.target.value)}
-          placeholder="字母数字与 - _，如 price-watch"
-          disabled={Boolean(task)}
-          className={`mono ${inputCls} disabled:opacity-40`}
         />
 
         <div className={labelCls}>类型</div>
         <div className="flex gap-2">
-          {(["watch", "agent"] as const).map((k) => (
+          {(["agent", "watch"] as const).map((k) => (
             <button
               key={k}
               onClick={() => setKind(k)}
+              aria-pressed={kind === k}
               className={`rounded-md border px-3 py-1.5 text-sm ${
                 kind === k ? "border-dim bg-base text-ink" : "border-edge text-dim hover:text-ink"
               }`}
@@ -195,38 +145,24 @@ export default function TaskEditModal({ task, onClose }: Props) {
           <>
             <div className={labelCls}>脚本（bash）</div>
             <textarea
+              aria-label="执行脚本"
               value={script}
               onChange={(e) => setScript(e.target.value)}
               placeholder={"curl -s ... | grep ...\n# 有输出即告警"}
               spellCheck={false}
               className="mono min-h-[120px] w-full resize-y rounded-md border border-edge bg-base p-3 text-xs leading-relaxed outline-none focus:border-dim"
             />
-            <div className={labelCls}>告警冷却（分钟，留空不冷却）</div>
-            <input
-              type="number"
-              min={0}
-              value={cooldownMin}
-              onChange={(e) => setCooldownMin(e.target.value)}
-              placeholder="如 30"
-              className={`mono ${inputCls}`}
-            />
           </>
         ) : (
           <>
-            <div className={labelCls}>Prompt</div>
+            <div className={labelCls}>任务内容</div>
             <textarea
+              aria-label="任务内容"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="描述要让 agent 定时完成的事"
+              placeholder="例如：每个工作日整理项目进展，将需要我处理的事项列出来。"
               spellCheck={false}
               className="min-h-[100px] w-full resize-y rounded-md border border-edge bg-base p-3 text-sm leading-relaxed outline-none focus:border-dim"
-            />
-            <div className={labelCls}>模型</div>
-            <input
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="provider/modelId，留空用默认"
-              className={`mono ${inputCls}`}
             />
           </>
         )}
@@ -237,6 +173,7 @@ export default function TaskEditModal({ task, onClose }: Props) {
             <button
               key={f}
               onClick={() => setSchedule({ ...schedule, freq: f })}
+              aria-pressed={schedule.freq === f}
               className={`rounded-md border px-2.5 py-1 text-xs ${
                 schedule.freq === f ? "border-dim bg-base text-ink" : "border-edge text-dim hover:text-ink"
               }`}
@@ -258,6 +195,7 @@ export default function TaskEditModal({ task, onClose }: Props) {
                   每 {n} 分钟
                 </option>
               ))}
+              {!MINUTE_STEPS.includes(schedule.everyMin) && <option value={schedule.everyMin}>每 {schedule.everyMin} 分钟</option>}
             </select>
           )}
 
@@ -320,6 +258,7 @@ export default function TaskEditModal({ task, onClose }: Props) {
 
           {TIMED_FREQS.includes(schedule.freq) && (
             <input
+              aria-label="运行时间"
               type="time"
               value={`${pad(schedule.hour)}:${pad(schedule.minute)}`}
               onChange={(e) => {
@@ -332,6 +271,7 @@ export default function TaskEditModal({ task, onClose }: Props) {
 
           {schedule.freq === "custom" && (
             <input
+              aria-label="自定义运行规则"
               value={schedule.cron}
               onChange={(e) => setSchedule({ ...schedule, cron: e.target.value })}
               placeholder="*/10 * * * *"
@@ -340,43 +280,59 @@ export default function TaskEditModal({ task, onClose }: Props) {
           )}
         </div>
 
-        {/* 预览行：把最终存下去的 cron 也露出来。上面的控件已经够用，
-            但这一行让"我到底设成了什么"无需重新打开确认。 */}
+        {/* Human-readable preview; custom cron remains an explicit advanced choice. */}
         <p className="mt-1.5 text-[10px] text-dim">
           {schedule.freq === "custom"
             ? "5 个字段：分 时 日 月 周，如「*/10 * * * *」表示每 10 分钟。"
-            : `即 ${describeCron(buildCron(schedule))} 运行 · cron ${buildCron(schedule)}`}
+            : `将于${describeCron(buildCron(schedule))}运行`}
         </p>
 
-        <div className={labelCls}>工作目录（cwd）</div>
+        <div className={labelCls}>工作目录</div>
         <input
+          aria-label="工作目录"
           value={cwd}
           onChange={(e) => setCwd(e.target.value)}
           placeholder="脚本 / agent 会话的工作目录"
           className={`mono ${inputCls}`}
         />
 
+        <details className="task-editor-more"><summary>更多设置</summary>
+        <div className={labelCls}>ID{task && "（不可修改）"}</div>
+        <input
+          aria-label="任务标识"
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          placeholder="字母数字与 - _，如 price-watch"
+          disabled={Boolean(task)}
+          className={`mono ${inputCls} disabled:opacity-40`}
+        />
+        {kind === "agent" ? <><div className={labelCls}>模型</div><input aria-label="模型" value={model} onChange={(event) => setModel(event.target.value)} placeholder="provider/modelId，留空用默认" className={`mono ${inputCls}`} /></>
+          : <><div className={labelCls}>告警冷却（分钟，留空不冷却）</div><input aria-label="告警冷却分钟" type="number" min={0} value={cooldownMin} onChange={(event) => setCooldownMin(event.target.value)} placeholder="如 30" className={`mono ${inputCls}`} /></>}
+        </details>
         <label className="mt-3 flex items-center gap-2 text-sm text-dim">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           启用（到点自动运行）
         </label>
 
-        <div className="mt-4 flex justify-end gap-2">
+        </fieldset>
+        <div className="task-editor-footer">
           <button
             onClick={() => onClose(false)}
+            disabled={saving}
             className="rounded-md border border-edge px-3 py-1.5 text-sm hover:bg-base"
           >
-            取消
+            {embedded ? "重置" : "取消"}
           </button>
           <button
             onClick={() => void save()}
             disabled={saving}
             className="rounded-md bg-accent px-3 py-1.5 text-sm text-[var(--accent-contrast)] hover:opacity-90 disabled:opacity-40"
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "保存中…" : task ? "保存更改" : "创建任务"}
           </button>
         </div>
       </div>
-    </div>
   );
+  return embedded ? <section aria-label={task ? "编辑定时任务" : "创建定时任务"}>{content}</section>
+    : createPortal(<div className="task-editor-backdrop" role="dialog" aria-modal="true" aria-label={task ? "编辑定时任务" : "创建定时任务"} {...backdrop}>{content}</div>, document.body);
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { chatStore } from "../lib/chat-store";
 import {
   onScheduleError,
@@ -35,7 +35,7 @@ function errText(err: unknown): string {
  * Scheduler tab: the task table lives in the gateway sidecar; this panel
  * issues schedule_* commands and renders `schedule-status` snapshots.
  */
-export default function TasksSettings() {
+export default function TasksSettings({ workbench = false, children }: { workbench?: boolean; children?: ReactNode }) {
   const [tasks, setTasks] = useState<ScheduleTaskInfo[] | null>(null);
   const [loadError, setLoadError] = useState("");
   const reload = useCallback(async () => {
@@ -45,6 +45,21 @@ export default function TasksSettings() {
   }, []);
   /** undefined = closed, null = creating, info = editing. */
   const [editing, setEditing] = useState<ScheduleTaskInfo | null | undefined>(undefined);
+  const [editorVersion, setEditorVersion] = useState(0);
+  const editorPane = useRef<HTMLDivElement>(null);
+  const openEditor = (task: ScheduleTaskInfo | null) => {
+    setEditing(task);
+    setEditorVersion((version) => version + 1);
+    if (workbench) requestAnimationFrame(() => {
+      editorPane.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      editorPane.current?.querySelector<HTMLInputElement>('input[aria-label="任务名称"]')?.focus({ preventScroll: true });
+    });
+  };
+  const closeEditor = (saved: boolean) => {
+    setEditing(undefined);
+    setEditorVersion((version) => version + 1);
+    if (saved) void reload();
+  };
   /** Task id whose lastOutput is expanded inline. */
   const [expandedOutput, setExpandedOutput] = useState<string | null>(null);
   /** Right-click menu on a task row; `menuFor` remembers which task it targets. */
@@ -90,7 +105,7 @@ export default function TasksSettings() {
     }
   }, []);
 
-  return (
+  const list = (
     <Section title="定时任务">
       {loadError ? <p role="alert" className="text-xs text-[var(--danger)]">{loadError} <button className="underline" onClick={() => void reload()}>重试</button></p> : tasks === null ? (
         <p className="text-xs text-dim">加载中…</p>
@@ -162,7 +177,7 @@ export default function TasksSettings() {
                 立即运行
               </button>
               <button
-                onClick={() => setEditing(t)}
+                onClick={() => openEditor(t)}
                 className="shrink-0 rounded-md border border-edge px-2 py-1 text-xs text-dim hover:text-ink"
               >
                 编辑
@@ -185,7 +200,7 @@ export default function TasksSettings() {
       )}
 
       <button
-        onClick={() => setEditing(null)}
+        onClick={() => openEditor(null)}
         className="mt-2 flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-sm text-dim hover:text-ink"
       >
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -194,18 +209,11 @@ export default function TasksSettings() {
         新建任务
       </button>
 
-      <p className="mt-3 text-xs leading-relaxed text-dim">
+      {workbench ? <p className="mt-3 text-xs leading-relaxed text-dim">按本机时区自动运行。可以在列表中启停，或手动运行一次。推送消息需先连接 IM 网关。</p> : <p className="mt-3 text-xs leading-relaxed text-dim">
         任务由网关子进程按本地时区调度，定义保存在{" "}
         <code className="md-inline-code">~/.kalo/agent/schedules.json</code>
         ；告警与 agent 运行结果通过飞书推送（需先在「IM 网关」扫码连接）。
-      </p>
-
-      {editing !== undefined && (
-        <TaskEditModal
-          task={editing ?? undefined}
-          onClose={() => setEditing(undefined)}
-        />
-      )}
+      </p>}
 
       {menu.at && menuFor && (
         <ContextMenu
@@ -228,11 +236,17 @@ export default function TasksSettings() {
               label: menuFor.enabled ? "停用" : "启用",
               action: () => void toggle(menuFor),
             },
-            { label: "编辑", action: () => setEditing(menuFor) },
+            { label: "编辑", action: () => openEditor(menuFor) },
             { label: "删除", action: () => void remove(menuFor), danger: true },
           ]}
         />
       )}
     </Section>
   );
+  return workbench ? <div className="task-workbench">
+    <div className="task-workbench-content">{list}{children}</div>
+    <div className="task-create-pane" ref={editorPane}>
+      <TaskEditModal key={editorVersion} task={editing ?? undefined} embedded onClose={closeEditor} />
+    </div>
+  </div> : <>{list}{editing !== undefined && <TaskEditModal key={editorVersion} task={editing ?? undefined} onClose={closeEditor} />}</>;
 }
