@@ -414,10 +414,6 @@ body {
   min-width: 0;
   font-size: 13px;
 }
-.tool-activity-details {
-  margin-top: 4px;
-  padding: 4px 0;
-}
 .work-segment-head:focus-visible,
 .tool-activity button:focus-visible {
   outline: 2px solid var(--tone-blue);
