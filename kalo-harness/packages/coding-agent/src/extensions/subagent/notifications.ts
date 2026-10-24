@@ -256,7 +256,7 @@ export function registerBackgroundNotifications(pi: ExtensionAPI): void {
 			blocked: false,
 			reading: false,
 			scheduled: false,
-			awaitingPrompt: false,
+			awaitingPrompt: true,
 			records: [],
 		};
 		current = binding;
@@ -278,6 +278,12 @@ export function registerBackgroundNotifications(pi: ExtensionAPI): void {
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
 		if (matches(ctx)) detach();
+	});
+	pi.on("session_abort", (_event, ctx) => {
+		const binding = matches(ctx);
+		if (!binding) return;
+		binding.blocked = true;
+		binding.awaitingPrompt = true;
 	});
 	pi.on("input", (event, ctx) => {
 		const binding = matches(ctx);

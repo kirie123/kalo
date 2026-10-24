@@ -128,6 +128,8 @@ function sessionSetup(owner = "parent-a", idle = true) {
 	const fake = fakePi();
 	registerBackgroundNotifications(fake.pi);
 	fake.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx);
+	fake.handlers.get("input")?.({ source: "rpc", text: "start task" }, ctx);
+	fake.handlers.get("message_end")?.({ message: { role: "user" } }, ctx);
 	return { cwd, agentDir, ctx, fake, directory: childSessionDir(cwd, owner, agentDir) };
 }
 
@@ -446,6 +448,11 @@ describe("background notification state machine", () => {
 			owner = harness.sessionManager.getSessionId();
 			directory = childSessionDir(harness.tempDir, owner, agentDir);
 			const rounds = mode === "budget exhausted" ? 3 : mode === "blocked" ? 1 : 0;
+			if (rounds > 0) {
+				harness.appendResponses([fauxAssistantMessage("start background work")]);
+				await harness.session.prompt("start background work");
+			}
+			const initialCalls = harness.faux.state.callCount;
 			for (let index = 0; index < rounds; index++) {
 				const settled = deferred<void>();
 				const unsubscribe = harness.session.subscribe((event) => {
@@ -467,7 +474,7 @@ describe("background notification state machine", () => {
 			await setImmediate();
 			if (!task) throw new Error("missing pending task");
 			expect(backgroundTasks.get(directory, owner, task.runId)?.acknowledged).toBe(false);
-			expect(harness.faux.state.callCount).toBe(rounds);
+			expect(harness.faux.state.callCount).toBe(initialCalls + rounds);
 			const userText = `process my input after ${mode}`;
 			harness.appendResponses([
 				(context) => {
@@ -485,13 +492,13 @@ describe("background notification state machine", () => {
 			expect(received).toEqual(["user", "custom", "assistant", "settled"]);
 			expect(ackBeforeSettled).toEqual([false, false, false, false]);
 			expect(backgroundTasks.get(directory, owner, task.runId)?.acknowledged).toBe(true);
-			expect(harness.session.messages.filter((message) => message.role === "user")).toHaveLength(1);
+			expect(harness.session.messages.filter((message) => message.role === "user")).toHaveLength(rounds > 0 ? 2 : 1);
 			expect(
 				harness.sessionManager
 					.getBranch()
 					.filter((entry) => entry.type === "message" && entry.message.role === "user"),
-			).toHaveLength(1);
-			expect(harness.faux.state.callCount).toBe(rounds + 1);
+			).toHaveLength(rounds > 0 ? 2 : 1);
+			expect(harness.faux.state.callCount).toBe(initialCalls + rounds + 1);
 			expect(harness.getPendingResponseCount()).toBe(0);
 			observingPrompt = false;
 			if (mode === "budget exhausted") {
@@ -509,7 +516,7 @@ describe("background notification state machine", () => {
 				}
 				const overBudget = startTask(directory, owner, { text: "wait for another user" }, "over-budget-again");
 				await setImmediate();
-				expect(harness.faux.state.callCount).toBe(rounds + 3);
+				expect(harness.faux.state.callCount).toBe(initialCalls + rounds + 3);
 				expect(backgroundTasks.get(directory, owner, overBudget.runId)?.acknowledged).toBe(false);
 			}
 		},
@@ -639,14 +646,15 @@ describe("background notification state machine", () => {
 			acknowledged: false,
 		};
 		writeFileSync(join(directory, `background-${runId}.json`), JSON.stringify(record));
-		// A fresh binding sees the previous-process running record, marks it interrupted,
-		// and sends exactly one replayable notification.
+		// Opening history reports interruption without starting a model turn.
 		session.fake.handlers.get("session_shutdown")?.({}, session.ctx);
 		session.fake.handlers.get("session_start")?.({ type: "session_start", reason: "resume" }, session.ctx);
 		await setImmediate();
 		await setImmediate();
-		expect(session.fake.sent).toHaveLength(1);
-		expect((session.fake.sent[0].message.details as { runIds: string[] }).runIds).toEqual([runId]);
+		expect(session.fake.sent).toHaveLength(0);
 		expect(backgroundTasks.get(directory, "parent-recovery", runId)?.status).toBe("interrupted");
+		session.fake.handlers.get("input")?.({ source: "rpc", text: "continue" }, session.ctx);
+		const injected = acceptUserPrompt(session);
+		expect((injected?.details as { runIds: string[] }).runIds).toEqual([runId]);
 	});
 });

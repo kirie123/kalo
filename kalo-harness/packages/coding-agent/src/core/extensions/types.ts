@@ -641,6 +641,11 @@ export interface SessionStartEvent {
 	previousSessionFile?: string;
 }
 
+/** Fired when abort is requested, before waiting for the running operation to settle. */
+export interface SessionAbortEvent {
+	type: "session_abort";
+}
+
 /** Fired when the current session metadata changes. */
 export interface SessionInfoChangedEvent {
 	type: "session_info_changed";
@@ -727,6 +732,7 @@ export interface SessionTreeEvent {
 
 export type SessionEvent =
 	| SessionStartEvent
+	| SessionAbortEvent
 	| SessionInfoChangedEvent
 	| SessionBeforeSwitchEvent
 	| SessionBeforeForkEvent
@@ -1293,6 +1299,7 @@ export interface ExtensionAPI {
 	on(event: "project_trust", handler: ProjectTrustHandler): void;
 	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
 	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
+	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): void;
 	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): void;
 	on(
 		event: "session_before_switch",

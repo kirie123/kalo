@@ -99,6 +99,7 @@ import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
+import { RunCancellation } from "./run-cancellation.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
@@ -320,6 +321,7 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	private readonly _runCancellation = new RunCancellation();
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -1113,10 +1115,11 @@ export class AgentSession {
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._isAgentRunActive = true;
 		try {
-			await this.agent.prompt(messages);
-			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
-			}
+			await this._runCancellation.run(
+				() => this.agent.prompt(messages),
+				() => this._handlePostAgentRun(),
+				() => this.agent.continue(),
+			);
 		} finally {
 			this._systemPromptOverride = undefined;
 			this._flushPendingBashMessages();
@@ -1125,6 +1128,7 @@ export class AgentSession {
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
+		const generation = this._runCancellation.capture();
 		const msg = this._lastAssistantMessage;
 		this._lastAssistantMessage = undefined;
 		if (!msg) {
@@ -1145,6 +1149,7 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
+		if (!this._runCancellation.isCurrent(generation)) return false;
 		if (await this._checkCompaction(msg)) {
 			return true;
 		}
@@ -1164,6 +1169,8 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		this._runCancellation.resume();
+		const generation = this._runCancellation.capture();
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -1207,6 +1214,7 @@ export class AgentSession {
 			}
 
 			// Expand skill commands (/skill:name args) and prompt templates (/template args)
+			this._runCancellation.check(generation);
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
@@ -1253,6 +1261,7 @@ export class AgentSession {
 			}
 
 			// Check if we need to compact before sending (catches aborted responses).
+			this._runCancellation.check(generation);
 			// The user's new prompt is sent below, so do not call agent.continue() here.
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant) {
@@ -1260,6 +1269,7 @@ export class AgentSession {
 			}
 
 			// Build messages array (custom message if any, then user message)
+			this._runCancellation.check(generation);
 			messages = [];
 
 			// Add user message
@@ -1287,6 +1297,7 @@ export class AgentSession {
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
+			this._runCancellation.check(generation);
 			if (result?.messages) {
 				for (const msg of result.messages) {
 					messages.push({
@@ -1497,7 +1508,7 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
-		if (options?.deliverAs === "nextTurn") {
+		if (options?.deliverAs === "nextTurn" || this._runCancellation.stopped) {
 			this._pendingNextTurnMessages.push(appMessage);
 		} else if (this.isStreaming && options?.triggerTurn !== false) {
 			if (options?.deliverAs === "followUp") {
@@ -1598,10 +1609,15 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._runCancellation.cancel();
+		const notified = this._extensionRunner.emit({ type: "session_abort" });
+		this.clearQueue();
 		this.abortRetry();
 		this.abortCompaction();
 		this.abortBranchSummary();
 		this.agent.abort();
+		await notified;
+		this.clearQueue();
 		await this.waitForIdle();
 	}
 

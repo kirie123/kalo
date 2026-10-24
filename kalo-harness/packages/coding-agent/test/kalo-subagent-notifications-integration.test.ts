@@ -87,6 +87,7 @@ describe("background subagent notifications integration", () => {
 				});
 				const parent = harness;
 				harness.setResponses([
+					...(mode === "idle" ? [fauxAssistantMessage("background work started")] : []),
 					...(mode === "busy"
 						? [
 								async () => {
@@ -104,6 +105,13 @@ describe("background subagent notifications integration", () => {
 					},
 				]);
 				await harness.session.bindExtensions({ onError: (error) => errors.push(error) });
+				if (mode === "idle") {
+					await harness.session.prompt("start background work");
+					trace.length = 0;
+					ackAtMessageEnd.length = 0;
+					ackBeforeSettled.length = 0;
+					ackAfterSettled.length = 0;
+				}
 				expect(harness.session.extensionRunner).toBeInstanceOf(ExtensionRunner);
 				owner = harness.sessionManager.getSessionId();
 				directory = childSessionDir(harness.tempDir, owner, agentDir);
@@ -116,7 +124,7 @@ describe("background subagent notifications integration", () => {
 					await mainStarted.promise;
 				} else {
 					expect(harness.session.isIdle).toBe(true);
-					expect(harness.faux.state.callCount).toBe(0);
+					expect(harness.faux.state.callCount).toBe(1);
 				}
 				task = backgroundTasks.start({
 					directory,
@@ -168,7 +176,7 @@ describe("background subagent notifications integration", () => {
 					readFileSync(join(directory, `background-${task.runId}.json`), "utf8"),
 				);
 				expect(durableRecord).toMatchObject({ runId: task.runId, status: "completed", acknowledged: true });
-				expect(harness.faux.state.callCount).toBe(mode === "idle" ? 1 : 2);
+				expect(harness.faux.state.callCount).toBe(2);
 				expect(harness.getPendingResponseCount()).toBe(0);
 				expect(contexts.length).toBeGreaterThanOrEqual(4);
 				expect(new Set(contexts).size).toBe(contexts.length);

@@ -496,9 +496,9 @@ export default function InputBox() {
               title={isAborting ? "正在停止" : chat.isCompacting ? "停止压缩" : "停止生成"}
               className="rounded-full bg-accent p-2 text-[var(--accent-contrast)] hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
             >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" className={isAborting ? "animate-spin" : undefined}>
                 {isAborting ? (
-                  <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  <path d="M8 2a6 6 0 1 1-6 6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 ) : (
                   <rect x="3" y="3" width="10" height="10" rx="1.5" />
                 )}
