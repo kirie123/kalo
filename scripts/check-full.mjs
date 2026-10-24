@@ -7,13 +7,16 @@
  */
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { packageStep } from "./check-runtime.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DT = path.join(ROOT, "kalo-desktop");
 
 const steps = [
-  ["TypeScript typecheck", path.join(DT, "node_modules/.bin/tsc"), ["--noEmit"], DT],
-  ["Vitest 单测", path.join(DT, "node_modules/.bin/vitest"), ["run"], DT],
+  packageStep("TypeScript typecheck", "typescript", "bin/tsc", ["--noEmit"], DT),
+  packageStep("Vitest 单测", "vitest", "vitest.mjs", ["run"], DT),
+  packageStep("Gateway typecheck", "typescript", "bin/tsc", ["--noEmit"], path.join(DT, "gateway")),
+  ["Gateway 单测", "bun", ["test"], path.join(DT, "gateway")],
   ["Rust cargo check", "cargo", ["check"], path.join(DT, "src-tauri")],
 ];
 

@@ -9,6 +9,7 @@
 
 import type { KnowledgeCardMeta, KnowledgeSearchHit } from "../../types";
 import { STATUS_LABEL } from "./template";
+import AppIcon from "../../components/AppIcon";
 
 export default function NoteList({
   cards,
@@ -19,6 +20,7 @@ export default function NoteList({
   selected,
   onSelect,
   onCreate,
+  disabled = false,
 }: {
   /** Already filtered by the tree; used when `query` is empty. */
   cards: KnowledgeCardMeta[];
@@ -30,28 +32,31 @@ export default function NoteList({
   selected: string | null;
   onSelect: (relPath: string) => void;
   onCreate: () => void;
+  disabled?: boolean;
 }) {
   const searchMode = query.trim().length > 0;
 
   return (
-    <div className="flex min-h-0 flex-col">
-      <div className="flex items-center gap-1.5 border-b border-edge p-2">
+    <div className="note-list flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 p-3">
         <input
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           placeholder="全文搜索…"
-          className="min-w-0 flex-1 rounded-md border border-edge bg-base px-2.5 py-1.5 text-sm outline-none focus:border-dim"
+          aria-label="全文搜索笔记"
+          className="min-w-0 flex-1 rounded-lg bg-card px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-dim"
         />
         <button
           onClick={onCreate}
           title="新建笔记"
+          aria-label="新建笔记"
+          disabled={disabled}
           className="shrink-0 rounded-md border border-edge px-2 py-1.5 text-dim hover:text-ink"
         >
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M8 3v10M3 8h10" strokeLinecap="round" />
-          </svg>
+          <AppIcon name="note" size={17} />
         </button>
       </div>
+      <div className="flex justify-between px-4 pb-2 text-[11px] text-dim"><span>{searchMode ? "搜索结果" : `${cards.length} 篇笔记`}</span><span>最近编辑</span></div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {searchMode ? (
@@ -63,9 +68,10 @@ export default function NoteList({
             groupHits(hits).map(([relPath, group]) => (
               <button
                 key={relPath}
+                disabled={disabled}
                 onClick={() => onSelect(relPath)}
-                className={`block w-full border-b border-edge px-3 py-2 text-left hover:bg-card ${
-                  selected === relPath ? "bg-card" : ""
+                className={`note-list-item block text-left hover:bg-card ${
+                  selected === relPath ? "selected" : ""
                 }`}
               >
                 <div className="truncate text-sm text-ink">{group[0].title || relPath}</div>
@@ -84,9 +90,10 @@ export default function NoteList({
           cards.map((c) => (
             <button
               key={c.relPath}
+              disabled={disabled}
               onClick={() => onSelect(c.relPath)}
-              className={`block w-full border-b border-edge px-3 py-2 text-left hover:bg-card ${
-                selected === c.relPath ? "bg-card" : ""
+              className={`note-list-item block text-left hover:bg-card ${
+                selected === c.relPath ? "selected" : ""
               }`}
             >
               <div className="flex items-center gap-1.5">

@@ -3,7 +3,7 @@
  * Renders WidgetSandboxFrame for completed widgets and a loading animation
  * for in-progress ones (while the tool call is still running).
  */
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { WidgetSummary } from "../lib/widgets";
 import { chatStore } from "../lib/chat-store";
@@ -21,17 +21,19 @@ function fileStem(title: string): string {
 function WidgetHeader({
   title,
   open,
+  contentId,
   onToggle,
   onMenu,
 }: {
   title: string;
   open: boolean;
+  contentId: string;
   onToggle: () => void;
   onMenu: (el: HTMLElement) => void;
 }) {
   return (
     <div className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5">
-      <button onClick={onToggle} className="flex flex-1 items-center gap-2 text-left">
+      <button onClick={onToggle} aria-expanded={open} aria-controls={contentId} className="flex flex-1 items-center gap-2 text-left">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-tone-violet">
           <rect x="2" y="2" width="12" height="12" rx="1.5" />
           <path d="M5 8h6M8 5v6" strokeLinecap="round" />
@@ -47,7 +49,7 @@ function WidgetHeader({
           <circle cx="3" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="13" cy="8" r="1.3" />
         </svg>
       </button>
-      <button onClick={onToggle} title={open ? "收起" : "展开"} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim hover:bg-base">
+      <button onClick={onToggle} aria-expanded={open} aria-controls={contentId} title={open ? "收起" : "展开"} className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-dim hover:bg-base">
         <svg
           width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
           className={`transition-transform ${open ? "" : "-rotate-90"}`}
@@ -84,6 +86,7 @@ export default function WidgetCard({
   isStreaming?: boolean;
 }) {
   const [open, setOpen] = useState(true);
+  const contentId = useId();
   const messages = summary.loading_messages.length > 0 ? summary.loading_messages : ["正在准备可视化…"];
   const [msgIdx] = useState(0);
   const frameRef = useRef<WidgetFrameHandle>(null);
@@ -149,18 +152,18 @@ export default function WidgetCard({
       <WidgetHeader
         title={summary.title}
         open={open}
+        contentId={contentId}
         onToggle={() => setOpen((v) => !v)}
         onMenu={(el) => menu.openAtRect(el)}
       />
-      {open && (
-        <div className="border-t border-edge">
-          {canRender ? (
-            <WidgetSandboxFrame ref={frameRef} summary={summary} isStreaming={isStreaming} />
-          ) : (
-            <WidgetLoading message={messages[msgIdx]} />
-          )}
-        </div>
-      )}
+      {/* Keep the sandbox mounted so folding does not reset widget state. */}
+      <div id={contentId} hidden={!open} className="border-t border-edge">
+        {canRender ? (
+          <WidgetSandboxFrame ref={frameRef} summary={summary} isStreaming={isStreaming} />
+        ) : (
+          <WidgetLoading message={messages[msgIdx]} />
+        )}
+      </div>
       {menu.at && <ContextMenu at={menu.at} items={items} onClose={menu.close} />}
     </div>
   );

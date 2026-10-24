@@ -72,10 +72,12 @@
 
 - 改了 `kalo-desktop/src/*.ts` → tsc + vitest
 - 改了 `src-tauri/*.rs` → cargo check（`--with-tests` 加跑 cargo test）
+- 改了 `kalo-desktop/gateway/` → 网关 tsc + `bun test`（隔离临时数据，不调用真实模型或推送）
 - 改了 `scripts/`、AGENTS.md → 机器检查（file-length + bridge-contract）
 - 改了 `kalo-harness/*` → 提示按 `kalo-harness/AGENTS.md` 走 `npm run check`（由人决定）
 - 只改 `doc/`（设计文档/索引/剧本）或其他 → 无需跑检查
 - 参数：`--dry-run` 只打印计划不执行；`--failed-only` 重跑上次失败项
+- JS 校验工具通过 Node 执行包内 CLI，不直接启动 `node_modules/.bin` shim，保证 Windows/macOS 一致。
 - UI-only 例外：只改展示、不动逻辑/契约时可直接跳过（桌面端测试边界见 `kalo-desktop/AGENTS.md`）
 
 ### 分层检查

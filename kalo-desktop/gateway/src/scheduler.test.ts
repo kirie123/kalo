@@ -95,15 +95,16 @@ function makeScheduler(dir?: string) {
   const storeDir = dir ?? mkdtempSync(join(tmpdir(), "kalo-sched-test-"));
   const alerts: string[] = [];
   const requests: ScheduleTask[] = [];
+  const requestIds: string[] = [];
   const nowRef = { t: T0 };
   const scheduler = new Scheduler({
     sendAlert: (_task, output) => alerts.push(output),
-    requestAgentSession: (task) => requests.push(task),
+    requestAgentSession: (task, id) => { requests.push(task); requestIds.push(id); },
     onChange: () => {},
     now: () => nowRef.t,
     storeFile: join(storeDir, "schedules.json"),
   });
-  return { scheduler, alerts, requests, nowRef, storeDir };
+  return { scheduler, alerts, requests, requestIds, nowRef, storeDir };
 }
 
 /** Cron fires on minute boundaries; jump past the next one, then tick. */
@@ -122,30 +123,31 @@ async function waitFor(cond: () => boolean, timeoutMs = 5000): Promise<void> {
 
 describe("scheduler", () => {
   test("agent task: tick → session request → exit settles lastResult", () => {
-    const { scheduler, requests, nowRef } = makeScheduler();
+    const { scheduler, requests, requestIds, nowRef } = makeScheduler();
     expect(scheduler.upsert(makeTask({}))).toBeNull();
     fireOnce(nowRef, scheduler);
     expect(requests).toHaveLength(1);
     expect(requests[0].id).toBe("t1");
-    scheduler.handleSessionStarted("t1", "sess-1");
+    scheduler.handleSessionStarted(requestIds[0], "sess-1");
+    scheduler.handleEvent("sess-1", { type: "agent_settled" });
     scheduler.handleSessionExit("sess-1", 0);
     expect(scheduler.list()[0].lastResult).toBe("ok");
   });
 
   test("agent task: non-zero exit marks error", () => {
-    const { scheduler, nowRef } = makeScheduler();
+    const { scheduler, requestIds, nowRef } = makeScheduler();
     scheduler.upsert(makeTask({}));
     fireOnce(nowRef, scheduler);
-    scheduler.handleSessionStarted("t1", "sess-1");
+    scheduler.handleSessionStarted(requestIds[0], "sess-1");
     scheduler.handleSessionExit("sess-1", 1);
     expect(scheduler.list()[0].lastResult).toBe("error");
   });
 
   test("agent task: spawn failure marks error", () => {
-    const { scheduler, nowRef } = makeScheduler();
+    const { scheduler, requestIds, nowRef } = makeScheduler();
     scheduler.upsert(makeTask({}));
     fireOnce(nowRef, scheduler);
-    scheduler.handleSessionStartFailed("t1", "pi binary not found");
+    scheduler.handleSessionStartFailed(requestIds[0], "pi binary not found");
     expect(scheduler.list()[0].lastResult).toBe("error");
   });
 

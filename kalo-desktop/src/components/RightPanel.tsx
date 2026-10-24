@@ -37,6 +37,7 @@ import BrowserTab from "./BrowserTab";
 import FilePanel from "./FilePanel";
 import ShellTab from "./TerminalTab";
 import TerminalWatchTab from "./TerminalWatchTab";
+import AppIcon from "./AppIcon";
 
 export default function RightPanel({ hidden = false }: { hidden?: boolean }) {
   const panel = usePanelTabs();
@@ -59,7 +60,7 @@ export default function RightPanel({ hidden = false }: { hidden?: boolean }) {
         className="w-1 shrink-0 cursor-col-resize border-l border-edge hover:bg-edge"
       />
       <div className="flex min-h-0 shrink-0 flex-col" style={{ width }}>
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-edge px-2">
+        <div className="right-panel-tabbar">
           <TabStrip />
           <button
             onClick={(e) => addMenu.openAtRect(e.currentTarget)}
@@ -70,6 +71,7 @@ export default function RightPanel({ hidden = false }: { hidden?: boolean }) {
               <path d="M8 3v10M3 8h10" strokeLinecap="round" />
             </svg>
           </button>
+          <FileTreeToggle />
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -105,6 +107,19 @@ export default function RightPanel({ hidden = false }: { hidden?: boolean }) {
       )}
     </aside>
   );
+}
+
+function FileTreeToggle() {
+  const uid = useChatSelector((state) => state.sessionUid);
+  const cwd = useChatSelector((state) => state.cwd);
+  const memory = usePanelMemory(uid, cwd);
+  const panel = usePanelTabs();
+  const visible = panel.activeId === "" && (memory.treeVisible || !memory.activeFile);
+  return <button className="file-tree-toggle" title={visible && memory.activeFile ? "收起文件树" : "显示文件树"} aria-label={visible && memory.activeFile ? "收起文件树" : "显示文件树"}
+    aria-pressed={visible} onClick={() => {
+      patchPanelMemory(uid, cwd, { treeVisible: panel.activeId !== "" || !memory.activeFile || !memory.treeVisible });
+      panelTabs.activate("");
+    }}><AppIcon name="panel" size={17} /></button>;
 }
 
 /** The strip's left part: this session's file tabs, then the app-level tabs.
@@ -186,18 +201,18 @@ function FileTabChip({
 }) {
   return (
     <div
-      className={`flex shrink-0 items-center overflow-hidden rounded-md border ${
+      className={`file-tab-chip flex shrink-0 items-center overflow-hidden rounded-md border ${
         active ? "border-edge bg-card text-ink" : "border-transparent text-dim hover:bg-card"
       }`}
     >
-      <button onClick={onActivate} title={file.path} className="flex min-w-0 max-w-40 items-center gap-1.5 py-1 pl-2 text-xs">
+      <button onClick={onActivate} aria-pressed={active} title={file.path} className="flex min-w-0 max-w-40 items-center gap-1.5 py-1 pl-2 text-xs">
         <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0">
           <path d="M4 1.5h5L12.5 5v9a1 1 0 01-1 1h-7a1 1 0 01-1-1v-11a1 1 0 011-1z" strokeLinejoin="round" />
           <path d="M9 1.5V5h3.5" strokeLinejoin="round" />
         </svg>
         <span className="truncate">{file.name}</span>
       </button>
-      <button onClick={onClose} title="关闭这个文件" className="px-1.5 py-1 text-dim hover:text-ink">
+      <button onClick={onClose} title="关闭这个文件" aria-label={`关闭 ${file.name}`} className="px-1.5 py-1 text-dim hover:text-ink">
         <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
           <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
         </svg>

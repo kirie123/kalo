@@ -5,20 +5,16 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
-import { gitDiff, gitStatus, listDir } from "../lib/pi-bridge";
+import { gitDiff, gitStatus, listDir, searchFiles } from "../lib/pi-bridge";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { loadWidth, startColumnDrag } from "../lib/drag";
 import {
   branchLabel,
   buildStatusIndex,
-  groupByDir,
   parseUnifiedDiff,
   pathKey,
   relPathOf,
-  statusColor,
-  statusLetter,
   statusOf,
   type StatusIndex,
 } from "../lib/git";
@@ -46,34 +42,18 @@ import {
   type FileView,
   type PanelMemory,
 } from "../lib/file-panel-memory";
-import type { DirEntry, GitEntry, GitStatus } from "../types";
+import type { DirEntry, FileMatch, GitStatus } from "../types";
+import { fileBaseName as baseName, parentDirectory, pathBreadcrumbs } from "../lib/file-tree";
+import AppIcon from "./AppIcon";
+import FileTree from "./FileTree";
+import FileArtifacts from "./FileArtifacts";
+import { createFileRequestGate } from "../lib/file-request-gate";
 
 /** Milliseconds to wait after a turn ends before re-reading git status. */
 const TURN_END_DEBOUNCE = 400;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/** Parent of a filesystem path, tolerating both separators; null at a root. */
-function parentDir(path: string): string | null {
-  const trimmed = path.replace(/[\\/]+$/, "");
-  const i = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  if (i < 0) return null;
-  if (i === 0) return trimmed.slice(0, 1); // unix root
-  // Windows drive root like C:\
-  if (i === 2 && trimmed[1] === ":") return trimmed.slice(0, 3);
-  return trimmed.slice(0, i);
-}
-
-function baseName(path: string): string {
-  const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
-  return i < 0 ? path : path.slice(i + 1);
-}
-
-/** A git entry, adapted to what the tree's click and menu handlers expect. */
-function asDirEntry(entry: GitEntry): DirEntry {
-  return { name: baseName(entry.relPath), path: entry.path, isDir: entry.isDir, size: 0, modifiedMs: 0 };
 }
 
 /** What a right-click in this panel can land on: a tree / changes row, or one
@@ -136,31 +116,47 @@ export default function FilePanel() {
   // Shown inline in the git strip rather than as a toast: status is re-read
   // after every turn, and a repeating toast for a persistent problem is noise.
   const [gitError, setGitError] = useState<string | null>(null);
-  const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 288));
+  const [treeW, setTreeW] = useState(() => loadWidth("kalo.layout.treeW", 240));
   // Race guard: only the latest diff request may populate its slot.
   const diffReq = useRef(0);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<FileMatch[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [treeError, setTreeError] = useState("");
+  const [collapsedChanges, setCollapsedChanges] = useState<Set<string>>(new Set());
+  // Invalidate immediately on render, before effects can accept an old response.
+  const requestGate = useRef(createFileRequestGate());
+  const scopeKey = uid + "\0" + root;
+  requestGate.current.setScope(scopeKey);
 
   const gitIndex = useMemo<StatusIndex>(() => buildStatusIndex(git), [git]);
 
   const loadDir = useCallback(async (path: string) => {
+    const request = requestGate.current.start(`dir:${path}`);
     try {
       const entries = await listDir(path);
+      if (!requestGate.current.isCurrent(request)) return;
       setTree((m) => new Map(m).set(path, entries));
     } catch (err) {
-      chatStore.pushToast(`读取目录失败：${errText(err)}`, "error");
+      if (requestGate.current.isCurrent(request)) setTreeError(errText(err));
     }
   }, []);
 
   const refreshGit = useCallback(async (path: string | null) => {
+    const request = requestGate.current.start("git");
     if (!path) {
       setGit(null);
       setGitError(null);
       return;
     }
     try {
-      setGit(await gitStatus(path));
+      const status = await gitStatus(path);
+      if (!requestGate.current.isCurrent(request)) return;
+      setGit(status);
       setGitError(null);
     } catch (err) {
+      if (!requestGate.current.isCurrent(request)) return;
       // A real repository whose status failed — keep the last snapshot out of
       // the way and say why, once, in place.
       setGit(null);
@@ -188,13 +184,16 @@ export default function FilePanel() {
   const navigate = async (path: string, push = true) => {
     const target = path.trim();
     if (!target || target === root) return;
+    const request = requestGate.current.start("navigate");
     try {
       // Validated by listing; the effect above reloads the tree for the new
       // root, and a root change drops the expansion in the memory store.
       await listDir(target);
+      if (!requestGate.current.isCurrent(request)) return;
       if (push && root) remember({ rootOverride: target, backStack: [...backStack, root] });
       else remember({ rootOverride: target });
     } catch {
+      if (!requestGate.current.isCurrent(request)) return;
       chatStore.pushToast(`不是有效目录：${target}`, "warning");
       setPathDraft(root);
     }
@@ -221,18 +220,19 @@ export default function FilePanel() {
     async (path: string, relPath: string) => {
       if (!root) return;
       const req = ++diffReq.current;
+      const request = requestGate.current.start("diff");
       setDiffLoading(true);
       setDiffPath(path);
       try {
         const text = await gitDiff(root, relPath);
-        if (req !== diffReq.current) return;
+        if (req !== diffReq.current || !requestGate.current.isCurrent(request)) return;
         setDiffLines(parseUnifiedDiff(text));
       } catch (err) {
-        if (req !== diffReq.current) return;
+        if (req !== diffReq.current || !requestGate.current.isCurrent(request)) return;
         setDiffLines([]);
         chatStore.pushToast(`读取 diff 失败：${errText(err)}`, "error");
       } finally {
-        if (req === diffReq.current) setDiffLoading(false);
+        if (req === diffReq.current && requestGate.current.isCurrent(request)) setDiffLoading(false);
       }
     },
     [root],
@@ -244,6 +244,12 @@ export default function FilePanel() {
   useEffect(() => {
     const m = resolvePanelMemory(uid, cwd);
     setTree(new Map());
+    setTreeError("");
+    setGit(null);
+    setGitError(null);
+    setCollapsedChanges(new Set());
+    setQuery("");
+    setDiffLoading(false);
     setDiffLines(null);
     setDiffPath(null);
     setPreviewFull(false);
@@ -254,6 +260,23 @@ export default function FilePanel() {
     }
     void refreshGit(m.root);
   }, [uid, cwd, root, loadDir, refreshGit]);
+
+  useEffect(() => {
+    let alive = true;
+    const filter = query.trim();
+    setResults([]);
+    setSearchError("");
+    setSearching(Boolean(filter && root && !changesOnly));
+    if (!filter || !root || changesOnly) return;
+    const timer = setTimeout(() => {
+      void searchFiles(root, filter).then((matches) => {
+        if (alive) setResults(matches);
+      }).catch((err: unknown) => {
+        if (alive) setSearchError("查找失败：" + errText(err));
+      }).finally(() => { if (alive) setSearching(false); });
+    }, 180);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [query, root, uid, changesOnly]);
 
   // The diff view reads lines for the file tab on screen: refetch whenever that
   // tab wants diff and the lines at hand belong to another file (or to nothing
@@ -342,6 +365,9 @@ export default function FilePanel() {
     if (!root) return;
     const paths = [root, ...expanded];
     setTree(new Map());
+    setTreeError("");
+    setDiffPath(null);
+    setDiffLines(null);
     for (const p of paths) void loadDir(p);
     void refreshGit(root);
   };
@@ -381,72 +407,16 @@ export default function FilePanel() {
     ];
   };
 
-  const renderRows = (path: string, depth: number): ReactNode => {
-    const entries = tree.get(path);
-    if (!entries) return null;
-    return entries.map((e) => (
-      <div key={e.path}>
-        <button
-          onClick={() => (e.isDir ? toggleDir(e.path) : openFile(e))}
-          onContextMenu={(ev) => openRowMenu(ev, e)}
-          title={e.path}
-          style={{ paddingLeft: `${depth * 12 + 8}px` }}
-          className="flex w-full items-center gap-1.5 py-1 pr-2 text-left text-xs hover:bg-card"
-        >
-          {e.isDir ? (
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              className={`shrink-0 text-dim transition-transform ${expanded.has(e.path) ? "rotate-90" : ""}`}
-            >
-              <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          ) : (
-            <span className="w-2.5 shrink-0" />
-          )}
-          {e.isDir ? <FolderIcon /> : <FileIcon />}
-          <span className="min-w-0 flex-1 truncate">{e.name}</span>
-          {e.isDir ? <DirBadge index={gitIndex} path={e.path} /> : <FileBadge entry={statusOf(gitIndex, e.path)} />}
-        </button>
-        {e.isDir && expanded.has(e.path) && renderRows(e.path, depth + 1)}
-      </div>
-    ));
-  };
-
-  /** Flat, directory-grouped list of everything git reports as changed. */
-  const renderChanges = (status: GitStatus): ReactNode => {
-    if (status.entries.length === 0) {
-      return <div className="px-3 py-2 text-xs text-dim">工作区干净，没有未提交的改动。</div>;
+  const showTree = mem.treeVisible || !active;
+  const openEntry = (entry: DirEntry, diff = false) => {
+    if (entry.isDir) {
+      remember({ changesOnly: false, treeVisible: true });
+      setQuery("");
+      void navigate(entry.path);
     }
-    return groupByDir(status).map((group) => (
-      <div key={group.dir || "."}>
-        <div className="mono truncate px-2 py-1 text-[10px] text-dim" title={group.dir}>
-          {group.dir || "（仓库根）"}
-        </div>
-        {group.entries.map((entry) => {
-          const asEntry = asDirEntry(entry);
-          return (
-            <button
-              key={entry.path}
-              onClick={() => openFile(asEntry, entry.untracked ? "source" : "diff")}
-              onContextMenu={(ev) => openRowMenu(ev, asEntry)}
-              title={entry.renamedFrom ? `${entry.path}\n（原名 ${entry.renamedFrom}）` : entry.path}
-              className="flex w-full items-center gap-1.5 py-1 pl-4 pr-2 text-left text-xs hover:bg-card"
-            >
-              {entry.isDir ? <FolderIcon /> : <FileIcon />}
-              <span className="min-w-0 flex-1 truncate">{asEntry.name}</span>
-              <FileBadge entry={entry} />
-            </button>
-          );
-        })}
-      </div>
-    ));
+    else openFile(entry, diff ? "diff" : "source");
   };
-
+  const navigateFromPreview = (path: string) => { remember({ treeVisible: true }); void navigate(path); };
   const changedCount = git?.entries.length ?? 0;
   const canDiffActive =
     active !== null && active.relPath !== null && !statusOf(gitIndex, active.path)?.untracked;
@@ -470,14 +440,15 @@ export default function FilePanel() {
   }, [timeline]);
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1">
+    <div className="file-panel-layout"><div className="file-panel-body">
       {/* Preview column, nearest the chat so reading stays close to the
           conversation; the tree sits on the far side and keeps its own width
           (the panel's left edge is dragged in RightPanel). */}
       {active && !previewFull && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="file-reading">
           <FilePreviewPane
             file={active}
+            onNavigate={navigateFromPreview}
             canDiff={canDiffActive}
             diff={diffNow}
             loading={diffBusy}
@@ -490,176 +461,64 @@ export default function FilePanel() {
       )}
 
       {/* Preview | tree splitter: only meaningful while both are on screen. */}
-      {active && !previewFull && (
+      {active && !previewFull && showTree && (
         <div
           onMouseDown={(e) =>
             startColumnDrag(e, treeW, { min: 180, max: 560, invert: true, persistKey: "kalo.layout.treeW" }, setTreeW)
           }
-          className="w-1 shrink-0 cursor-col-resize border-l border-edge hover:bg-edge"
+          className="file-tree-splitter"
         />
       )}
 
-      {/* Tree column: beside a preview it keeps its dragged width; on its own
-          it takes the whole tab. */}
-      <div
-        className={`flex flex-col ${active && !previewFull ? "shrink-0" : "min-w-0 flex-1"}`}
-        style={active && !previewFull ? { width: treeW } : undefined}
-      >
-        <div className="flex h-10 shrink-0 items-center justify-between border-b border-edge px-3">
-          <span className="text-xs font-medium">文件</span>
-          <button
-            onClick={refresh}
-            title="刷新"
-            className="rounded-md p-1.5 text-dim hover:bg-card hover:text-ink"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
-              <path
-                d="M13.5 8a5.5 5.5 0 11-1.6-3.9M13.5 2.5v2.6h-2.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
+      {showTree && <section className={active && !previewFull ? "file-browser with-preview" : "file-browser"} style={active && !previewFull ? { width: treeW } : undefined} aria-label="文件浏览器">
+        <div className="file-browser-heading">
+          <AppIcon name="folder" size={15} /><strong>{baseName(root) || "工作区"}</strong>
+          <button title="收起全部目录" aria-label="收起全部目录" onClick={() => {
+            remember({ expanded: [] });
+            setCollapsedChanges(new Set((git?.entries ?? []).flatMap((entry) => pathBreadcrumbs(entry.path).slice(0, -1).map((crumb) => pathKey(crumb.path)))));
+          }}>⊟</button>
+          <button title="刷新目录与变更" aria-label="刷新目录与变更" onClick={refresh}>↻</button>
         </div>
-
-        {/* Path bar: edit to browse any directory */}
-        <div className="flex shrink-0 items-center gap-1 border-b border-edge px-2 py-1.5">
-          <button
-            onClick={goBack}
-            disabled={backStack.length === 0}
-            title="后退到上次目录"
-            className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink disabled:opacity-30"
-          >
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M10 3L5 8l5 5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <button
-            onClick={() => {
-              const parent = root ? parentDir(root) : null;
-              if (parent) void navigate(parent);
-            }}
-            title="上一级"
-            className="shrink-0 rounded p-1 text-dim hover:bg-card hover:text-ink"
-          >
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M8 12V4M4 7l4-4 4 4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <input
-            value={pathDraft}
-            onChange={(e) => setPathDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void navigate(pathDraft);
-            }}
-            placeholder="输入路径浏览任意目录…"
-            spellCheck={false}
-            className="mono min-w-0 flex-1 bg-transparent text-xs text-dim outline-none placeholder:text-dim/60 focus:text-ink"
-          />
+        <div className="file-location">
+          <button title="后退到上次目录" aria-label="后退到上次目录" disabled={!backStack.length} onClick={goBack}>‹</button>
+          <button title="上一级" aria-label="上一级" disabled={!parentDirectory(root)} onClick={() => { const parent = parentDirectory(root); if (parent) void navigate(parent); }}>↑</button>
+          <input value={pathDraft} aria-label="浏览目录路径" onChange={(event) => setPathDraft(event.target.value)} onKeyDown={(event) => {
+            if (event.key === "Enter") void navigate(pathDraft);
+            if (event.key === "Escape") setPathDraft(root);
+          }} placeholder="输入目录路径…" spellCheck={false} />
         </div>
-
-        {/* Git strip: hidden entirely outside a repository */}
-        {git && (
-          <div className="flex shrink-0 items-center gap-1.5 border-b border-edge px-2 py-1">
-            <BranchIcon />
-            <span
-              className="mono min-w-0 truncate text-[11px] text-dim"
-              title={git.upstream ? `upstream: ${git.upstream}` : "没有 upstream"}
-            >
-              {branchLabel(git)}
-            </span>
-            <span className="flex-1" />
-            {changedCount === 0 ? (
-              <span className="shrink-0 text-[10px] text-dim">干净</span>
-            ) : (
-              <button
-                onClick={() => remember({ changesOnly: !changesOnly })}
-                title={changesOnly ? "显示完整目录树" : "只列出未提交的改动"}
-                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
-                  changesOnly ? "bg-card text-ink" : "text-dim hover:bg-card hover:text-ink"
-                }`}
-              >
-                仅变更 {changedCount}
-                {git.truncated ? "+" : ""}
-              </button>
-            )}
-          </div>
-        )}
-        {gitError && (
-          <div className="shrink-0 truncate border-b border-edge px-2 py-1 text-[10px] text-dim" title={gitError}>
-            git 状态读取失败：{gitError}
-          </div>
-        )}
-
-        <div className="min-h-0 flex-1 overflow-auto py-1">
-          {/* Artifacts section: model-declared deliverables from present_files */}
-          {artifacts.length > 0 && (
-            <div className="border-b border-edge pb-1 mb-1">
-              <button
-                onClick={() => remember({ artifactsOpen: !artifactsOpen })}
-                className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-card"
-              >
-                <svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
-                  className={`shrink-0 text-dim transition-transform ${artifactsOpen ? "" : "-rotate-90"}`}>
-                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span className="text-[10px] font-medium uppercase tracking-wide text-dim">产物 {artifacts.length}</span>
-              </button>
-              {artifactsOpen && artifacts.map((item) => (
-                <button
-                  key={item.path}
-                  onClick={() => {
-                    if (item.kind === "file" && !item.missing) {
-                      openFile({ name: item.name, path: item.path });
-                    }
-                  }}
-                  title={item.path}
-                  onContextMenu={(ev) => openArtifactMenu(ev, item)}
-                  // Not `disabled`: Chromium dispatches no mouse events to a
-                  // disabled control, so its context menu could never open. The
-                  // click guard above already ignores missing entries.
-                  aria-disabled={item.missing === true || undefined}
-                  className={`flex w-full items-center gap-1.5 py-1 pl-5 pr-2 text-left text-xs hover:bg-card ${
-                    item.missing ? "cursor-default opacity-50" : ""
-                  }`}
-                >
-                  {item.kind === "url" ? (
-                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-tone-blue">
-                      <circle cx="8" cy="8" r="6.5" /><path d="M8 1.5c-1.5 1.5-2.5 3.8-2.5 6.5s1 5 2.5 6.5M8 1.5c1.5 1.5 2.5 3.8 2.5 6.5s-1 5-2.5 6.5M1.5 8h13" strokeLinecap="round" />
-                    </svg>
-                  ) : (
-                    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-tone-orange">
-                      <path d="M4 1.5h5L12.5 5v9a1 1 0 01-1 1h-7a1 1 0 01-1-1v-11a1 1 0 011-1z" strokeLinejoin="round" />
-                      <path d="M9 1.5V5h3.5" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                  <span className={`min-w-0 flex-1 truncate ${item.primary ? "font-medium text-ink" : "text-dim"}`}>
-                    {item.name}
-                  </span>
-                  {item.missing && <span className="shrink-0 text-[9px] text-dim">缺失</span>}
-                </button>
-              ))}
-            </div>
-          )}
-          {changesOnly && git ? (
-            renderChanges(git)
-          ) : root ? (
-            renderRows(root, 0) ?? <div className="px-3 py-2 text-xs text-dim">加载中…</div>
-          ) : (
-            <div className="px-3 py-2 text-xs text-dim">先在输入框下方选择工作目录</div>
-          )}
+        <div className="file-filter"><AppIcon name="search" size={14} />
+          <input value={query} aria-label="筛选文件" placeholder={changesOnly && git ? "筛选变更路径…" : "按文件名筛选…"} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setQuery(""); } }} />
+          {query && <button title="清除筛选" aria-label="清除筛选" onClick={() => setQuery("")}>×</button>}
         </div>
+        {git && <div className="file-git-summary"><BranchIcon /><span title={git.upstream || "没有 upstream"}>{branchLabel(git)}</span><small>{git.truncated ? "部分结果" : changedCount ? changedCount + " 处改动" : "干净"}</small></div>}
+        {git && <div className="file-tree-modes" aria-label="文件范围">
+          <button aria-pressed={!changesOnly} onClick={() => remember({ changesOnly: false })}>全部文件</button>
+          <button aria-pressed={changesOnly} onClick={() => remember({ changesOnly: true })}>更改 <small>{changedCount}{git.truncated ? "+" : ""}</small></button>
+        </div>}
+        {gitError && <div className="file-tree-empty" role="alert">Git 状态读取失败：{gitError}</div>}
+        {treeError && <div className="file-tree-empty" role="alert">读取目录失败：{treeError} <button onClick={refresh}>重试</button></div>}
+        <div className="file-browser-scroll">
+          <FileArtifacts items={artifacts} open={artifactsOpen} onToggle={() => remember({ artifactsOpen: !artifactsOpen })}
+            onOpen={(item) => openFile(item)} onMenu={openArtifactMenu} />
+          <FileTree root={changesOnly && git ? git.repoRoot : root} tree={tree} expanded={expanded} activePath={active?.path} index={gitIndex}
+            changes={changesOnly && git ? git.entries : null} collapsed={collapsedChanges} query={query} results={results} searching={searching} searchError={searchError}
+            onToggle={toggleDir} onToggleChange={(path) => setCollapsedChanges((current) => { const next = new Set(current); const key = pathKey(path); if (next.has(key)) next.delete(key); else next.add(key); return next; })}
+            onOpen={openEntry} onMenu={openRowMenu} />
+        </div>
+      </section>}
       </div>
 
       {/* Fullscreen preview overlay */}
       {active && previewFull && (
-        <div className="fixed inset-x-0 bottom-0 top-8 z-50 flex flex-col bg-base">
+        <div className="file-fullscreen">
           <FilePreviewPane
             file={active}
             canDiff={canDiffActive}
             diff={diffNow}
             loading={diffBusy}
             full
+            onNavigate={navigateFromPreview}
             onView={selectFileView}
             onFull={() => setPreviewFull(false)}
             onClose={closeFile}
@@ -684,39 +543,6 @@ export default function FilePanel() {
   );
 }
 
-/** Status letter plus line counts at the end of a file row. */
-function FileBadge({ entry }: { entry: GitEntry | null }) {
-  const letter = statusLetter(entry);
-  if (!letter || !entry) return null;
-  const counts =
-    entry.binary
-      ? "bin"
-      : [entry.added ? `+${entry.added}` : "", entry.removed ? `-${entry.removed}` : ""]
-          .filter(Boolean)
-          .join(" ");
-  return (
-    <span className="mono flex shrink-0 items-center gap-1 text-[10px]">
-      {counts && <span className="text-dim">{counts}</span>}
-      <span className={statusColor(letter)}>{letter}</span>
-    </span>
-  );
-}
-
-/** A dot on a directory that has changes somewhere beneath it. */
-function DirBadge({ index, path }: { index: StatusIndex; path: string }) {
-  const own = statusOf(index, path);
-  if (own?.untracked) {
-    return <span className="mono shrink-0 text-[10px] text-dim">?</span>;
-  }
-  const roll = index.dirs.get(pathKey(path));
-  if (!roll || roll.count === 0) return null;
-  return (
-    <span className="shrink-0 text-[10px] text-amber-500" title={`${roll.count} 处改动`}>
-      ●
-    </span>
-  );
-}
-
 function BranchIcon() {
   return (
     <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-dim">
@@ -724,23 +550,6 @@ function BranchIcon() {
       <circle cx="4.5" cy="12.5" r="1.6" />
       <circle cx="11.5" cy="6.5" r="1.6" />
       <path d="M4.5 5.1v5.8M11.5 8.1c0 2-1.7 2.8-3.5 2.8h-2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function FolderIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-dim">
-      <path d="M2 4.5A1.5 1.5 0 013.5 3h2l1.5 2h5.5A1.5 1.5 0 0114 6.5v5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 text-dim">
-      <path d="M4 1.5h5L12.5 5v9a1 1 0 01-1 1h-7a1 1 0 01-1-1v-11a1 1 0 011-1z" strokeLinejoin="round" />
-      <path d="M9 1.5V5h3.5" strokeLinejoin="round" />
     </svg>
   );
 }

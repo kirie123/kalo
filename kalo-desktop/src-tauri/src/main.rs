@@ -10,6 +10,7 @@ mod files;
 mod experts;
 mod expert_import;
 mod gateway;
+mod gateway_sessions;
 mod git;
 mod internal_skills;
 mod knowledge;
@@ -430,8 +431,7 @@ fn gateway_unbind(state: State<GatewayManager>) -> Result<(), String> {
 // Scheduler (task table lives in the gateway sidecar)
 // ============================================================================
 
-/// Create or replace a scheduled task (validated gateway-side; a
-/// `schedule-error` event is emitted on invalid input).
+/// Create or replace a scheduled task; resolves only after validation and persistence.
 #[tauri::command(async)]
 fn schedule_upsert(
     task: serde_json::Value,

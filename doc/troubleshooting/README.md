@@ -55,9 +55,11 @@
 - [OpenAI-compat 代理的缓存命中率始终显示 0%（Anthropic 原生字段未映射 / OpenAI 兼容层不报缓存）](openai-compat-proxy-cache-hit-always-zero.md)
 - [Anthropic 协议网关返回 401（网关只认 Authorization: Bearer）或直接拒绝 pi 内核](anthropic-gateway-401-bearer-auth.md)
 - [edit 报 Could not find ...（oldText 与文件字符漂移，不是中文/CRLF 的问题；容错与诊断均已落地）](edit-not-found-oldtext-drift.md)
+- [模型正文出现压缩摘要式回复（区分消息与本地 compaction，排查上游路由）](upstream-gateway-returns-compaction-summary-as-reply.md)
 
 ### 工具链
 - [npm registry 证书过期导致 npx 失败](npm-registry-cert-expired.md)
+- [bun run build 报 command not found: tauri、随后 vite 阶段报 corrupted node_modules（bun 与 npm 混管 kalo-desktop/node_modules）](bun-npm-mixed-node-modules.md)
 
 ### 构建/发布
 - [packages/ai 构建报 TS2307（models.dev provider key 改名删掉生成 shard）](models-dev-改名删-shard-构建失败.md)

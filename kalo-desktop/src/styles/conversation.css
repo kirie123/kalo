@@ -1,0 +1,61 @@
+/* Shared conversation rhythm for all skins. */
+.conversation-transcript .work-segment {
+  margin: 4px 0 14px;
+}
+.conversation-transcript .work-segment-head {
+  width: fit-content;
+  max-width: 100%;
+  gap: 7px;
+  padding: 5px 0;
+  border: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.activity-group-icon {
+  display: grid;
+  width: 18px;
+  flex-shrink: 0;
+  place-items: center;
+}
+.activity-group-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-group-chevron { flex-shrink: 0; transition: transform 140ms ease; }
+.activity-group-error { flex-shrink: 0; color: var(--danger); font-size: 12px; }
+.conversation-transcript .work-segment-body {
+  gap: 0;
+  padding: 2px 0 0;
+}
+.activity-call-list { min-width: 0; }
+.activity-call-list > div > .group {
+  padding: 4px 0;
+  min-height: 30px;
+}
+.activity-call-list button > .truncate {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.activity-call-list button[title="在终端中打开"] {
+  opacity: 0;
+}
+.activity-call-list .group:hover button[title="在终端中打开"],
+.activity-call-list .group:focus-within button[title="在终端中打开"] {
+  opacity: 1;
+}
+.conversation-transcript .assistant-message {
+  margin: 6px 0 18px;
+  line-height: 1.8;
+}
+.conversation-transcript .assistant-message.is-process { margin: 0; }
+@media (max-width: 600px) {
+  .activity-group-error { max-width: 5em; white-space: normal; line-height: 1.3; }
+  .activity-call-list button[title="在终端中打开"] { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-group-chevron { transition: none; }
+}

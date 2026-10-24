@@ -60,7 +60,7 @@ export default function EmptyState() {
   const zoom = useChatZoom();
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4" style={{ zoom }}>
-      <h1 className="mb-9 flex items-center gap-3 text-[30px] font-semibold tracking-tight">
+      <h1 className="workspace-greeting mb-9 flex flex-wrap items-center justify-center gap-3 text-[30px] font-semibold tracking-tight">
         今天想和
         <KaloMark />
         一起完成什么？

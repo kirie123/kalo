@@ -13,8 +13,9 @@
  *
  * Completion is pushed, not polled. A background drain asks the gateway for
  * terminal jobs this session has not been told about and injects them:
- *   busy  → sendMessage(deliverAs: "nextTurn")   — waits for the current turn
+ *   busy  → sendMessage(deliverAs: "followUp")   — waits for the current turn
  *   idle  → sendMessage(triggerTurn: true)       — wakes the agent, bounded
+ * History open and explicit abort pause delivery until a real user prompt.
  * That is what removes `sleep 300` loops from long-running work.
  *
  * All job semantics (owner fencing, gates, health, metrics) live in the
@@ -155,31 +156,32 @@ export default function kaloJobsExtension(pi: ExtensionAPI): void {
 
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let draining = false;
-	let wakes = 0;
+	let binding:
+		| { ctx: ExtensionContext; generation: number; awaitingPrompt: boolean; wakes: number; pending: JobSnapshot[] }
+		| undefined;
 
-	async function drain(ctx: ExtensionContext): Promise<void> {
+	async function drain(current: NonNullable<typeof binding>): Promise<void> {
 		// One drain at a time: a slow gateway must not queue up claims, each of
 		// which would consume completions the previous one is still delivering.
-		if (draining) return;
+		if (draining || current !== binding || current.awaitingPrompt || current.wakes >= MAX_CONSECUTIVE_WAKES) return;
 		draining = true;
+		const generation = current.generation;
 		try {
-			const jobs = await client.claimCompletions();
+			const claimed = await client.claimCompletions();
+			if (current !== binding) return;
+			current.pending.push(...claimed);
+			if (generation !== current.generation || current.awaitingPrompt) return;
+			const jobs = current.pending;
 			if (jobs.length === 0) return;
 			const body = ["后台任务结束：", ...jobs.map(describe), "", "需要的话用 job_output 读取它们的输出。"].join(
 				"\n",
 			);
-			const idle = ctx.isIdle();
-			if (idle && wakes >= MAX_CONSECUTIVE_WAKES) {
-				// Bounded wakes: keep telling the model, but stop driving turns
-				// until the user says something. Prevents a wake loop.
-				pi.sendMessage({ customType: "kalo-job-done", content: body, display: true }, { deliverAs: "nextTurn" });
-				return;
-			}
-			if (idle) wakes += 1;
+			current.wakes += 1;
 			pi.sendMessage(
 				{ customType: "kalo-job-done", content: body, display: true },
-				idle ? { triggerTurn: true, deliverAs: "followUp" } : { deliverAs: "nextTurn" },
+				{ triggerTurn: true, deliverAs: "followUp" },
 			);
+			current.pending = [];
 		} catch {
 			// No gateway, or a restarting one: silence is correct here — the drain
 			// is background bookkeeping and must never surface as a session error.
@@ -190,23 +192,39 @@ export default function kaloJobsExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (_event, ctx) => {
 		sessionId = ctx.sessionManager.getSessionId();
+		const current = { ctx, generation: 0, awaitingPrompt: true, wakes: 0, pending: [] as JobSnapshot[] };
+		binding = current;
 		if (timer) clearInterval(timer);
 		// Only poll when a gateway is actually publishing an endpoint; a plain
 		// terminal pi run should not tick forever against a missing file.
 		timer = setInterval(() => {
 			if (!client.available()) return;
-			void drain(ctx);
+			void drain(current);
 		}, POLL_MS);
 		// Never hold the process open for a background drain.
 		(timer as { unref?: () => void }).unref?.();
 	});
 
 	// A user message means the human is present again: wake budget resets.
-	pi.on("input", () => {
-		wakes = 0;
+	pi.on("input", (event) => {
+		if (!binding || (event.source !== "interactive" && event.source !== "rpc")) return;
+		binding.wakes = 0;
+		binding.awaitingPrompt = true;
+		binding.generation++;
+	});
+	pi.on("message_end", (event, ctx) => {
+		if (!binding || binding.ctx.sessionManager !== ctx.sessionManager || event.message.role !== "user") return;
+		binding.awaitingPrompt = false;
+		if (client.available()) void drain(binding);
+	});
+	pi.on("session_abort", () => {
+		if (!binding) return;
+		binding.awaitingPrompt = true;
+		binding.generation++;
 	});
 
 	pi.on("session_shutdown", () => {
+		binding = undefined;
 		if (timer) clearInterval(timer);
 		timer = null;
 	});

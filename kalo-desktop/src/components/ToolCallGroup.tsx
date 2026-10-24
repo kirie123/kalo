@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { AgentActivityItem } from "../lib/subagent-activity";
 import type { ToolCallRecord } from "../lib/timeline";
 import { callTodos, groupTitle, rowLabel } from "../lib/tool-labels";
@@ -60,73 +60,27 @@ function StatusMark({ rec }: { rec: ToolCallRecord }) {
   return <ToolIcon name={rec.toolName} />;
 }
 
-/** Individual calls are revealed on demand below the activity summary. */
+/** Each visible call row is the only disclosure control for its result. */
 export function ToolCallList({ calls }: { calls: ToolCallRecord[] }) {
   return (
     <div className="flex flex-col text-[13px]">
-      {calls.map((rec, i) => (
-        <ToolCallRow key={rec.toolCallId} rec={rec} isLast={i === calls.length - 1} />
-      ))}
+      {calls.map((rec) => <ToolCallRow key={rec.toolCallId} rec={rec} />)}
     </div>
   );
 }
 
 export default function ToolCallGroup({ toolName, calls, compact = false }: { toolName: string; calls: ToolCallRecord[]; compact?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const anyRunning = calls.some((c) => c.status === "running");
-  const anyError = calls.some((c) => c.status === "error");
-
   return (
     <div className={`tool-activity ${compact ? "is-compact" : ""}`}>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="tool-activity-heading flex w-full items-center gap-2 py-1.5 text-left text-dim hover:text-ink"
-      >
-        <span className="grid w-4 shrink-0 place-items-center">
-          {anyRunning ? (
-            <span className="spinner" />
-          ) : anyError ? (
-            <span className="text-[var(--danger)]">✗</span>
-          ) : (
-            <ToolIcon name={toolName} />
-          )}
-        </span>
-        <span className="text-dim">{groupTitle(toolName, calls.length)}</span>
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          className={`shrink-0 text-dim transition-transform ${open ? "" : "-rotate-90"}`}
-        >
-          <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      {open && (
-        <div className="tool-activity-details ml-6 flex max-h-80 flex-col overflow-y-auto">
-          <ToolCallList calls={calls} />
-        </div>
-      )}
+      {calls.length > 1 && <div className="py-1 text-xs text-dim">{groupTitle(toolName, calls.length)}</div>}
+      <ToolCallList calls={calls} />
     </div>
   );
 }
 
-function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) {
-  // Call details start closed, except the newest
-  // todo_write. Consecutive todo_write calls collapse into one group, so
-  // expanding every row would stack the same list over and over; only the
-  // current plan is worth showing unfolded.
-  //
-  // Subagents stay collapsed even while running: their live activity feed is
-  // long and re-expands on every session switch (rows remount), which buries
-  // the surrounding conversation. Progress stays visible in the row itself via
-  // the spinner and the "第 N 步" chip; click to open the feed on demand.
-  const [open, setOpen] = useState(
-    rec.toolName === "todo_write" && isLast,
-  );
+function ToolCallRow({ rec }: { rec: ToolCallRecord }) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
   const diff = extractDiff(rec.result) ?? extractDiff(rec.partialResult);
   const stats = diff ? diffStats(diff) : null;
   const steps = rec.toolName === "agent" ? agentSteps(rec) : null;
@@ -151,6 +105,7 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
       <div className="group flex w-full items-center gap-2 rounded-md px-2 py-1 hover:bg-card">
         <button
           aria-expanded={open}
+          aria-controls={contentId}
           title={rowLabel(rec)}
           onClick={() => {
             userToggled.current = true;
@@ -164,6 +119,7 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
           <span className="min-w-0 flex-1 truncate text-[13px] text-dim group-hover:text-ink">
             {rowLabel(rec)}
           </span>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" className={`shrink-0 text-dim ${open ? "rotate-90" : ""}`}><path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         {stats && (
           <span className="mono shrink-0 text-xs">
@@ -197,7 +153,7 @@ function ToolCallRow({ rec, isLast }: { rec: ToolCallRecord; isLast: boolean }) 
       </div>
       {/* Below the row, not inside it: the row is the flex/hover line, and a
           multi-line detail inside it would be stretched into a column. */}
-      {open && <ToolCallDetail rec={rec} diff={diff} />}
+      {open && <div id={contentId}><ToolCallDetail rec={rec} diff={diff} /></div>}
     </>
   );
 }

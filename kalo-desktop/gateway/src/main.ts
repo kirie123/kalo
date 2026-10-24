@@ -37,6 +37,7 @@ import { OPERATOR } from "./jobs/types";
 import { ProgressRenderer } from "./renderer";
 import { Scheduler, type ScheduleTask } from "./scheduler";
 import { FeedEngine } from "./feeds";
+import { deliverGatewayAnswer } from "./answer-delivery";
 
 // ---------------------------------------------------------------------------
 // Guard the NDJSON stdout channel: everything libraries print via
@@ -69,10 +70,10 @@ const scheduler = new Scheduler({
       .sendText(`[${task.id}] ${task.name}\n${output}`)
       .catch((err) => log(`alert push failed (${task.id}):`, err instanceof Error ? err.message : err));
   },
-  requestAgentSession: (task: ScheduleTask) => {
+  requestAgentSession: (task: ScheduleTask, requestId: string) => {
     send({
       type: "session_request",
-      taskId: task.id,
+      taskId: requestId,
       cwd: task.cwd,
       prompt: task.prompt ?? "",
       model: task.model ?? null,
@@ -223,7 +224,12 @@ async function connect(creds: FeishuCredentials): Promise<void> {
     // The card is a truncated live view; the answer goes out in full, as its
     // own message, so the user actually receives a reply.
     onAnswer: (sessionId, answer) => {
-      void channel.handleAnswer(sessionId, answer);
+      void deliverGatewayAnswer(sessionId, answer, {
+        isChat: (id) => channel.ownsSession(id),
+        isScheduled: (id) => scheduler.ownsSession(id),
+        chatAnswer: (id, text) => channel.handleAnswer(id, text),
+        sendText: (text) => conn.sendText(text),
+      }).catch((error: unknown) => log("answer delivery failed:", error));
     },
   });
   try {
@@ -327,6 +333,7 @@ function handleCommand(cmd: InCommand): void {
     }
     case "event": {
       renderer?.handleEvent(cmd.sessionId, cmd.cwd, cmd.payload);
+      if (scheduler.handleEvent(cmd.sessionId, cmd.payload)) send({ type: "session_close", sessionId: cmd.sessionId });
       return;
     }
     case "session_exit": {
@@ -335,18 +342,17 @@ function handleCommand(cmd: InCommand): void {
       if (channel.ownsSession(cmd.sessionId)) channel.handleSessionExit(cmd.sessionId);
       return;
     }
-    case "schedule_upsert": {
-      const err = scheduler.upsert(cmd.task);
-      if (err) send({ type: "schedule_error", message: err });
-      return;
-    }
-    case "schedule_remove": {
-      scheduler.remove(cmd.id);
-      return;
-    }
+    case "schedule_upsert":
+    case "schedule_remove":
     case "schedule_run": {
-      const err = scheduler.runNow(cmd.id);
-      if (err) send({ type: "schedule_error", message: err });
+      let error: string | null = null;
+      try {
+        if (cmd.cmd === "schedule_upsert") error = scheduler.upsert(cmd.task);
+        else if (cmd.cmd === "schedule_run") error = scheduler.runNow(cmd.id);
+        else scheduler.remove(cmd.id);
+      } catch (err) { error = err instanceof Error ? err.message : String(err); }
+      if (cmd.requestId) send({ type: "schedule_reply", requestId: cmd.requestId, ok: !error, ...(error ? { error } : {}) });
+      else if (error) send({ type: "schedule_error", message: error });
       return;
     }
     case "schedule_list": {
@@ -357,7 +363,7 @@ function handleCommand(cmd: InCommand): void {
       // The channel needs the sessionId itself: it is what turns the next
       // message into a follow-up rather than a fresh, amnesiac session.
       if (channel.owns(cmd.taskId)) channel.handleSessionStarted(cmd.taskId, cmd.sessionId);
-      else scheduler.handleSessionStarted(cmd.taskId, cmd.sessionId);
+      else if (!scheduler.handleSessionStarted(cmd.taskId, cmd.sessionId)) send({ type: "session_close", sessionId: cmd.sessionId });
       return;
     }
     case "session_start_failed": {

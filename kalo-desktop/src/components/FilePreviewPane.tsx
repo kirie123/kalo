@@ -1,13 +1,16 @@
 /**
- * One open file tab's pane: the 源码/diff row plus the document below it.
+ * One open file tab's pane: navigation, view controls and the document below.
  *
  * Split out of FilePanel (tree, git strip, artifacts, context menu) so that
  * panel stays under the file-length budget, and so the fullscreen overlay can
- * reuse exactly the same row. This row is also where a file gets closed: the
- * file tab itself carries no × (doc/2026-10-10-右栏文件页签.md).
+ * reuse exactly the same row. Both this row and the file tab can close a file.
  */
 
+import { useLayoutEffect, useRef } from "react";
 import type { FileView, PanelFile } from "../lib/file-panel-memory";
+import { pathBreadcrumbs } from "../lib/file-tree";
+import ContextMenu, { copyPathItem, openPathItem, useContextMenu } from "./ContextMenu";
+import { chatStore } from "../lib/chat-store";
 import DiffView, { type DiffLine } from "./DiffView";
 import FilePreview from "./FilePreview";
 
@@ -21,6 +24,7 @@ export default function FilePreviewPane({
   onFull,
   onClose,
   onOpenPath,
+  onNavigate,
 }: {
   file: PanelFile;
   canDiff: boolean;
@@ -32,11 +36,29 @@ export default function FilePreviewPane({
   onFull: () => void;
   onClose: () => void;
   onOpenPath?: (path: string) => void;
+  onNavigate?: (path: string) => void;
 }) {
+  const menu = useContextMenu();
+  const breadcrumb = useRef<HTMLElement>(null);
+  const crumbs = pathBreadcrumbs(file.path);
+  useLayoutEffect(() => {
+    const element = breadcrumb.current;
+    if (!element) return;
+    const revealFile = () => { element.scrollLeft = element.scrollWidth; };
+    revealFile();
+    const observer = new ResizeObserver(revealFile);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [file.path]);
   return (
     <>
-      <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-edge px-3">
-        <span className="min-w-0 truncate text-xs font-medium">{file.name}</span>
+      <div className="file-preview-toolbar">
+        <nav className="file-breadcrumbs" aria-label="当前文件路径" ref={breadcrumb}>
+          {crumbs.map((crumb, index) => <span key={crumb.path}>{index > 0 && <span className="file-path-separator" aria-hidden="true">›</span>}
+            {index === crumbs.length - 1 ? <strong title={file.path} aria-current="page">{crumb.name}</strong>
+              : <button title={crumb.path} onClick={() => { onNavigate?.(crumb.path); if (full) onFull(); }}>{crumb.name}</button>}
+          </span>)}
+        </nav>
         <div className="flex shrink-0 items-center gap-1">
           {canDiff && (
             <div className="mr-1 flex items-center overflow-hidden rounded-md border border-edge text-[10px]">
@@ -44,13 +66,15 @@ export default function FilePreviewPane({
                 <button
                   key={t}
                   onClick={() => onView(t)}
+                  aria-pressed={file.view === t}
                   className={`px-1.5 py-0.5 ${file.view === t ? "bg-card text-ink" : "text-dim hover:text-ink"}`}
                 >
-                  {t === "source" ? "源码" : "diff"}
+                  {t === "source" ? "内容" : "更改"}
                 </button>
               ))}
             </div>
           )}
+          <button onClick={(event) => menu.openAtRect(event.currentTarget)} title="文件操作" aria-label="文件操作" className="file-icon-button">···</button>
           {full ? (
             // Fullscreen traps the user when the only exit is a bare icon: make
             // it a labelled button with the shortcut spelled out.
@@ -85,7 +109,7 @@ export default function FilePreviewPane({
           <div className="min-h-0 flex-1 px-3 py-2 text-xs text-dim">读取 diff…</div>
         ) : !diff || diff.length === 0 ? (
           <div className="min-h-0 flex-1 px-3 py-2 text-xs text-dim">
-            与 HEAD 无差异。（未跟踪的新文件没有 diff，切到「源码」看内容。）
+            与 HEAD 无差异。（未跟踪的新文件没有 diff，切到「内容」查看。）
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto p-2">
@@ -97,6 +121,10 @@ export default function FilePreviewPane({
           <FilePreview path={file.path} name={file.name} onOpenPath={onOpenPath} />
         </div>
       )}
+      {menu.at && <ContextMenu at={menu.at} onClose={menu.close} items={[
+        openPathItem("打开文件", file.path), openPathItem("显示文件位置", file.path, true), copyPathItem(file.path),
+        { label: "添加到对话区", action: () => void chatStore.addAttachments([file.path]) },
+      ]} />}
     </>
   );
 }

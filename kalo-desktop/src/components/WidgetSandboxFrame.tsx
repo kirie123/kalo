@@ -134,7 +134,7 @@ const WidgetSandboxFrame = forwardRef<WidgetFrameHandle, {
     };
     post();
     const mo = new MutationObserver(post);
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-skin"] });
     return () => mo.disconnect();
   }, [ready]);
 
