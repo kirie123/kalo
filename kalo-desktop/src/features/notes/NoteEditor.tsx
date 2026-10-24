@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -10,6 +10,7 @@ import { chatStore } from "../../lib/chat-store";
 import { openPath } from "../../lib/pi-bridge";
 import { imageMarkdown, noteBlocks, noteTitle, replaceNoteRange, resolveNoteImage, splitNote, updateNote } from "./document";
 import { copyNoteImage, importNoteImage } from "./images";
+import { deleteAdjacentNoteImage, removeNoteImage, type ImageDeletion } from "./image-edit";
 import { errText } from "./template";
 import { useNoteDrop } from "./useNoteDrop";
 
@@ -28,6 +29,7 @@ export default function NoteEditor({ relPath, absPath, text, loading, dirty, sav
   const alive = useRef(true);
   const importLock = useRef(false);
   const editorArea = useRef<HTMLElement>(null);
+  const pendingFocus = useRef<ImageDeletion | null>(null);
   latest.current = text;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const body = splitNote(text).body;
@@ -35,6 +37,29 @@ export default function NoteEditor({ relPath, absPath, text, loading, dirty, sav
 
   const change = (next: string) => { latest.current = next; onChange(next); };
   const changeBody = (next: string) => change(updateNote(latest.current, { body: next }));
+
+  useLayoutEffect(() => {
+    const pending = pendingFocus.current;
+    if (!pending) return;
+    pendingFocus.current = null;
+    if (mode !== "edit" || body !== pending.body) return;
+    const input = Array.from(editorArea.current?.querySelectorAll<HTMLTextAreaElement>(".note-text-block") ?? [])
+      .find((element) => pending.caret >= Number(element.dataset.start) && pending.caret <= Number(element.dataset.end));
+    if (!input) return;
+    const offset = pending.caret - Number(input.dataset.start);
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(offset, offset);
+    caret.current = { start: pending.caret, end: pending.caret };
+  }, [body, mode]);
+
+  const deleteImage = (result: ImageDeletion | null) => {
+    if (!result) return false;
+    pendingFocus.current = result;
+    changeBody(result.body);
+    return true;
+  };
+  const deletionKey = (event: KeyboardEvent) => !event.nativeEvent.isComposing && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+    && (event.key === "Backspace" || event.key === "Delete");
 
   const insert = (value: string, wrap = false) => {
     const { body: currentBody } = splitNote(latest.current);
@@ -98,12 +123,23 @@ export default function NoteEditor({ relPath, absPath, text, loading, dirty, sav
         {mode === "edit" ? <>
           <input className="note-title" aria-label="笔记标题" value={noteTitle(text, "")} placeholder="未命名笔记" onFocus={(event) => { if (event.target.value === "未命名笔记") event.target.select(); }} onChange={(event) => change(updateNote(latest.current, { title: event.target.value }))} />
           <div className="note-blocks">{blocks.map((block, index) => block.kind === "text"
-            ? <AutoText key={index} value={block.value} placeholder={index === 0 ? "从这里开始记录…" : "继续写下你的想法…"}
+            ? <AutoText key={index} start={block.start} end={block.end} value={block.value} placeholder={index === 0 ? "从这里开始记录…" : "继续写下你的想法…"}
               onChange={(value) => changeBody(replaceNoteRange(splitNote(latest.current).body, block.start, block.end, value))}
+              onKeyDown={(event) => {
+                if (!deletionKey(event)) return;
+                const input = event.currentTarget;
+                if (deleteImage(deleteAdjacentNoteImage(splitNote(latest.current).body, block.start + input.selectionStart, block.start + input.selectionEnd, event.key === "Backspace" ? "backward" : "forward"))) event.preventDefault();
+              }}
               onSelect={(start, end) => { caret.current = { start: block.start + start, end: block.start + end }; }} />
-            : <figure className="note-image-block" key={index}>
+            : <figure className="note-image-block" key={index} tabIndex={0} role="group" aria-label={`笔记图片：${block.alt || "图片"}`} aria-keyshortcuts="Backspace Delete"
+              onClick={(event) => { if (!(event.target as HTMLElement).closest("img, button")) event.currentTarget.focus(); }}
+              onKeyDown={(event) => {
+                const target = event.target as HTMLElement;
+                if (!deletionKey(event) || !event.currentTarget.contains(target) || (target !== event.currentTarget && target.tagName !== "IMG")) return;
+                if (deleteImage(removeNoteImage(splitNote(latest.current).body, block.start))) event.preventDefault();
+              }}>
               <DeliveredImage source={resolveNoteImage(block.source, absPath)} alt={block.alt || "笔记图片"} />
-              <figcaption><span>{block.alt || "图片"}</span><button onClick={() => changeBody(replaceNoteRange(splitNote(latest.current).body, block.start, block.end, ""))} aria-label="从笔记移除图片" title="仅移除笔记内引用，保留原附件"><AppIcon name="trash" size={14} /></button></figcaption>
+              <figcaption><span>{block.alt || "图片"}</span><button onClick={() => deleteImage(removeNoteImage(splitNote(latest.current).body, block.start))} aria-label="从笔记移除图片" title="仅移除笔记内引用，保留原附件"><AppIcon name="trash" size={14} /></button></figcaption>
             </figure>)}</div>
         </> : <><h1 className="note-title">{noteTitle(text)}</h1><div className="markdown note-preview"><ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}
@@ -119,7 +155,7 @@ function Tool({ label, onClick, children, disabled }: { label: string; onClick: 
   return <button className="note-tool" title={label} aria-label={label} onMouseDown={(event) => event.preventDefault()} disabled={disabled} onClick={onClick}>{children}</button>;
 }
 
-function AutoText({ value, onChange, onSelect, placeholder }: { value: string; onChange: (value: string) => void; onSelect: (start: number, end: number) => void; placeholder: string }) {
+function AutoText({ value, start, end, onChange, onSelect, onKeyDown, placeholder }: { value: string; start: number; end: number; onChange: (value: string) => void; onSelect: (start: number, end: number) => void; onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void; placeholder: string }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     const input = ref.current;
@@ -130,5 +166,5 @@ function AutoText({ value, onChange, onSelect, placeholder }: { value: string; o
     observer.observe(input.parentElement!);
     return () => observer.disconnect();
   }, [value]);
-  return <textarea ref={ref} rows={1} className="note-text-block" aria-label="笔记正文" value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} onSelect={(event) => onSelect(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} />;
+  return <textarea ref={ref} rows={1} className="note-text-block" data-start={start} data-end={end} aria-label="笔记正文" value={value} placeholder={placeholder} onKeyDown={onKeyDown} onChange={(event) => onChange(event.target.value)} onSelect={(event) => onSelect(event.currentTarget.selectionStart, event.currentTarget.selectionEnd)} />;
 }

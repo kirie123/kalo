@@ -43,6 +43,7 @@
 .note-text-block { display: block; width: 100%; min-height: 36px; resize: none; overflow: hidden; border: 0; outline: none; background: transparent; color: var(--text); font-size: 14px; line-height: 1.95; padding: 4px 0; }
 .note-text-block::placeholder { color: var(--text-dim); opacity: .8; }
 .note-image-block { padding: 5px 0; margin: 8px 0; }
+.note-image-block:focus, .note-image-block:focus-within { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 11px; }
 .note-image-block .delivered-image { display: block; }
 .note-image-block .delivered-image > img, .note-preview .delivered-image > img { max-width: 100%; max-height: 520px; border-radius: 11px; }
 .note-image-block figcaption { display: flex; justify-content: space-between; gap: 12px; align-items: center; font-size: 11px; color: var(--text-dim); margin-top: 8px; }
