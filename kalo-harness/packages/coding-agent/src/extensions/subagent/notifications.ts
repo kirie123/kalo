@@ -3,7 +3,12 @@ import { resolve } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
-import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "../../core/extensions/types.ts";
+import type {
+	AgentToolResult,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+} from "../../core/extensions/types.ts";
 import { type BackgroundTaskRecord, backgroundTasks } from "./background.ts";
 import { childSessionDir } from "./children.ts";
 
@@ -32,6 +37,7 @@ interface Binding {
 	blocked: boolean;
 	reading: boolean;
 	scheduled: boolean;
+	awaitingPrompt: boolean;
 	records: BackgroundTaskRecord[];
 	error?: string;
 	delivery?: Delivery;
@@ -190,7 +196,7 @@ export function registerBackgroundNotifications(pi: ExtensionAPI): void {
 		});
 	}
 
-	function drain(binding: Binding): void {
+	function prepare(binding: Binding): BeforeAgentStartEventResult["message"] {
 		if (!active(binding)) return;
 		scan(binding);
 		if (binding.error || binding.blocked || binding.delivery || binding.wakes >= MAX_AUTOMATIC_WAKES) return;
@@ -199,16 +205,27 @@ export function registerBackgroundNotifications(pi: ExtensionAPI): void {
 		const batch = summarize(pending, MAX_NOTIFICATION_TASKS);
 		const delivery: Delivery = { runIds: batch.selected.map((record) => record.runId), accepted: false };
 		binding.delivery = delivery;
-		binding.wakes++; // Busy followUp submissions consume the same budget as idle wakeups.
+		binding.wakes++; // Injected messages and busy followUps consume the same budget as idle wakeups.
+		return {
+			customType: DONE_MESSAGE_TYPE,
+			content: batch.body,
+			display: true,
+			details: { runIds: delivery.runIds },
+		};
+	}
+
+	function drain(binding: Binding): void {
+		// input/before_agent_start run before AgentSession has submitted its prompt.
+		// Even a previously queued drain or a background change must not steal that turn.
+		if (!active(binding) || binding.awaitingPrompt) return;
+		const message = prepare(binding);
+		if (!message) return;
 		try {
-			pi.sendMessage(
-				{ customType: DONE_MESSAGE_TYPE, content: batch.body, display: true, details: { runIds: delivery.runIds } },
-				{ deliverAs: "followUp", triggerTurn: true },
-			);
+			pi.sendMessage(message, { deliverAs: "followUp", triggerTurn: true });
 		} catch {
 			if (!active(binding)) return;
 			binding.blocked = true;
-			if (!delivery.accepted) binding.delivery = undefined;
+			if (!binding.delivery?.accepted) binding.delivery = undefined;
 			// A void API has no async failure receipt. Unaccepted sends replay on real input/restart.
 		}
 	}
@@ -239,6 +256,7 @@ export function registerBackgroundNotifications(pi: ExtensionAPI): void {
 			blocked: false,
 			reading: false,
 			scheduled: false,
+			awaitingPrompt: false,
 			records: [],
 		};
 		current = binding;
@@ -266,14 +284,29 @@ export function registerBackgroundNotifications(pi: ExtensionAPI): void {
 		if (!binding || (event.source !== "interactive" && event.source !== "rpc")) return;
 		binding.wakes = 0;
 		binding.blocked = false;
+		binding.awaitingPrompt = true;
 		// No message_end receipt does not prove the in-memory followUp queue is empty.
-		// Replay on real input may duplicate a queued notification: delivery is at least once.
-		// This resets the three-send budget; replay attempts still consume that budget.
+		// Replay may duplicate a queued notification: delivery remains at least once.
+		// Rejected/handled prompts leave results pending until a user message is received.
 		if (!binding.delivery?.accepted) binding.delivery = undefined;
-		schedule(binding);
+	});
+	pi.on("before_agent_start", (_event, ctx): BeforeAgentStartEventResult | undefined => {
+		const binding = matches(ctx);
+		if (!binding) return;
+		binding.awaitingPrompt = true;
+		const message = prepare(binding);
+		// AgentSession includes this alongside the user message in agent.prompt().
+		// Returning it is not a receipt; only the agent loop's message_end accepts it.
+		return message ? { message } : undefined;
 	});
 	pi.on("message_end", (event, ctx) => {
-		const delivery = matches(ctx)?.delivery;
+		const binding = matches(ctx);
+		if (!binding) return;
+		if (event.message.role === "user") {
+			binding.awaitingPrompt = false;
+			schedule(binding); // The prompt is now running; busy followUps cannot preempt it.
+		}
+		const delivery = binding.delivery;
 		if (!delivery) return;
 		const message = event.message;
 		if (message.role === "custom" && message.customType === DONE_MESSAGE_TYPE) {

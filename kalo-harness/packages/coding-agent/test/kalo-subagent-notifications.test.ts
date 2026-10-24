@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.ts";
+import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "./suite/harness.ts";
 
 const fixtures = vi.hoisted(() => ({ agentDir: "" }));
@@ -52,12 +52,12 @@ function freshContext(ctx: ExtensionContext): ExtensionContext {
 }
 
 function fakePi() {
-	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
+	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 	const tools = new Map<string, { execute: (...args: unknown[]) => Promise<unknown> }>();
 	const sent: Array<{ message: Record<string, unknown>; options: Record<string, unknown> | undefined }> = [];
 	const state = { throwOnSend: false };
 	const pi = {
-		on(event: string, handler: (event: unknown, ctx: ExtensionContext) => void) {
+		on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
 			handlers.set(event, handler);
 		},
 		registerTool(tool: { name: string; execute: (...args: unknown[]) => Promise<unknown> }) {
@@ -79,10 +79,11 @@ async function settleLastDelivery(
 	fake: ReturnType<typeof fakePi>,
 	ctx: ExtensionContext,
 	stopReason: "stop" | "length" | "toolUse" | "error" | "aborted" = "stop",
+	injected?: BeforeAgentStartEventResult["message"],
 ): Promise<void> {
-	const sent = fake.sent.at(-1);
-	if (!sent) throw new Error("notification was not sent");
-	const details = sent.message.details as { runIds: string[] };
+	const message = injected ?? fake.sent.at(-1)?.message;
+	if (!message) throw new Error("notification was not sent");
+	const details = message.details as { runIds: string[] };
 	fake.handlers.get("message_end")?.(
 		{
 			message: {
@@ -108,6 +109,14 @@ async function settleLastDelivery(
 	);
 	fake.handlers.get("agent_settled")?.({}, freshContext(ctx));
 	await setImmediate();
+}
+
+function acceptUserPrompt(session: ReturnType<typeof sessionSetup>) {
+	const result = session.fake.handlers.get("before_agent_start")?.({}, freshContext(session.ctx)) as
+		| BeforeAgentStartEventResult
+		| undefined;
+	session.fake.handlers.get("message_end")?.({ message: { role: "user" } }, freshContext(session.ctx));
+	return result?.message;
 }
 
 function sessionSetup(owner = "parent-a", idle = true) {
@@ -265,7 +274,8 @@ describe("background notification state machine", () => {
 		expect(session.fake.sent).toHaveLength(0);
 		session.fake.handlers.get("input")?.({ source: "interactive", text: "retry" }, freshContext(session.ctx));
 		await setImmediate();
-		expect(session.fake.sent).toHaveLength(1);
+		expect(session.fake.sent).toHaveLength(0);
+		expect(acceptUserPrompt(session)?.customType).toBe("kalo-subagent-done");
 	});
 
 	it("keeps the last snapshot and status alive when storage reads fail", async () => {
@@ -288,6 +298,7 @@ describe("background notification state machine", () => {
 			}),
 		);
 		session.fake.handlers.get("input")?.({ source: "rpc" }, freshContext(session.ctx));
+		acceptUserPrompt(session);
 		await setImmediate();
 		await setImmediate();
 		const listSpy = vi.spyOn(backgroundTasks, "list").mockImplementation(() => {
@@ -304,7 +315,8 @@ describe("background notification state machine", () => {
 		listSpy.mockRestore();
 		session.fake.handlers.get("input")?.({ source: "rpc" }, freshContext(session.ctx));
 		await setImmediate();
-		expect(session.fake.sent).toHaveLength(1);
+		expect(session.fake.sent).toHaveLength(0);
+		expect(acceptUserPrompt(session)?.customType).toBe("kalo-subagent-done");
 	});
 
 	it.each(["length", "toolUse", "error", "aborted"] as const)(
@@ -324,8 +336,10 @@ describe("background notification state machine", () => {
 			);
 			session.fake.handlers.get("input")?.({ source: "interactive", text: "continue" }, session.ctx);
 			await setImmediate();
-			expect(session.fake.sent).toHaveLength(before + 1);
-			await settleLastDelivery(session.fake, session.ctx, "stop");
+			expect(session.fake.sent).toHaveLength(before);
+			const injected = acceptUserPrompt(session);
+			expect(injected?.customType).toBe("kalo-subagent-done");
+			await settleLastDelivery(session.fake, session.ctx, "stop", injected);
 			expect(backgroundTasks.get(session.directory, `parent-${stopReason}`, task.runId)?.acknowledged).toBe(true);
 			session.fake.handlers.get("session_shutdown")?.({}, session.ctx);
 		},
@@ -385,9 +399,121 @@ describe("background notification state machine", () => {
 		expect(session.fake.sent).toHaveLength(3);
 		session.fake.handlers.get("input")?.({ source: "rpc", text: "real user" }, session.ctx);
 		await setImmediate();
-		expect(session.fake.sent).toHaveLength(4);
-		expect((session.fake.sent.at(-1)?.message.details as { runIds: string[] }).runIds).toContain(fourth.runId);
+		expect(session.fake.sent).toHaveLength(3);
+		const injected = acceptUserPrompt(session);
+		expect((injected?.details as { runIds: string[] }).runIds).toContain(fourth.runId);
 	});
+
+	it.each(["pending", "blocked", "budget exhausted"] as const)(
+		"preserves the real user prompt and injects notifications when %s",
+		async (mode) => {
+			const agentDir = mkdtempSync(join(tmpdir(), "kalo-notifications-agent-"));
+			fixtures.agentDir = agentDir;
+			agentDirs.push(agentDir);
+			const releaseChild = deferred<BackgroundTaskResult>();
+			let observingPrompt = false;
+			let task: BackgroundTaskRecord | undefined;
+			let directory = "";
+			let owner = "";
+			const received: string[] = [];
+			const ackBeforeSettled: boolean[] = [];
+			const harness = await createHarness({
+				extensionFactories: [
+					(pi) => {
+						// Observe before the notification handler to prove settled is the ack boundary.
+						pi.on("agent_settled", () => {
+							if (observingPrompt && task) {
+								received.push("settled");
+								ackBeforeSettled.push(backgroundTasks.get(directory, owner, task.runId)?.acknowledged === true);
+							}
+						});
+						registerBackgroundNotifications(pi);
+						pi.on("input", async () => {
+							// Hold emitInput open while background completion schedules a drain.
+							if (mode === "pending") releaseChild.resolve({ text: "pending result" });
+							await setImmediate();
+						});
+						pi.on("message_end", (event) => {
+							if (!observingPrompt || !task) return;
+							received.push(event.message.role);
+							ackBeforeSettled.push(backgroundTasks.get(directory, owner, task.runId)?.acknowledged === true);
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			await harness.session.bindExtensions({});
+			owner = harness.sessionManager.getSessionId();
+			directory = childSessionDir(harness.tempDir, owner, agentDir);
+			const rounds = mode === "budget exhausted" ? 3 : mode === "blocked" ? 1 : 0;
+			for (let index = 0; index < rounds; index++) {
+				const settled = deferred<void>();
+				const unsubscribe = harness.session.subscribe((event) => {
+					if (event.type === "agent_settled") settled.resolve();
+				});
+				harness.appendResponses([
+					fauxAssistantMessage("automatic response", { stopReason: mode === "blocked" ? "aborted" : "stop" }),
+				]);
+				task = startTask(directory, owner, { text: `result-${index}` }, `child-${index}`);
+				await settled.promise;
+				unsubscribe();
+				expect(backgroundTasks.get(directory, owner, task.runId)?.acknowledged).toBe(mode !== "blocked");
+			}
+			if (mode === "pending") {
+				task = backgroundTasks.start({ directory, owner, childId: "pending", run: () => releaseChild.promise });
+			} else if (mode === "budget exhausted") {
+				task = startTask(directory, owner, { text: "over budget" }, "over-budget");
+			}
+			await setImmediate();
+			if (!task) throw new Error("missing pending task");
+			expect(backgroundTasks.get(directory, owner, task.runId)?.acknowledged).toBe(false);
+			expect(harness.faux.state.callCount).toBe(rounds);
+			const userText = `process my input after ${mode}`;
+			harness.appendResponses([
+				(context) => {
+					expect(
+						context.messages.some(
+							(message) => message.role === "user" && JSON.stringify(message).includes(userText),
+						),
+					).toBe(true);
+					expect(JSON.stringify(context.messages)).toContain(task?.runId);
+					return fauxAssistantMessage("user and notification handled");
+				},
+			]);
+			observingPrompt = true;
+			await expect(harness.session.prompt(userText)).resolves.toBeUndefined();
+			expect(received).toEqual(["user", "custom", "assistant", "settled"]);
+			expect(ackBeforeSettled).toEqual([false, false, false, false]);
+			expect(backgroundTasks.get(directory, owner, task.runId)?.acknowledged).toBe(true);
+			expect(harness.session.messages.filter((message) => message.role === "user")).toHaveLength(1);
+			expect(
+				harness.sessionManager
+					.getBranch()
+					.filter((entry) => entry.type === "message" && entry.message.role === "user"),
+			).toHaveLength(1);
+			expect(harness.faux.state.callCount).toBe(rounds + 1);
+			expect(harness.getPendingResponseCount()).toBe(0);
+			observingPrompt = false;
+			if (mode === "budget exhausted") {
+				// The injected batch consumed one of the reset budget's three deliveries.
+				for (let index = 0; index < 2; index++) {
+					const settled = deferred<void>();
+					const unsubscribe = harness.session.subscribe((event) => {
+						if (event.type === "agent_settled") settled.resolve();
+					});
+					harness.appendResponses([fauxAssistantMessage("remaining automatic budget")]);
+					const next = startTask(directory, owner, { text: "next batch" }, `next-${index}`);
+					await settled.promise;
+					unsubscribe();
+					expect(backgroundTasks.get(directory, owner, next.runId)?.acknowledged).toBe(true);
+				}
+				const overBudget = startTask(directory, owner, { text: "wait for another user" }, "over-budget-again");
+				await setImmediate();
+				expect(harness.faux.state.callCount).toBe(rounds + 3);
+				expect(backgroundTasks.get(directory, owner, overBudget.runId)?.acknowledged).toBe(false);
+			}
+		},
+	);
 
 	it.each(["idle", "busy"] as const)(
 		"delivers async results through real AgentSession while %s and acknowledges only after settled",

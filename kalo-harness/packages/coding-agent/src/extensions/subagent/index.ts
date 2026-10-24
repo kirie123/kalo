@@ -9,7 +9,7 @@ import type {
 } from "../../core/extensions/types.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { resolveMemberRole } from "../expert-context/package.ts";
-import { backgroundTasks } from "./background.ts";
+import { type BackgroundTaskRecord, backgroundTasks } from "./background.ts";
 import { type ChildHandle, childSessionDir, findChildSessionFile, lookup, nextChildId } from "./children.ts";
 import { acquireChild, childSlots } from "./concurrency.ts";
 import { registerBackgroundNotifications } from "./notifications.ts";
@@ -26,8 +26,18 @@ interface AgentParams {
 	run_in_background?: boolean;
 }
 
-// Only the owner of this entry subscribes, records a transcript and releases slots.
-const running = new Map<string, { handle: ChildHandle; runId?: string; signal?: AbortSignal }>();
+interface PendingRun {
+	runId?: string;
+	tools: string[];
+	signal?: AbortSignal;
+	cancelled: boolean;
+	executing: boolean;
+	phase: "queued" | "initializing" | "running";
+	handle?: ChildHandle;
+	prompts: string[];
+}
+// One owner from registration through settlement, including before a session exists.
+const running = new Map<string, PendingRun>();
 
 export default function subagentExtension(pi: ExtensionAPI): void {
 	registerBackgroundNotifications(pi);
@@ -91,9 +101,53 @@ export async function executeAgent(
 	validateChildId(childId);
 	// Match registry identity, including legacy ids and cwd spelling changes on Windows.
 	const key = JSON.stringify([owner, childId]);
+	const active = running.get(key);
+	if (active) {
+		if (active.cancelled || active.signal?.aborted) {
+			throw new Error(
+				`子 agent ${childId} 正在取消，未接受追加指令；runId：${active.runId ?? "前台运行"}。请等待结束后再 resume。`,
+			);
+		}
+		if (active.phase === "running" && active.handle && !active.handle.session.isIdle) {
+			await active.handle.session.followUp(params.prompt);
+		} else {
+			active.prompts.push(params.prompt);
+		}
+		return {
+			content: [
+				{
+					type: "text",
+					text:
+						`子 agent ${childId} 的追加指令已排队到当前运行，未创建新运行。` +
+						`工具权限：${active.tools.join(", ") || "无"}。${active.runId ? `runId：${active.runId}，用 agent_tasks 查看结果。` : "结果由原前台调用返回。"}`,
+				},
+			],
+			details: {
+				childId,
+				runId: active.runId,
+				background: Boolean(active.runId),
+				resumed: true,
+				queued: true,
+				tools: [...active.tools],
+				turns: 0,
+				tokens: 0,
+				truncated: false,
+			},
+		};
+	}
 	const resident = resumeId ? lookup(resumeId, owner) : undefined;
 	const sessionPath = resumeId && !resident ? findChildSessionFile(cwd, owner, resumeId, agentDir) : undefined;
-	if (resumeId && !resident && !sessionPath) throw new Error(`未知子 agent：${resumeId}`);
+	if (resumeId && !resident && !sessionPath) {
+		const prior = backgroundTasks
+			.list(directory, owner)
+			.filter((record) => record.childId === childId)
+			.at(-1);
+		if (prior)
+			throw new Error(
+				`子 agent ${childId} 无可恢复的会话历史（${prior.status}，runId：${prior.runId}）。请用 agent_tasks 查看原运行；需要重新执行时新建 child 并显式指定工具。`,
+			);
+		throw new Error(`未知子 agent：${resumeId}`);
+	}
 	const tools = resident
 		? [...resident.tools]
 		: resumeId
@@ -103,39 +157,30 @@ export async function executeAgent(
 					sessionPath ? SessionManager.open(sessionPath, directory, cwd).getEntries() : [],
 				)
 			: normalizeTools(params.tools);
-	const active = running.get(key);
-	if (active && !active.signal?.aborted && !active.handle.session.isIdle) {
-		await active.handle.session.followUp(params.prompt);
-		return {
-			content: [
-				{
-					type: "text",
-					text:
-						`子 agent ${childId} 的追加指令已排队到当前运行，未创建新运行。` +
-						`实际工具：${active.handle.tools.join(", ") || "无"}。${active.runId ? `runId：${active.runId}，用 agent_tasks 查看结果。` : "结果由原前台调用返回。"}`,
-				},
-			],
-			details: {
-				childId,
-				runId: active.runId,
-				background: Boolean(active.runId),
-				resumed: true,
-				queued: true,
-				tools: [...active.handle.tools],
-				turns: 0,
-				tokens: 0,
-				truncated: false,
-			},
-		};
-	}
-
-	let runId: string | undefined;
+	const entry: PendingRun = {
+		tools: [...tools],
+		cancelled: false,
+		executing: false,
+		phase: "queued",
+		prompts: [params.prompt],
+	};
+	running.set(key, entry);
+	let unsubscribe: (() => void) | undefined;
+	const cleanup = () => {
+		if (running.get(key) === entry) running.delete(key);
+		entry.prompts.length = 0;
+		unsubscribe?.();
+	};
 	const run = async (runSignal?: AbortSignal) => {
-		const unlock = await acquireChild(key, runSignal);
+		entry.executing = true;
+		entry.signal = runSignal;
+		let unlock: (() => void) | undefined;
 		try {
+			unlock = await acquireChild(key, runSignal);
 			const release = await childSlots.acquire(runSignal);
 			try {
 				runSignal?.throwIfAborted();
+				entry.phase = "initializing";
 				const options = {
 					cwd,
 					model,
@@ -150,49 +195,70 @@ export async function executeAgent(
 				const handle = resumeId
 					? (lookup(childId, owner) ?? (await reviveChild(options)))
 					: await createChild(options);
-				running.set(key, { handle, runId, signal: runSignal });
-				try {
-					return await runTurn({
+				entry.handle = handle;
+				entry.tools = [...handle.tools];
+				entry.phase = "running";
+				let resumed = Boolean(resumeId);
+				while (true) {
+					// Preserve the original prompt and every pre-start addition, in receipt order.
+					const prompt = entry.prompts.splice(0).join("\n\n--- 追加指令（按接收顺序）---\n\n");
+					const outcome = await runTurn({
 						handle,
 						parentSessionId: owner,
-						prompt: params.prompt,
+						prompt,
 						signal: runSignal,
-						resumed: Boolean(resumeId),
+						resumed,
 						description: params.description,
 						onUpdate: params.run_in_background ? undefined : onUpdate,
 					});
-				} finally {
-					running.delete(key);
+					if (outcome.failed || outcome.aborted || outcome.stalled || !entry.prompts.length) return outcome;
+					resumed = true;
 				}
 			} finally {
 				release();
 			}
 		} finally {
-			unlock();
+			unlock?.();
+			cleanup();
 		}
 	};
 	if (params.run_in_background) {
-		const record = backgroundTasks.start({
-			directory,
-			owner,
-			childId,
-			description: params.description,
-			run: async (backgroundSignal) => {
-				const outcome = await run(backgroundSignal);
-				const formatted = formatOutcome(outcome, params.description);
-				return {
-					text: formatted.content
-						.filter((c) => c.type === "text")
-						.map((c) => c.text)
-						.join("\n"),
-					failed: outcome.failed,
-					aborted: outcome.aborted,
-					stalled: outcome.stalled,
-					transcriptPath: outcome.transcriptPath,
-				};
-			},
+		// start may be cancelled before its executor is ever called. Observe that terminal path too.
+		unsubscribe = backgroundTasks.subscribe((event) => {
+			if (event.type !== "change" || event.record.owner !== owner || event.record.childId !== childId) return;
+			if (entry.runId && entry.runId !== event.record.runId) return;
+			entry.runId = event.record.runId;
+			if (event.record.cancelRequestedAt !== undefined) entry.cancelled = true;
+			if (event.record.finishedAt !== undefined && !entry.executing) cleanup();
 		});
-		runId = record.runId;
+		let record: BackgroundTaskRecord;
+		try {
+			record = backgroundTasks.start({
+				directory,
+				owner,
+				childId,
+				description: params.description,
+				run: async (backgroundSignal) => {
+					const outcome = await run(backgroundSignal);
+					const formatted = formatOutcome(outcome, params.description);
+					return {
+						text: formatted.content
+							.filter((c) => c.type === "text")
+							.map((c) => c.text)
+							.join("\n"),
+						failed: outcome.failed,
+						aborted: outcome.aborted,
+						stalled: outcome.stalled,
+						transcriptPath: outcome.transcriptPath,
+					};
+				},
+			});
+		} catch (error) {
+			cleanup();
+			throw error;
+		}
+		const runId = record.runId;
+		entry.runId = runId;
 		return {
 			content: [
 				{

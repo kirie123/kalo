@@ -1,6 +1,6 @@
 # Kalo 子 Agent 机制设计（harness 层）
 
-> 本次覆盖（2026-10-13）：[后台子 Agent 生命周期与可靠投递](2026-10-13-后台子agent生命周期与可靠投递.md) 已在源码实现，未构建、未打包、未提交；覆盖本文的后台运行/取消、resume 与槽位、权限持久恢复、结果通知与确认、桌面保活及确定性工具失败保护。运行中 resume 追加 followUp 并复用当前 run，空闲续写才新建 run；权限使用 `<childId>.tools.json` + custom entry，旧会话缺权限 metadata 按 `[]` 恢复，需要工具应新建并赋权。应用退出后子任务不存活，重开原会话恢复结果/中断而不自动重跑；保活仅限进程内，不为非 active 父会话自动开引擎。gateway external job 仍未实现，`POST /jobs` 已有后台 bash 调用，必须保留。
+> **演进提示**：[后台子 Agent 生命周期与可靠投递](2026-10-13-后台子agent生命周期与可靠投递.md) 的源码已实现并于 2026-10-24 整理入库，当前验证与打包状态见新设计文档；这是当前契约入口，后文旧设计与历史证据不重写。后台登记后 queued 立即返回；queued/initializing/running 的 resume 复用同一 entry/run，running 用 followUp，空闲才新建 run；权限使用 `<childId>.tools.json` + custom entry，旧会话缺权限 metadata 按 `[]` 恢复且不能执行工具。通知的 `input` 处理只 reset 预算，用户输入恢复在 `before_agent_start` 注入，避免抢用户输入；自动投递 busy 用 followUp、idle 用 triggerTurn。最多 3 批（busy 也计数）；通知实际接收、assistant 严格以 `stopReason === "stop"` 成功结束和 `agent_settled` 齐备后才 ack，语义为至少一次而非 exactly once。应用退出中断，恢复不自动重跑。gateway external job、统一 job 列表与 peer 派生仍未实现，本次不修改 `claimCompletions`；`POST /jobs` 的后台 bash 调用仍须保留。
 >
 > 历史状态：基础子 Agent 机制已实现，对应 roadmap P1-C。
 >

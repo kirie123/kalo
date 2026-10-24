@@ -1,11 +1,13 @@
 # 可续写子 Agent、外部托管 Job 与主 Agent 派生
 
 日期：2026-09-11
-状态：第一期已实现；gateway external job 与 peer 派生仍未实现，第二、三期待定。
+状态：历史设计文档；最新子 agent 生命周期源码已实现并于 2026-10-24 整理入库，当前验证与打包状态见新设计文档。
 
-> 本次覆盖（2026-10-13）：[后台子 Agent 生命周期与可靠投递](2026-10-13-后台子agent生命周期与可靠投递.md) 源码已实现，未构建、未打包、未提交。该设计覆盖本文 §4 的后台生命周期、resume/并发槽位与权限恢复，以及 §3/§4 中拟议的子任务结果通知方式和桌面保活：运行中 resume 追加 followUp，复用当前 run；空闲续写才新建 run。权限落盘为 `<childId>.tools.json` + custom entry，旧会话无权限 metadata 按 `[]` 恢复，需工具时新建并赋权。所有结果 pending 至成功 assistant + settled ack，提供至少一次投递；notification 最多 3 批（busy 也计数），每批最多 20 条且整批总长不超过 12,000 字符。owner 仅限单进程，不支持同 session 双 engine 并写。
+> **演进提示**：当前源码契约以 [后台子 Agent 生命周期与可靠投递](2026-10-13-后台子agent生命周期与可靠投递.md) 为准，最新整理验证见该文档。后台登记返回 queued 后立即 resume，仍复用原 entry/run；queued/initializing/running 均不另占槽位，running 追加 followUp，空闲续写才新建 run。权限持久化为 sidecar metadata（`<childId>.tools.json`）及 custom entry；旧会话无 metadata 按 `[]` 恢复且不能执行工具，需工具须新建并显式赋权。
 >
-> 应用退出后子任务不存活；重开原会话恢复结果/中断，不自动重跑。保活仅限进程内，非 active 父会话没有引擎时不会自动开引擎。本次未实现 gateway external job、轮次 claimCompletions 或 peer 派生，下文相关接口与流程保留为待实现提案；`POST /jobs` 已有后台 bash 调用，必须保留，原“零调用方/删除路由”判断作废。§0 与第一期验证数字均为当时记录，本次验证状态见新设计。
+> 通知的 `input` 处理只 reset 预算，用户输入恢复在 `before_agent_start` 注入，避免抢用户输入；自动投递 busy 用 followUp、idle 用 triggerTurn。最多 3 批（busy 也计数），每批最多 20 条、12,000 字符；实际接收通知、assistant 严格以 `stopReason === "stop"` 成功结束及 `agent_settled` 齐备后才 ack，语义为至少一次而非 exactly once。owner 限单进程，不支持同 session 双 engine 并写。App 退出中断，重开恢复结果/中断而不自动重跑，也不自动为非 active 父会话启动引擎。
+>
+> gateway external job、统一 job 列表与 peer 派生仍未实现，本次不修改 `claimCompletions`；`POST /jobs` 已有后台 bash 调用，必须保留，原“零调用方/删除路由”判断作废。本提示只更新当前入口，后文保留历史提案与当时证据，验证总数由主任务最终汇总。
 
 把子 agent 从「一次性、跑完即弃」改造为「常驻、可唤醒续写」，把它纳入 job 可观测面并真正激活 owner 隔离，再在其上开一条受控的「主 agent 派生并行主 agent」通道，派生出来的主 agent 在 git worktree 里干活。
 
