@@ -71,6 +71,7 @@ export interface PanelMemory {
   /** The file tab on screen, by path; null = no file tab (the tree shows). */
   activeFile: string | null;
   changesOnly: boolean;
+  treeVisible: boolean;
   backStack: string[];
   artifactsOpen: boolean;
   /**
@@ -89,6 +90,7 @@ function fresh(root: string): PanelMemory {
     openFiles: [],
     activeFile: null,
     changesOnly: false,
+    treeVisible: true,
     backStack: [],
     artifactsOpen: true,
     pendingArtifact: null,

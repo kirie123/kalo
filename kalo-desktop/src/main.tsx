@@ -6,6 +6,7 @@ import "./index.css";
 import "./styles/skins.css";
 import "./styles/desktop-shell.css";
 import "./styles/notes.css";
+import "./styles/files.css";
 import "./styles/conversation.css";
 import App from "./App";
 
