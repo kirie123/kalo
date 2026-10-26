@@ -1,6 +1,5 @@
 import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { formatProcessDuration } from "../lib/conversation-turns";
-import { activitySummary, syncActivityDisclosure } from "../lib/activity-disclosure";
+import { activityHeading, activitySummary, syncActivityDisclosure } from "../lib/activity-disclosure";
 import type { TimelineEntry } from "../lib/timeline";
 import { sameSegmentEntries, type SegmentStats } from "../lib/work-segment";
 import TimelineItem from "./TimelineItem";
@@ -53,12 +52,10 @@ function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
     anchorTop.current = rootRef.current?.getBoundingClientRect().top ?? null;
     setDisclosure({ running, open: !open });
   };
-  const duration = startedAt !== undefined && (running || finishedAt !== undefined)
-    ? formatProcessDuration((running ? now : finishedAt!) - startedAt) : undefined;
+  const elapsedMs = startedAt !== undefined && Number.isFinite(startedAt) && startedAt > 0
+    && (running || finishedAt !== undefined) ? (running ? now : finishedAt!) - startedAt : undefined;
   const summary = activitySummary(stats);
-  const iconPath = stats.tools[0]?.name === "bash" ? "M3 4l4 4-4 4M9 12h4"
-    : stats.tools.some((tool) => tool.name === "edit" || tool.name === "write") ? "M10 2l4 4-8 8H2v-4zM8 4l4 4"
-      : "M3 3h10v10H3zM5 6h6M5 9h4";
+  const heading = activityHeading(stats, running, elapsedMs);
 
   return (
     <section ref={rootRef} className={`work-segment ${running ? "is-running" : ""}`} aria-label="任务过程">
@@ -67,14 +64,12 @@ function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
         onClick={toggle}
         aria-expanded={open}
         aria-controls={contentId}
-        aria-label={`${running ? "正在处理：" : ""}${summary.full}${stats.error ? "，含失败步骤" : ""}`}
-        title={`${summary.full}${duration ? ` · ${running ? "已运行" : "用时"} ${duration}` : ""}`}
+        aria-label={`${heading}${stats.error ? "，含失败步骤" : ""}`}
+        title={summary.full}
         className="work-segment-head"
       >
-        <span className="activity-group-icon" aria-hidden="true">
-          {running ? <span className="spinner" /> : <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2"><path d={iconPath} strokeLinecap="round" strokeLinejoin="round" /></svg>}
-        </span>
-        <span className="activity-group-label">{summary.label}</span>
+        {running && <span className="activity-group-icon" aria-hidden="true"><span className="spinner" /></span>}
+        <span className="activity-group-label">{heading}</span>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`activity-group-chevron ${open ? "rotate-90" : ""}`} aria-hidden="true"><path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         {stats.error && <span className="activity-group-error">含失败步骤</span>}
       </button>

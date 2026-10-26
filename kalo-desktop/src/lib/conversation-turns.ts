@@ -42,7 +42,10 @@ export function foldConversationTurns(timeline: TimelineEntry[], live: boolean):
     };
     for (const entry of run) {
       if (entry.kind === "toolGroup") {
-        if (entry.calls.length > 0) process.push(entry);
+        // Deliverables have their own cards/panel; only failed presentation
+        // calls need a diagnostic row. Never change the stored timeline.
+        const calls = entry.calls.filter((call) => call.toolName !== "present_files" || call.status === "error");
+        if (calls.length > 0) process.push(calls.length === entry.calls.length ? entry : { ...entry, calls });
         continue;
       }
       if (entry.kind === "assistant" && !isFailure(entry) && !hasText(entry)) {

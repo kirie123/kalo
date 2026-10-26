@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activitySummary, syncActivityDisclosure } from "./activity-disclosure";
+import { activityHeading, activitySummary, syncActivityDisclosure } from "./activity-disclosure";
 import { segmentStats } from "./work-segment";
 
 describe("activity disclosure", () => {
@@ -27,5 +27,18 @@ describe("activity summary", () => {
     expect(summary.label).not.toContain("派生");
     expect(summary.full).toContain("派生了 1 个子 agent");
     expect(activitySummary(segmentStats([])).label).toBe("思考过程");
+  });
+});
+
+describe("activity heading", () => {
+  const stats = { ...segmentStats([]), tools: [{ name: "bash", count: 4 }] };
+  it("shows elapsed time while running and only the frozen duration after completion", () => {
+    expect(activityHeading(stats, true, 73000)).toBe("执行了 4 条命令 · 已运行 1 分钟 13 秒");
+    expect(activityHeading(stats, false, 73000)).toBe("用时 1 分钟 13 秒");
+    expect(activityHeading(stats, false, 0)).toBe("用时 0 秒");
+  });
+  it.each([undefined, -1, NaN, Infinity])("does not invent timing for missing or invalid duration %s", (elapsed) => {
+    expect(activityHeading(stats, false, elapsed)).toBe("任务过程");
+    expect(activityHeading(stats, true, elapsed)).toBe("执行了 4 条命令");
   });
 });

@@ -1,4 +1,5 @@
 import { toolChips } from "./tool-labels";
+import { formatProcessDuration } from "./conversation-turns";
 import type { SegmentStats } from "./work-segment";
 
 export interface ActivityDisclosure {
@@ -18,4 +19,13 @@ export function activitySummary(stats: SegmentStats): { label: string; full: str
     label: labels.length > 3 ? `${labels.slice(0, 3).join("，")}等 ${labels.length} 类操作` : labels.join("，"),
     full: labels.join("，"),
   };
+}
+
+/** Missing history timing must never be replaced with time spent viewing it. */
+export function activityHeading(stats: SegmentStats, running: boolean, elapsedMs?: number): string {
+  const duration = elapsedMs !== undefined && Number.isFinite(elapsedMs) && elapsedMs >= 0
+    ? formatProcessDuration(elapsedMs) : undefined;
+  if (!running) return duration ? `用时 ${duration}` : "任务过程";
+  const summary = activitySummary(stats).label;
+  return duration ? `${summary} · 已运行 ${duration}` : summary;
 }

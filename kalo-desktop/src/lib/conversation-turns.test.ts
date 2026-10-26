@@ -60,6 +60,36 @@ describe("foldConversationTurns", () => {
     expect(foldConversationTurns([progress], true)).toEqual([{ kind: "entry", entry: progress }]);
   });
 
+  it.each(["running", "success"] as const)("hides %s presentation calls while keeping both prose halves and artifacts visible", (status) => {
+    const present = tool("present", status);
+    present.toolName = "present_files";
+    present.calls[0].toolName = "present_files";
+    const before = assistant("before", "报告正文前半部分");
+    before.message.content.push({ type: "toolCall", id: "present", name: "present_files", arguments: { files: ["report.md"] } });
+    const after = assistant("after", "报告正文后半部分", { usage });
+    const artifact: TimelineEntry = { id: "artifact", kind: "artifacts", summary: { items: [], primary: null } };
+    const timeline = [before, present, artifact, after];
+    const source = structuredClone(timeline);
+    for (const live of [true, false]) {
+      expect(foldConversationTurns(timeline, live)).toEqual([before, artifact, after].map((entry) => ({ kind: "entry", entry })));
+      expect(foldConversationTurns([present], live)).toEqual([]);
+    }
+    expect(timeline).toEqual(source);
+  });
+
+  it("filters mixed activity without losing other tools, group identity or failure details", () => {
+    const mixed = tool("mixed");
+    const hidden = { ...mixed.calls[0], toolCallId: "present", toolName: "present_files" };
+    const failed = { ...hidden, toolCallId: "failed", status: "error" as const, result: "文件不存在" };
+    mixed.calls = [hidden, ...mixed.calls, failed];
+    const source = structuredClone(mixed);
+    const rows = foldConversationTurns([mixed], false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: "segment", id: "mixed", stats: { error: true },
+      entries: [{ calls: [mixed.calls[1], failed] }] });
+    expect(mixed).toEqual(source);
+  });
+
   it("groups thinking-only activity without moving mixed text/thinking blocks", () => {
     const mixed = assistant("mixed", "结果", { usage });
     mixed.message.content.push({ type: "thinking", thinking: "补充核实" }, { type: "text", text: "补充结果" });
