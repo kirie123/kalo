@@ -29,7 +29,7 @@ const TimelineItem = memo(function TimelineItem({
 }) {
   switch (entry.kind) {
     case "user":
-      return <UserBubble message={entry.message} />;
+      return <UserBubble message={entry.message} entryId={entry.id} />;
     case "assistant":
       return (
         <AssistantMessage

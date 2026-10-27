@@ -73,7 +73,7 @@ function CollapsibleText({ text }: { text: string }) {
   );
 }
 
-export default function UserBubble({ message }: { message: UserMessage }) {
+export default function UserBubble({ message, entryId }: { message: UserMessage; entryId?: string }) {
   const [preview, setPreview] = useState<LightboxImage | null>(null);
   // Attached files travel as paths in an <attachments> tag; render them as
   // chips instead of dumping the tag into the bubble as text.
@@ -81,7 +81,7 @@ export default function UserBubble({ message }: { message: UserMessage }) {
   const images = userImages(message);
 
   return (
-    <div className="user-message group flex flex-col items-end py-1">
+    <div data-user-message-id={entryId} className="user-message group flex flex-col items-end py-1">
       {(paths.length > 0 || images.length > 0) && (
         <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5 pb-1">
           {images.map((img, i) => (

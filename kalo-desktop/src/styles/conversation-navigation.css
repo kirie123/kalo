@@ -1,0 +1,83 @@
+.conversation-nav {
+  position: absolute;
+  z-index: 20;
+  top: 16px;
+  bottom: 64px;
+  right: 10px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+.conversation-nav-rail {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-around;
+  width: 28px;
+  max-height: 100%;
+  padding: 12px 0;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.conversation-nav-tick {
+  display: block;
+  flex-shrink: 0;
+  width: 10px;
+  height: 2px;
+  margin: 5px 0;
+  border-radius: 2px;
+  background: var(--text-dim);
+  opacity: 0.4;
+  transition: width 140ms ease, opacity 140ms ease;
+}
+.conversation-nav-tick.is-active,
+.conversation-nav-item[aria-current="location"] .conversation-nav-tick {
+  width: 16px;
+  height: 3px;
+  background: var(--tone-blue);
+  opacity: 1;
+}
+.conversation-nav-rail .conversation-nav-tick { margin: 0; }
+.conversation-nav-rail:hover { background: var(--bg-card); }
+.conversation-nav-rail[aria-expanded="true"] { background: transparent; }
+.conversation-nav-rail[aria-expanded="true"] .conversation-nav-tick { opacity: 0; }
+.conversation-nav-panel {
+  position: absolute;
+  right: 28px;
+  width: min(280px, calc(100cqw - 52px));
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 32px var(--border);
+  color: var(--text-dim);
+}
+.conversation-nav-list { position: relative; overflow-y: auto; overscroll-behavior: contain; padding: 6px; max-height: 300px; }
+.conversation-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 20px;
+}
+.conversation-nav-item > span:first-child { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.conversation-nav-item:hover { background: var(--bg-card); color: var(--text); }
+.conversation-nav-item[aria-current="location"] { color: var(--tone-blue); }
+.conversation-nav-older { padding: 4px 8px; width: 100%; text-align: left; font-size: 12px; line-height: 20px; }
+.conversation-nav-older:disabled { opacity: 0.6; }
+.conversation-nav button:focus-visible { outline: 2px solid var(--tone-blue); outline-offset: -2px; }
+.conversation-scroll-area { container-type: inline-size; }
+.conversation-scroll-area.has-user-navigation .conversation-transcript { padding-right: 44px; }
+@media (prefers-reduced-motion: reduce) {
+  .conversation-nav-tick { transition: none; }
+}

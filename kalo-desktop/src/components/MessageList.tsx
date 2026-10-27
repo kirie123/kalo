@@ -7,6 +7,7 @@ import { foldConversationTurns } from "../lib/conversation-turns";
 import { assistantText } from "./AssistantMessage";
 import TimelineItem from "./TimelineItem";
 import WorkSegment from "./WorkSegment";
+import ConversationNavigator from "./ConversationNavigator";
 
 export default function MessageList() {
   const { timeline, history, loadingOlder, isStreaming, isCompacting, activeSessionKey } = useChatSelector(
@@ -27,6 +28,18 @@ export default function MessageList() {
   const [showJump, setShowJump] = useState(false);
   // Scroll height captured before an older-history prepend, to restore the viewport.
   const prependHeight = useRef<number | null>(null);
+  const hasUserNavigation = Boolean(history?.hasMore) || timeline.filter((entry) => entry.kind === "user").length >= 2;
+
+  const loadOlder = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !history?.hasMore || loadingOlder) return;
+    stickToBottom.current = false;
+    // The explicit prepend compensation below owns anchoring during pagination.
+    el.style.overflowAnchor = "none";
+    prependHeight.current = el.scrollHeight;
+    void chatStore.loadOlderHistory();
+  }, [history, loadingOlder]);
+  const navigateToUser = useCallback(() => { stickToBottom.current = false; }, []);
 
   // One copy button per turn, on the turn's last assistant message, carrying the
   // turn's full text. A turn ends at the next user message; the trailing turn
@@ -57,8 +70,7 @@ export default function MessageList() {
     stickToBottom.current = distToBottom < 80;
     setShowJump(distToBottom > 200);
     if (el.scrollTop < 40 && history?.hasMore && !loadingOlder) {
-      prependHeight.current = el.scrollHeight;
-      void chatStore.loadOlderHistory();
+      loadOlder();
     }
   };
 
@@ -88,6 +100,7 @@ export default function MessageList() {
     stickToBottom.current = true;
     setShowJump(false);
     prependHeight.current = null;
+    if (scrollRef.current) scrollRef.current.style.overflowAnchor = "";
     let second = 0;
     const first = requestAnimationFrame(() => {
       const el = scrollRef.current;
@@ -109,6 +122,8 @@ export default function MessageList() {
     if (loadingOlder || !el || prependHeight.current === null) return;
     el.scrollTop += el.scrollHeight - prependHeight.current;
     prependHeight.current = null;
+    const frame = requestAnimationFrame(() => { el.style.overflowAnchor = ""; });
+    return () => { cancelAnimationFrame(frame); el.style.overflowAnchor = ""; };
   }, [loadingOlder]);
 
   const jumpToBottom = () => {
@@ -119,7 +134,7 @@ export default function MessageList() {
   };
 
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className={`conversation-scroll-area relative min-h-0 flex-1 ${hasUserNavigation ? "has-user-navigation" : ""}`}>
       <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto">
         <div ref={contentRef} className="conversation-transcript mx-auto flex max-w-3xl flex-col px-5 py-6" style={{ zoom }}>
           {loadingOlder && <div className="text-center text-xs text-dim">加载更早的消息…</div>}
@@ -154,6 +169,18 @@ export default function MessageList() {
           )}
         </div>
       </div>
+
+      <ConversationNavigator
+        key={activeSessionKey}
+        timeline={timeline}
+        scrollRef={scrollRef}
+        contentRef={contentRef}
+        zoom={zoom}
+        hasMore={Boolean(history?.hasMore)}
+        loadingOlder={loadingOlder}
+        onLoadOlder={loadOlder}
+        onNavigate={navigateToUser}
+      />
 
       {showJump && (
         <button
