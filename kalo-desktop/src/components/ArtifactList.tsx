@@ -3,8 +3,9 @@ import { formatBytes, type FileKind } from "../lib/file-kind";
 import type { ArtifactItem } from "../lib/artifacts";
 import { chatStore } from "../lib/chat-store";
 import { openPath } from "../lib/pi-bridge";
+import { queuePanelArtifactOpen } from "../lib/file-panel-memory";
+import { panelTabs } from "../lib/panel-tabs";
 import ContextMenu, { copyLinkItem, copyPathItem, openPathItem, openUrlItem, useContextMenu, type MenuItem } from "./ContextMenu";
-import FileViewerModal from "./FileViewerModal";
 import DeliveredImage from "./DeliveredImage";
 
 function errText(e: unknown): string {
@@ -86,13 +87,12 @@ function ArtifactRow({
 }
 
 /**
- * The deliverable rows themselves: click opens (viewer for local files, the
- * built-in browser for urls), right-click offers the path/url menu. Shared by
+ * The deliverable rows themselves: local files open in the right panel,
+ * URLs use openPath, and right-click offers the path/url menu. Shared by
  * the standalone artifacts card and the end-of-run card, so both behave the
  * same (doc/2026-09-28-产物呈现通道.md § 2026-10-11 增补).
  */
 export default function ArtifactList({ items }: { items: ArtifactItem[] }) {
-  const [viewing, setViewing] = useState<ArtifactItem | null>(null);
   const [menuItem, setMenuItem] = useState<ArtifactItem | null>(null);
   const menu = useContextMenu();
 
@@ -102,7 +102,9 @@ export default function ArtifactList({ items }: { items: ArtifactItem[] }) {
       void openPath(item.path).catch((e) => chatStore.pushToast(`打开链接失败：${errText(e)}`, "error"));
       return;
     }
-    setViewing(item);
+    const { sessionUid, cwd } = chatStore.getSnapshot();
+    queuePanelArtifactOpen(sessionUid, cwd, item);
+    panelTabs.showFiles();
   };
 
   const menuItems = (item: ArtifactItem): MenuItem[] => {
@@ -122,7 +124,7 @@ export default function ArtifactList({ items }: { items: ArtifactItem[] }) {
       {items.map((item) => (
         <div key={item.path}>
           {item.kind === "file" && item.fileKind === "image" && !item.missing && (
-            <div className="px-2 py-2"><DeliveredImage source={item.path} alt={item.name} /></div>
+            <div className="px-2 py-2"><DeliveredImage source={item.path} alt={item.name} onOpen={() => openItem(item)} /></div>
           )}
           <ArtifactRow
             item={item}
@@ -135,18 +137,6 @@ export default function ArtifactList({ items }: { items: ArtifactItem[] }) {
         </div>
       ))}
       {menu.at && menuItem && <ContextMenu at={menu.at} items={menuItems(menuItem)} onClose={menu.close} />}
-      {viewing && viewing.kind === "file" && (
-        <FileViewerModal
-          file={{
-            path: viewing.name,
-            fullPath: viewing.path,
-            added: 0,
-            edits: 1,
-            created: false,
-          }}
-          onClose={() => setViewing(null)}
-        />
-      )}
     </>
   );
 }

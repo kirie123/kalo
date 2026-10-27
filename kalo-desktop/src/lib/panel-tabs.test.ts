@@ -7,6 +7,7 @@ import {
   nextTabId,
   setTabUrl,
   shortCommandLabel,
+  showFilePanel,
   togglePanel,
   type PanelState,
   type PanelTab,
@@ -52,6 +53,23 @@ describe("activateTab", () => {
     const next = activateTab(state({ tabs: [shell("t-1")], activeId: "t-1" }), "");
     expect(next.activeId).toBe("");
     expect(next.tabs).toHaveLength(1);
+  });
+});
+
+describe("showFilePanel", () => {
+  it.each(["b-1", "t-1"])("reveals files from a hidden panel focused on %s without losing its tabs", (activeId) => {
+    const base = state({ open: false, tabs: [browser("b-1", "https://example.com"), shell("t-1")], activeId });
+    const shown = showFilePanel(base);
+    expect(shown.open).toBe(true);
+    expect(shown.activeId).toBe("");
+    expect(shown.tabs).toEqual(base.tabs);
+    expect(base.open).toBe(false);
+    expect(base.activeId).toBe(activeId);
+  });
+
+  it("keeps the file area open when another deliverable is selected", () => {
+    const shown = showFilePanel(state({}));
+    expect(showFilePanel(shown)).toEqual(shown);
   });
 });
 
@@ -177,7 +195,7 @@ describe("nextTabId", () => {
 });
 
 describe("initialPanelState", () => {
-  it("starts open with no tab, leaving the screen to the file side", () => {
-    expect(initialPanelState).toEqual({ open: true, tabs: [], activeId: "" });
+  it("starts closed so the directory panel does not occupy chat space", () => {
+    expect(initialPanelState).toEqual({ open: false, tabs: [], activeId: "" });
   });
 });

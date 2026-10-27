@@ -33,7 +33,7 @@ export interface PanelFile {
 export type FileView = "source" | "diff";
 
 /**
- * A live `present_files` deliverable waiting for its session's panel.
+ * A clicked or live `present_files` deliverable waiting for its session's panel.
  *
  * A deliverable declared while its session ran in the background must not pop
  * into the file area of whatever session happens to be on screen; it waits here
@@ -45,7 +45,7 @@ export interface PendingArtifact {
   path: string;
 }
 
-/** A live deliverable of a session (engine `present_files` item, narrowed to
+/** A deliverable of a session (engine `present_files` item, narrowed to
  *  the fields the panel needs). */
 export interface Deliverable {
   kind: "file" | "url";
@@ -75,8 +75,8 @@ export interface PanelMemory {
   backStack: string[];
   artifactsOpen: boolean;
   /**
-   * Deliverable declared by a live `present_files` of this session, opened by
-   * the panel the next time this session is on screen (then cleared).
+   * Deliverable clicked or declared live in this session, opened by the panel
+   * the next time this session is on screen (then cleared).
    */
   pendingArtifact: PendingArtifact | null;
 }
@@ -90,7 +90,7 @@ function fresh(root: string): PanelMemory {
     openFiles: [],
     activeFile: null,
     changesOnly: false,
-    treeVisible: true,
+    treeVisible: false,
     backStack: [],
     artifactsOpen: true,
     pendingArtifact: null,
@@ -247,9 +247,9 @@ const subscribe = (fn: () => void) => {
 export const subscribePanelMemory = subscribe;
 
 /**
- * Record a live deliverable for the session that declared it. Called from the
- * present_files live path (lib/artifacts.ts), which knows the owning session's
- * uid and cwd — the two things routing the open needs. URLs and files the
+ * Record a deliverable for its session. Called from the live present_files
+ * path (lib/artifacts.ts) or a manual click, with the owning session's uid and
+ * cwd — the two things routing the open needs. URLs and files the
  * engine could not stat are dropped here: there is nothing to preview.
  */
 export function queuePanelArtifactOpen(uid: string, cwd: string, item: Deliverable): void {

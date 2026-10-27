@@ -41,11 +41,16 @@ export interface PanelState {
   activeId: string;
 }
 
-export const initialPanelState: PanelState = { open: true, tabs: [], activeId: "" };
+export const initialPanelState: PanelState = { open: false, tabs: [], activeId: "" };
 
 /** Show/hide the whole right column (the tab set is untouched). */
 export function togglePanel(state: PanelState): PanelState {
   return { ...state, open: !state.open };
+}
+
+/** Reveal the file area, retaining all browser / terminal / watch tabs. */
+export function showFilePanel(state: PanelState): PanelState {
+  return { ...state, open: true, activeId: "" };
 }
 
 /** Focus one tab, or `""` to hand the screen back to the file side. */
@@ -136,6 +141,7 @@ export interface WatchTabSeed {
 
 export const panelTabs = {
   toggle: () => update(togglePanel(state)),
+  showFiles: () => update(showFilePanel(state)),
   activate: (id: string) => update(activateTab(state, id)),
   close: (id: string) => {
     const tab = state.tabs.find((t) => t.id === id);

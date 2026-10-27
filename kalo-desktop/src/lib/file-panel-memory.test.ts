@@ -37,7 +37,7 @@ describe("resolvePanelMemory", () => {
       openFiles: [],
       activeFile: null,
       changesOnly: false,
-      treeVisible: true,
+      treeVisible: false,
       backStack: [],
       artifactsOpen: true,
       pendingArtifact: null,
@@ -72,12 +72,15 @@ describe("resolvePanelMemory", () => {
 
   it("remembers tree visibility without closing files or changing another session", () => {
     const before = withTabs("uid-tree-hidden", ["D:/repo/a.md"], "D:/repo/a.md");
+    patchPanelMemory("uid-tree-hidden", "D:/repo", { treeVisible: true });
+    expect(resolvePanelMemory("uid-tree-hidden", "D:/repo").treeVisible).toBe(true);
+    expect(resolvePanelMemory("uid-tree-other", "D:/repo").treeVisible).toBe(false);
     patchPanelMemory("uid-tree-hidden", "D:/repo", { treeVisible: false });
     const hidden = resolvePanelMemory("uid-tree-hidden", "D:/repo");
     expect(hidden.openFiles).toEqual(before.openFiles);
     expect(hidden.activeFile).toBe(before.activeFile);
     expect(hidden.treeVisible).toBe(false);
-    expect(resolvePanelMemory("uid-tree-other", "D:/repo").treeVisible).toBe(true);
+    expect(resolvePanelMemory("uid-tree-other", "D:/repo").treeVisible).toBe(false);
   });
 });
 

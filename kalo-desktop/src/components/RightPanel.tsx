@@ -132,8 +132,8 @@ function TabStrip() {
   const uid = useChatSelector((s) => s.sessionUid);
   const mem = usePanelMemory(uid, cwd);
 
-  // A live present_files deliverable lands as a new file tab and takes the
-  // screen: whoever declared it wants it seen. Consumed here because the strip
+  // A clicked or live present_files deliverable lands as a file tab and takes
+  // the screen. Consumed here because the strip
   // is what owns "which file tab is current"; the queue itself is per session
   // (lib/artifacts.ts), so a deliverable of a background session waits for its
   // own session's strip instead of popping into whatever is on screen
@@ -142,10 +142,10 @@ function TabStrip() {
     const pending = mem.pendingArtifact;
     if (!pending) return;
     patchPanelMemory(uid, cwd, {
-      ...openFileInMemory(mem, { name: pending.name, path: pending.path }),
+      ...openFileInMemory(mem, { name: pending.name, path: pending.path, view: "source" }),
       pendingArtifact: null,
     });
-    panelTabs.activate("");
+    panelTabs.showFiles();
   }, [mem, uid, cwd]);
 
   /** Focus one open file tab (also handing the screen back from a panel tab). */
