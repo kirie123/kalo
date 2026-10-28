@@ -14,3 +14,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 base64 = "0.22"
 portable-pty = "0.9"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+fs2 = "0.4"
+unicode-normalization = "0.1"
+unicode-casefold = "0.2"
+pulldown-cmark = { version = "0.12", default-features = false }
+percent-encoding = "2"
+uuid = { version = "1", features = ["v4"] }

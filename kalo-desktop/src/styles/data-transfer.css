@@ -1,0 +1,34 @@
+.transfer-workspace { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--text); }
+.transfer-main { flex: 1; overflow: auto; padding: 28px clamp(20px, 4vw, 64px); }
+.transfer-panel { display: flex; flex-direction: column; gap: 18px; }
+.transfer-panel h1 { font-size: 24px; font-weight: 650; margin-bottom: 8px; }
+.transfer-panel h2 { font-size: 17px; font-weight: 600; margin-bottom: 12px; }
+.transfer-panel h3 { font-weight: 600; }
+.transfer-panel p { font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.transfer-panel button, .transfer-panel select { border: 1px solid var(--border); background: var(--bg-card); color: inherit; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.transfer-panel button:hover:not(:disabled) { background: var(--bg-sidebar); }
+.transfer-panel button:disabled, .transfer-panel select:disabled { opacity: .5; cursor: not-allowed; }
+.transfer-panel input:not([type="checkbox"]) { min-width: 180px; border: 1px solid var(--border); background: var(--bg); border-radius: 8px; padding: 8px; }
+.transfer-panel input[type="checkbox"] { margin-right: 7px; }
+.transfer-panel label { font-size: 14px; }
+.transfer-card { border: 1px solid var(--border); border-radius: 12px; padding: 20px; background: var(--bg-card); }
+.transfer-card > p { margin-bottom: 12px; }
+.transfer-row, .transfer-actions, .transfer-counts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.transfer-row { justify-content: space-between; }
+.transfer-actions { margin: 12px 0; }
+.transfer-counts { margin: 12px 0; font-size: 13px; color: var(--text-dim); }
+.transfer-counts span { border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; }
+.transfer-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.transfer-error { border-left: 3px solid var(--danger); padding: 12px; color: var(--danger); background: var(--bg-card); }
+.transfer-progress { display: flex; align-items: center; gap: 16px; font-size: 14px; }
+.transfer-progress progress { flex: 1; }
+.transfer-items { max-height: 430px; overflow: auto; border-top: 1px solid var(--border); }
+.transfer-item { display: flex; gap: 10px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.transfer-item > div { min-width: 0; flex: 1; }
+.transfer-item strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.transfer-item small { display: block; color: var(--text-dim); overflow-wrap: anywhere; }
+.transfer-comparison { margin-top: 18px; }
+.transfer-comparison textarea { display: block; margin-top: 8px; width: 100%; height: 260px; resize: vertical; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font-family: monospace; font-size: 12px; }
+.transfer-panel details { padding: 10px 0; }
+.transfer-panel summary { cursor: pointer; font-size: 14px; }
+@media (max-width: 900px) { .transfer-columns { grid-template-columns: 1fr; } .transfer-item { flex-wrap: wrap; } .transfer-item > div { flex-basis: 100%; } }

@@ -388,7 +388,7 @@ export default function App() {
                   <EraPanel onLeaveToChat={() => setPage("chat")} />
                 </div>
               ) : page === "notes" ? (
-                <NotesPanel />
+                <NotesPanel onDataTransfer={() => onOpenSettings("data")} />
               ) : page === "experts" ? (
                 <ExpertsPanel onLeaveToChat={() => setPage("chat")} />
               ) : page === "automation" ? (

@@ -182,6 +182,7 @@ impl PiProcess {
         expert: Option<&crate::experts::ExpertCtx>,
         unattended: bool,
     ) -> Result<Self, String> {
+        crate::data_transfer::normal_only()?;
         let pi_path = resolve_pi_path()?;
 
         let mut cmd = Command::new(&pi_path);

@@ -22,6 +22,7 @@ import TasksSettings from "./TasksSettings";
 import AppearanceSettings from "./AppearanceSettings";
 import AppIcon, { type IconName } from "./AppIcon";
 import type { SkinPref, ThemePref } from "../lib/appearance";
+import DataTransferSettings from "../features/data-transfer/DataTransferSettings";
 
 interface SettingsPageProps {
   theme: ThemePref;
@@ -38,6 +39,7 @@ export type SettingsTab =
   | "models"
   | "skills"
   | "memory"
+  | "data"
   | "permission"
   | "appearance"
   | "gateway"
@@ -49,6 +51,7 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "models", label: "模型", icon: "model" },
   { id: "skills", label: "技能", icon: "puzzle" },
   { id: "memory", label: "记忆", icon: "memory" },
+  { id: "data", label: "数据管理", icon: "folder" },
   { id: "permission", label: "权限", icon: "shield" },
   { id: "appearance", label: "外观", icon: "palette" },
   { id: "gateway", label: "IM 网关", icon: "inbox" },
@@ -117,7 +120,8 @@ export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange,
           <p className="settings-description">按照自己的习惯，安排这个工作空间。</p>
           {tab === "models" && <ModelSettings />}
           {tab === "skills" && <SkillsSettings />}
-          {tab === "memory" && <MemorySettings />}
+          {tab === "memory" && <MemorySettings onDataTransfer={() => selectTab("data")} />}
+          {tab === "data" && <DataTransferSettings />}
           {tab === "permission" && <PermissionSettings />}
           {tab === "appearance" && <AppearanceSettings theme={theme} skin={skin} onThemeChange={onThemeChange} onSkinChange={onSkinChange} />}
           {tab === "gateway" && <GatewaySettings />}

@@ -60,6 +60,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { TransferStatus, TransferScopes, TransferPreview, TransferDecision, TransferDetails, TransferJournal, TransferProgress } from "../features/data-transfer/types";
 import type {
   AppPaths,
   AuthConfig,
@@ -745,3 +746,19 @@ export function onTerminalOutput(id: string, cb: (chunk: string) => void) {
 export function onTerminalExit(id: string, cb: (info: TerminalExitInfo) => void) {
   return listen<TerminalExitInfo>(`terminal-exit:${id}`, (e) => cb(e.payload));
 }
+
+// Personal data transfer is a desktop filesystem contract, not an engine RPC.
+export const dataTransferStatus = () => invoke<TransferStatus>("data_transfer_status");
+export const dataTransferArm = (armed: boolean) => invoke<void>("data_transfer_arm", { armed });
+export const dataTransferLeave = () => invoke<void>("data_transfer_leave");
+export const dataTransferRecover = () => invoke<void>("data_transfer_recover");
+export const prepareDataExport = (scopes: TransferScopes) => invoke<TransferPreview>("prepare_data_export", { scopes });
+export const prepareDataImport = (path: string) => invoke<TransferPreview>("prepare_data_import", { path });
+export const resolveDataImport = (operationId: string, decisions: TransferDecision[]) => invoke<TransferPreview>("resolve_data_import", { operationId, decisions });
+export const dataTransferDetails = (operationId: string, path: string) => invoke<TransferDetails>("data_transfer_details", { operationId, path });
+export const finishDataExport = (operationId: string, path: string) => invoke<void>("finish_data_export", { operationId, path });
+export const commitDataImport = (operationId: string, revision: string) => invoke<TransferJournal>("commit_data_import", { operationId, revision });
+export const cancelDataTransfer = (operationId: string) => invoke<void>("cancel_data_transfer", { operationId });
+export const listDataTransfers = () => invoke<TransferJournal[]>("list_data_transfers");
+export const undoDataImport = (transactionId: string) => invoke<TransferJournal>("undo_data_import", { transactionId });
+export const onDataTransferProgress = (cb: (p: TransferProgress) => void) => listen<TransferProgress>("data-transfer-progress", (e) => cb(e.payload));

@@ -10,6 +10,9 @@ interface DocumentState { path: string | null; text: string; base: string }
 const emptyDocument = (): DocumentState => ({ path: null, text: "", base: "" });
 const noteWriter = new NoteSaveQueue(({ path, text }) => writeKnowledgeCard(path, "cards", "", text));
 
+/** Settings is mounted after the note editor unmounts and enqueues its final save. */
+export const waitForNoteWrites = () => noteWriter.idle();
+
 /** IPC and browser persistence live here; document transformations stay in document.ts. */
 export function useNoteDocument(onSaved: () => Promise<void>) {
   const [document, setDocument] = useState<DocumentState>(emptyDocument);

@@ -133,6 +133,7 @@ impl GatewayManager {
     /// Spawn the gateway sidecar unless one is already running. Emits the
     /// initial status and returns an error when the binary is missing.
     pub fn ensure_spawned(&self, app: &AppHandle) -> Result<(), String> {
+        crate::data_transfer::normal_only()?;
         {
             let inner = self.lock();
             if inner.process.is_some() {

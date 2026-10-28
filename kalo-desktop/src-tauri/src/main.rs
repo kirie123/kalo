@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bundled_tools;
+mod data_transfer;
 mod files;
 mod experts;
 mod expert_import;
@@ -240,12 +241,14 @@ fn write_memory(
     tags: Vec<String>,
     content: String,
 ) -> Result<String, String> {
+    data_transfer::normal_only()?;
     memory::write_memory(slug.as_deref(), &title, &tags, &content)
 }
 
 /// Delete a memory by slug, restricted to the memory root.
 #[tauri::command(async)]
 fn delete_memory(slug: String) -> Result<(), String> {
+    data_transfer::normal_only()?;
     memory::delete_memory(&slug)
 }
 
@@ -302,6 +305,7 @@ fn read_file_text(path: String, max_bytes: Option<usize>) -> Result<FileText, St
 /// exporting a rendered SVG figure).
 #[tauri::command(async)]
 fn write_file_text(path: String, contents: String) -> Result<(), String> {
+    data_transfer::normal_only()?;
     files::write_file_text(&path, &contents)
 }
 
@@ -309,6 +313,7 @@ fn write_file_text(path: String, contents: String) -> Result<(), String> {
 /// menu exports a rendered widget to PNG, which the text writer can't handle.
 #[tauri::command(async)]
 fn write_file_bytes(path: String, data_base64: String) -> Result<(), String> {
+    data_transfer::normal_only()?;
     files::write_file_bytes(&path, &data_base64)
 }
 
@@ -382,6 +387,7 @@ fn read_attachment(path: String) -> Result<AttachmentData, String> {
 /// path — under `~/.kalo/attachments` and return where it landed.
 #[tauri::command(async)]
 fn save_attachment_bytes(name: String, data_base64: String) -> Result<AttachmentData, String> {
+    data_transfer::normal_only()?;
     files::save_attachment_bytes(&name, &data_base64)
 }
 
@@ -582,12 +588,14 @@ fn write_knowledge_card(
     title: String,
     content: String,
 ) -> Result<String, String> {
+    data_transfer::normal_only()?;
     knowledge::write_card(rel_path.as_deref(), &domain, &title, &content)
 }
 
 /// Delete a card by rel path.
 #[tauri::command(async)]
 fn delete_knowledge_card(rel_path: String) -> Result<(), String> {
+    data_transfer::normal_only()?;
     knowledge::delete_card(&rel_path)
 }
 
@@ -648,6 +656,17 @@ fn main() {
         .manage(GatewayManager::default())
         .manage(terminal::TerminalManager::new())
         .setup(|app| {
+            use tauri_plugin_dialog::DialogExt;
+            let transfer = match data_transfer::TransferState::initialize() {
+                Ok(state) => state,
+                Err(error) => {
+                    app.dialog().message(error).title("无法打开 Kalo 数据目录").blocking_show();
+                    app.handle().exit(1);
+                    return Ok(());
+                }
+            };
+            let maintenance = transfer.maintenance();
+            app.manage(transfer);
             // Must come first: everything below resolves bundled resources
             // (sidecars, internal-skills) through this.
             resources::init(app.handle());
@@ -657,6 +676,7 @@ fn main() {
             // can be starved until typing stops echoing
             // (doc/2026-10-01-高负载下界面响应与输入可见性.md §2).
             priority::keep_ui_responsive();
+            if maintenance { return Ok(()); }
             // Auto-start the IM gateway when Feishu credentials already exist.
             gateway::autostart(app.handle());
             // First-run: knowledge base directory tree + INDEX.md stub.
@@ -701,6 +721,19 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            data_transfer::data_transfer_status,
+            data_transfer::data_transfer_arm,
+            data_transfer::data_transfer_leave,
+            data_transfer::data_transfer_recover,
+            data_transfer::prepare_data_export,
+            data_transfer::prepare_data_import,
+            data_transfer::resolve_data_import,
+            data_transfer::data_transfer_details,
+            data_transfer::finish_data_export,
+            data_transfer::commit_data_import,
+            data_transfer::cancel_data_transfer,
+            data_transfer::list_data_transfers,
+            data_transfer::undo_data_import,
             create_session,
             send_command,
             close_session,

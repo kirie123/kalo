@@ -10,7 +10,7 @@ function errText(err: unknown): string {
 }
 
 /** Settings section managing ~/.kalo/agent/memory (list / create / edit / delete). */
-export default function MemorySettings() {
+export default function MemorySettings({ onDataTransfer }: { onDataTransfer?: () => void }) {
   const [memories, setMemories] = useState<MemoryMeta[] | null>(null);
   /** undefined = closed, null = creating, MemoryMeta = editing. */
   const [editing, setEditing] = useState<MemoryMeta | null | undefined>(undefined);
@@ -40,6 +40,7 @@ export default function MemorySettings() {
 
   return (
     <Section title="记忆">
+      {onDataTransfer && <button className="mb-3 text-sm text-dim hover:text-ink" onClick={onDataTransfer}>导出或导入记忆 → 数据管理</button>}
       {memories === null ? (
         <p className="text-xs text-dim">加载中…</p>
       ) : memories.length === 0 ? (

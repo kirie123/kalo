@@ -88,6 +88,7 @@
 
 ## 检索与知识
 
+- [记忆与笔记跨设备迁移（资料包、附件可移植、冲突预览与事务恢复）](2026-10-28-记忆与笔记跨设备迁移.md)
 - [统一检索 `recall`：SQLite FTS5 + trigram](2026-08-18-recall-fts5.md)
 - [知识笔记：把知识库升级成 Kalo 自主经营的笔记库](2026-08-19-knowledge-notes-panel.md)
 - [memory 生命周期：从仓库回到索引](2026-08-19-memory-lifecycle.md)

@@ -9,7 +9,8 @@ import "./styles/notes.css";
 import "./styles/files.css";
 import "./styles/automation.css";
 import "./styles/conversation.css";
-import App from "./App";
+import "./styles/data-transfer.css";
+import Bootstrap from "./Bootstrap";
 
 /**
  * Silence the webview's own context menu outside editable fields
@@ -33,6 +34,6 @@ suppressNativeContextMenu();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <Bootstrap />
   </React.StrictMode>,
 );

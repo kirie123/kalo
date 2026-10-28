@@ -126,6 +126,7 @@ pub fn terminal_open(
     if !valid_id(&id) {
         return Err(format!("非法终端 id：{id}"));
     }
+    crate::data_transfer::normal_only()?;
     let sessions = Arc::clone(&state.sessions);
     // Re-opening an id (rare) must not leak the old shell.
     if let Ok(mut map) = sessions.lock() {

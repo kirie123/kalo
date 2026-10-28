@@ -14,7 +14,7 @@ import { useNoteDocument } from "./useNoteDocument";
 const TREE_W_KEY = "kalo.layout.notesTreeW";
 const LIST_W_KEY = "kalo.layout.notesListW";
 
-export default function NotesPanel() {
+export default function NotesPanel({ onDataTransfer }: { onDataTransfer?: () => void }) {
   const [cards, setCards] = useState<KnowledgeCardMeta[]>([]);
   const [domains, setDomains] = useState<KnowledgeDomain[]>([]);
   const [filter, setFilter] = useState<NoteFilter>({ kind: "all" });
@@ -72,6 +72,7 @@ export default function NotesPanel() {
       <div className="sidebar-heading">笔记</div>
       <DomainTree domains={domains} cards={cards} filter={filter} onSelect={(value) => { setFilter(value); setQuery(""); setTreeOpen(false); }} />
       <div className="notes-local-hint"><AppIcon name="folder" size={14} />保存在这台电脑</div>
+      {onDataTransfer && <button className="px-4 py-2 text-left text-xs text-dim hover:text-ink" onClick={onDataTransfer}>导出 / 导入笔记</button>}
     </aside>
     <div className="notes-tree-splitter"><Splitter onMouseDown={(e) => startColumnDrag(e, treeW, { min: 170, max: 260, persistKey: TREE_W_KEY }, setTreeW)} /></div>
     <div className="notes-list-column" style={{ width: listW }}>
