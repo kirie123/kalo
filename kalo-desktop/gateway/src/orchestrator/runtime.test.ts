@@ -1,0 +1,54 @@
+import { afterEach, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TaskClient } from "../../../../kalo-harness/packages/coding-agent/src/extensions/task-runtime/client";
+import { activeRun, type StartWorker, type WorkerMessage } from "./model";
+import { TaskRuntime } from "./runtime";
+
+const cleanups: (() => void)[] = [];
+afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); });
+
+test("real authenticated loopback protocol persists a question across gateway restart and rejects revoked credentials", async () => {
+  const root = mkdtempSync(join(tmpdir(), "kalo-task-http-"));
+  const cwd = join(root, "work"); mkdirSync(cwd);
+  const messages: (Record<string, unknown> | WorkerMessage)[] = [];
+  let runtime = new TaskRuntime(message => messages.push(message), join(root, "agent"));
+  cleanups.push(() => {
+    runtime.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  runtime.handle({ cmd: "task_worker_inventory", runIds: [] });
+  runtime.handle({ cmd: "workbench_request", requestId: "ui-1", request: { action: "create", actionId: randomUUID(), prompt: "整理资料", cwd, allowShell: false } });
+  const start = messages.find(m => m.type === "task_worker_start") as unknown as StartWorker;
+  expect(start.role).toBe("router");
+  const client = new TaskClient(start.endpoint, start.token);
+  const sessionDir = join(root, "agent", "task-sessions", start.taskId);
+  mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = join(sessionDir, "router.jsonl"); writeFileSync(sessionFile, "fixture");
+  const context = await client.request("context", { protocol: 1, role: "router", sessionFile });
+  runtime.handle({ cmd: "task_worker_started", runId: start.runId });
+  expect(messages.some(m => m.type === "task_worker_prompt")).toBe(true);
+  expect(context).toMatchObject({ role: "router", prompt: "整理资料" });
+  const unauthorized = await fetch(`${start.endpoint}/context`, { method: "POST", body: "{}" });
+  expect(unauthorized.status).toBe(401);
+  const browser = await fetch(`${start.endpoint}/context`, { method: "POST", headers: { origin: "https://untrusted.example", authorization: `Bearer ${start.token}` }, body: "{}" });
+  expect(browser.status).toBe(403);
+  await expect(client.request("gate", { tool: "write", input: { path: "x" } })).rejects.toThrow("授权范围");
+  await client.request("ask", { callId: "ask-1", question: "哪类资料？" });
+  runtime.handle({ cmd: "event", sessionId: `workbench-${start.runId}`, payload: { type: "agent_settled" } });
+  runtime.handle({ cmd: "session_exit", sessionId: `workbench-${start.runId}`, code: null });
+  await expect(client.request("context", {})).rejects.toThrow("凭据已失效");
+  runtime.close();
+  runtime = new TaskRuntime(message => messages.push(message), join(root, "agent"));
+  runtime.handle({ cmd: "task_worker_inventory", runIds: [] });
+  const saved = runtime.service.list()[0];
+  expect(saved.status).toBe("waiting");
+  expect(saved.question?.text).toBe("哪类资料？");
+  runtime.handle({ cmd: "workbench_request", requestId: "ui-2", request: { action: "answer", actionId: "answer-1", taskId: saved.id, questionId: saved.question!.id, answer: "技术资料" } });
+  const resumed = activeRun(runtime.service.store.get(saved.id))!;
+  expect(resumed.role).toBe("router");
+  expect(resumed.token).not.toBe(start.token);
+  expect(resumed.prompt).toContain("技术资料");
+});

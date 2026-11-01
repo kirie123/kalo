@@ -12,6 +12,9 @@ mod experts;
 mod expert_import;
 mod gateway;
 mod gateway_sessions;
+mod task_workers;
+#[cfg(debug_assertions)]
+mod workbench_smoke;
 mod git;
 mod internal_skills;
 mod knowledge;
@@ -653,6 +656,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionManager::default())
+        .manage(task_workers::TaskWorkers::default())
         .manage(GatewayManager::default())
         .manage(terminal::TerminalManager::new())
         .setup(|app| {
@@ -718,9 +722,12 @@ fn main() {
                 Ok(state) => eprintln!("[market-env] shim {state:?}"),
                 Err(err) => eprintln!("[market-env] {err}"),
             }
+            #[cfg(debug_assertions)]
+            workbench_smoke::start_if_requested(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            task_workers::workbench_request,
             data_transfer::data_transfer_status,
             data_transfer::data_transfer_arm,
             data_transfer::data_transfer_leave,

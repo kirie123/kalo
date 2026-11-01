@@ -60,6 +60,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { WorkbenchRequest, WorkbenchReply } from "../../shared/workbench";
+
 import type { TransferStatus, TransferScopes, TransferPreview, TransferDecision, TransferDetails, TransferJournal, TransferProgress } from "../features/data-transfer/types";
 import type {
   AppPaths,
@@ -103,6 +105,15 @@ import type {
   TerminalExitInfo,
   TextSince,
 } from "../types";
+
+/** Persistent task control. Writes carry a stable actionId for retry deduplication. */
+export function workbenchRequest(request: WorkbenchRequest): Promise<WorkbenchReply> {
+  return invoke<WorkbenchReply>("workbench_request", { request });
+}
+
+export function onWorkbenchChanged(handler: () => void) {
+  return listen("workbench-changed", handler);
+}
 
 // ============================================================================
 // Session lifecycle

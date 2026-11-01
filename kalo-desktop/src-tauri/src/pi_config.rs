@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-fn agent_dir() -> Result<PathBuf, String> {
+pub(crate) fn agent_dir() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "cannot resolve user home directory".to_string())?;

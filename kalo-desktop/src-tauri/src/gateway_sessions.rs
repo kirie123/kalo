@@ -194,7 +194,7 @@ pub fn handle_session_prompt(app: &AppHandle, value: &serde_json::Value) {
 
 /// Retry `get_state` until the engine answers (exponential backoff +
 /// jitter, mirroring the frontend's waitForEngine in chat-store.ts).
-fn wait_for_engine(app: &AppHandle, session_id: &str, budget: Duration) -> bool {
+pub(crate) fn wait_for_engine(app: &AppHandle, session_id: &str, budget: Duration) -> bool {
     use std::sync::atomic::{AtomicU64, Ordering};
     static PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
 

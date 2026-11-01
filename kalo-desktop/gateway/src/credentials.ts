@@ -29,7 +29,7 @@ export interface FeishuCredentials {
   boundAt: string;
 }
 
-const agentDir = join(homedir(), ".kalo", "agent");
+export const agentDir = join(homedir(), ".kalo", "agent");
 const credFile = join(agentDir, "feishu.json");
 const lockFile = join(agentDir, "feishu.lock");
 

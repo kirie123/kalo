@@ -5,6 +5,7 @@ import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView"
 import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
 import ExpertsPanel from "./features/experts/ExpertsPanel";
+import Workbench from "./features/workbench/Workbench";
 import FeedsSettings from "./components/FeedsSettings";
 import JobsCenter from "./components/JobsCenter";
 import NotesPanel from "./features/notes/NotesPanel";
@@ -258,6 +259,7 @@ export default function App() {
           },
           { kind: "sep" },
           { kind: "item", label: "聊天", checked: page === "chat", onClick: () => setPage("chat") },
+          { kind: "item", label: "工作台", checked: page === "workbench", onClick: () => setPage("workbench") },
           { kind: "item", label: "自动化", checked: page === "automation", onClick: onOpenAutomation },
           { kind: "item", label: "笔记", checked: page === "notes", onClick: onOpenNotes },
           { kind: "item", label: "数字专家", checked: page === "experts", onClick: onOpenExperts },
@@ -303,7 +305,7 @@ export default function App() {
   // Title-bar caption: whichever page is up, then the engine's session name,
   // falling back to the working directory's basename.
   const barTitle =
-    page === "settings"
+    page === "workbench" ? "工作台" : page === "settings"
       ? "设置"
       : page === "era"
         ? "演化"
@@ -356,7 +358,7 @@ export default function App() {
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
           {page !== "settings" && <header className="workspace-header flex shrink-0 items-center justify-between gap-2 border-b border-edge px-5">
             <span className="truncate text-xs text-dim" title={chat.cwd || undefined}>
-              {page === "era" ? "演化实验" : page === "notes" ? "个人空间 / 笔记" : page === "experts" ? "数字专家" : page === "automation" ? "自动化 · 定时任务与数据源" : cwdBasename(chat.cwd) || "个人工作空间"}
+              {page === "workbench" ? "工作台 · 委托与交付" : page === "era" ? "演化实验" : page === "notes" ? "个人空间 / 笔记" : page === "experts" ? "数字专家" : page === "automation" ? "自动化 · 定时任务与数据源" : cwdBasename(chat.cwd) || "个人工作空间"}
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
@@ -383,6 +385,8 @@ export default function App() {
             <div className="flex min-w-0 flex-1 flex-col">
               {page === "settings" ? (
                 <SettingsPage theme={theme} skin={skin} onThemeChange={setTheme} onSkinChange={setSkin} onBack={() => setPage("chat")} initialTab={settingsTab} />
+              ) : page === "workbench" ? (
+                <Workbench cwd={chat.cwd} />
               ) : page === "era" ? (
                 <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                   <EraPanel onLeaveToChat={() => setPage("chat")} />

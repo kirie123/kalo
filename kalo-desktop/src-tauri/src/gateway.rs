@@ -381,7 +381,7 @@ impl GatewayManager {
     // ------------------------------------------------------------------
 
     /// Send one job command and block for its reply.
-    fn job_request(
+    pub(crate) fn job_request(
         &self,
         app: &AppHandle,
         mut value: serde_json::Value,
@@ -634,7 +634,7 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
                 eprintln!("[kalo] emit feed-error failed: {e}");
             }
         }
-        "schedule_reply" | "job_reply" => {
+        "schedule_reply" | "job_reply" | "workbench_reply" => {
             let Some(request_id) = value.get("requestId").and_then(|v| v.as_str()) else {
                 return;
             };
@@ -678,6 +678,8 @@ fn handle_gateway_line(app: &AppHandle, line: &str) {
                 }
             });
         }
+        "workbench_changed" => { let _ = app.emit("workbench-changed", ()); }
+        "task_worker_start" | "task_worker_prompt" | "task_worker_cancel" | "task_worker_inspect" => crate::task_workers::handle(app, &value),
         "session_request" => handle_session_request(app, &value),
         "session_prompt" => handle_session_prompt(app, &value),
         "session_close" => {

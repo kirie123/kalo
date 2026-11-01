@@ -38,6 +38,8 @@ import { ProgressRenderer } from "./renderer";
 import { Scheduler, type ScheduleTask } from "./scheduler";
 import { FeedEngine } from "./feeds";
 import { deliverGatewayAnswer } from "./answer-delivery";
+import { TaskRuntime } from "./orchestrator/runtime";
+import type { OutMessage } from "./protocol";
 
 // ---------------------------------------------------------------------------
 // Guard the NDJSON stdout channel: everything libraries print via
@@ -51,6 +53,7 @@ let connection: FeishuConnection | null = null;
 let renderer: ProgressRenderer | null = null;
 let pairing = false;
 let cancelPairing: (() => void) | null = null;
+let taskRuntime: TaskRuntime | undefined;
 
 // ---------------------------------------------------------------------------
 // Scheduler (P0-A): cron/watch/agent tasks living in this sidecar.
@@ -151,7 +154,7 @@ function channelCwd(): string {
 }
 
 /** Run one job command, replying exactly once with ok/error. */
-function handleJobCommand(cmd: Extract<InCommand, { requestId: string }>): void {
+function handleJobCommand(cmd: Extract<InCommand, { cmd: `job_${string}`; requestId: string }>): void {
   // No caller = the desktop UI asking on the user's behalf, not an anonymous
   // session, so it gets the operator view rather than the unowned-only slice.
   const caller = cmd.caller ?? OPERATOR;
@@ -300,6 +303,11 @@ async function runPairing(): Promise<void> {
 }
 
 function handleCommand(cmd: InCommand): void {
+  if (taskRuntime?.handle(cmd)) return;
+  if (cmd.cmd === "workbench_request") {
+    send({ type: "workbench_reply", requestId: cmd.requestId, ok: false, error: "工作台服务未能启动，请检查网关日志后重试" });
+    return;
+  }
   switch (cmd.cmd) {
     case "pair_start": {
       if (connection) {
@@ -437,7 +445,10 @@ function holdLockedOut(): void {
 }
 
 function start(): void {
+  try { taskRuntime = new TaskRuntime(message => send(message as OutMessage)); }
+  catch (error) { log("workbench startup failed:", String(error)); }
   process.on("exit", () => {
+    taskRuntime?.close();
     jobsServer.stop();
     releaseLock();
   });

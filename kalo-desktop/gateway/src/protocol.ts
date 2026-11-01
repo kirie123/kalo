@@ -9,6 +9,8 @@ import type { FeedInfo, FeedSpec } from "./feeds";
 import type { JobProbe, JobRule } from "./jobs/store";
 import type { JobSnapshot } from "./jobs/types";
 import type { ScheduleTask, ScheduleTaskInfo } from "./scheduler";
+import type { TaskView, WorkbenchRequest } from "../../shared/workbench";
+import type { WorkerMessage } from "./orchestrator/model";
 
 /** job_start payload: everything the caller may specify for a command job. */
 export interface JobStartRequest {
@@ -26,6 +28,10 @@ export interface JobStartRequest {
 export type GatewayState = "connecting" | "connected" | "disconnected";
 
 export type InCommand =
+  | { cmd: "workbench_request"; requestId: string; request: WorkbenchRequest }
+  | { cmd: "task_worker_started"; runId: string }
+  | { cmd: "task_worker_failed"; runId: string; error: string }
+  | { cmd: "task_worker_inventory"; runIds: string[] }
   | { cmd: "pair_start" }
   | { cmd: "pair_cancel" }
   | { cmd: "unbind" }
@@ -59,6 +65,9 @@ export type InCommand =
   | { cmd: "feed_list" };
 
 export type OutMessage =
+  | WorkerMessage
+  | { type: "workbench_changed" }
+  | { type: "workbench_reply"; requestId: string; ok: boolean; tasks?: TaskView[]; error?: string }
   | { type: "pair_qr"; qrDataUrl: string; expiresIn: number }
   | { type: "status"; state: GatewayState; user?: string; message?: string }
   | { type: "error"; message: string }

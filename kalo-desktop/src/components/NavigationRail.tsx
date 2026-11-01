@@ -1,9 +1,10 @@
 import AppIcon, { type IconName } from "./AppIcon";
 
-export type AppPage = "chat" | "settings" | "era" | "notes" | "automation" | "experts";
+export type AppPage = "chat" | "workbench" | "settings" | "era" | "notes" | "automation" | "experts";
 
 const items: Array<{ page: AppPage; icon: IconName; label: string }> = [
   { page: "chat", icon: "home", label: "对话" },
+  { page: "workbench", icon: "inbox", label: "工作台" },
   { page: "notes", icon: "note", label: "笔记" },
   { page: "automation", icon: "clock", label: "自动化" },
   { page: "experts", icon: "users", label: "数字专家" },
@@ -12,7 +13,7 @@ const items: Array<{ page: AppPage; icon: IconName; label: string }> = [
 
 export default function NavigationRail({ page, onNavigate }: { page: AppPage; onNavigate: (page: AppPage) => void }) {
   return <nav className="navigation-rail" aria-label="主导航">
-    {items.map((item, index) => <div key={item.page} className={index === 2 ? "rail-group-start" : undefined}>
+    {items.map(item => <div key={item.page} className={item.page === "automation" ? "rail-group-start" : undefined}>
       <button title={item.label} aria-label={item.label} aria-current={page === item.page ? "page" : undefined} onClick={() => onNavigate(item.page)}>
         <AppIcon name={item.icon} size={20} />
       </button>

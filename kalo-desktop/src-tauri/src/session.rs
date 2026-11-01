@@ -164,6 +164,16 @@ pub struct PiProcess {
     pub started_at: String,
 }
 
+/// Supplied only by the task supervisor, never by arbitrary RPC input.
+pub struct TaskLaunch {
+    pub role: String,
+    pub endpoint: String,
+    pub token: String,
+    pub session_file: Option<String>,
+    pub session_dir: PathBuf,
+    pub allow_shell: bool,
+}
+
 impl PiProcess {
     /// Spawn pi in `cwd` and wire up the IO threads that emit Tauri events.
     ///
@@ -182,11 +192,23 @@ impl PiProcess {
         expert: Option<&crate::experts::ExpertCtx>,
         unattended: bool,
     ) -> Result<Self, String> {
+        Self::spawn_configured(session_id, cwd, app, expert, unattended, None)
+    }
+
+    pub fn spawn_task(session_id: &str, cwd: &str, app: AppHandle, task: &TaskLaunch) -> Result<Self, String> {
+        Self::spawn_configured(session_id, cwd, app, None, true, Some(task))
+    }
+
+    fn spawn_configured(
+        session_id: &str, cwd: &str, app: AppHandle,
+        expert: Option<&crate::experts::ExpertCtx>, unattended: bool, task: Option<&TaskLaunch>,
+    ) -> Result<Self, String> {
         crate::data_transfer::normal_only()?;
         let pi_path = resolve_pi_path()?;
 
         let mut cmd = Command::new(&pi_path);
-        cmd.args(engine_args(Path::new(cwd)))
+        let args = if task.is_some() { vec![OsString::from("--mode"), OsString::from("rpc")] } else { engine_args(Path::new(cwd)) };
+        cmd.args(args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -196,6 +218,15 @@ impl PiProcess {
         }
         if unattended {
             cmd.env("KALO_UNATTENDED", "1");
+        }
+        if let Some(task) = task {
+            cmd.args(["--no-extensions", "--no-skills", "--permission-mode", "workspace-write"])
+                .arg("--session-dir").arg(&task.session_dir)
+                .env("KALO_TASK_ROLE", &task.role)
+                .env("KALO_TASK_ENDPOINT", &task.endpoint)
+                .env("KALO_TASK_TOKEN", &task.token)
+                .env("KALO_TASK_ALLOW_SHELL", if task.allow_shell { "1" } else { "0" });
+            if let Some(file) = &task.session_file { cmd.arg("--session").arg(file); }
         }
         crate::proc::no_window(&mut cmd);
 
@@ -298,6 +329,7 @@ impl PiProcess {
                 // Polls instead of blocking in `wait`, so `kill` can take the
                 // lock while the engine is still alive. See `proc.rs`.
                 let code = crate::proc::wait_released(&child);
+                crate::task_workers::cleanup_exited(&app, &session_id);
                 if let Err(e) = app.emit(&event_name, serde_json::json!({ "code": code })) {
                     eprintln!("[kalo] emit {event_name} failed: {e}");
                 }
@@ -332,6 +364,10 @@ impl PiProcess {
         // when the engine still needs killing.
         let mut child = self.child.lock().unwrap_or_else(|p| p.into_inner());
         crate::proc::kill_tree(&mut child);
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.child.lock().map(|mut child| child.try_wait().map_or(true, |status| status.is_none())).unwrap_or(true)
     }
 }
 
