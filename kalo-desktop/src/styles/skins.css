@@ -1,24 +1,40 @@
 :root {
-  --shell: #f3f4f4;
-  --bg-sidebar: #f8f9f9;
-  --bg-card: #f4f5f5;
-  --bubble: #eff1f1;
-  --border: #e5e8e8;
+  --shell: #f5f5f3;
+  --bg: #fcfcfb;
+  --bg-sidebar: #f5f5f3;
+  --bg-card: #f1f1ee;
+  --bg-elevated: #fcfcfb;
+  --bubble: #efefec;
+  --border: rgb(30 30 26 / 8%);
   --selection: #e9efec;
   --selection-text: #283a30;
   --font-heading: inherit;
-  --shadow-shell: 0 1px 12px rgb(0 0 0 / 2%);
+  --shadow-shell: 0 1px 12px rgb(30 30 26 / 2%);
+  --weight-body: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --ease-settle: cubic-bezier(.215, .61, .355, 1);
+  --focus-inner: color-mix(in srgb, var(--accent) 42%, transparent);
+  --focus-outer: color-mix(in srgb, var(--accent) 9%, transparent);
+  --shadow-composer: inset 0 0 0 1px var(--border), 0 4px 18px rgb(30 30 26 / 4%);
+  --shadow-focus: 0 0 0 1px var(--focus-inner), 0 0 0 4px var(--focus-outer);
 }
 .dark {
-  --shell: #1c1f20;
-  --bg: #242728;
-  --bg-sidebar: #202324;
-  --bg-card: #2d3132;
-  --bg-elevated: #2d3132;
-  --bubble: #323637;
-  --border: #383d3e;
+  color-scheme: dark;
+  --shell: #0b0b0a;
+  --bg: #151515;
+  --bg-sidebar: #111110;
+  --bg-card: #1a1a19;
+  --bg-elevated: #20201e;
+  --bubble: #252523;
+  --border: rgb(244 244 236 / 9%);
   --selection: #34423b;
   --selection-text: #dce9e1;
+  --weight-body: 360;
+  --weight-medium: 460;
+  --weight-semibold: 560;
+  --weight-bold: 660;
 }
 :root[data-skin="paper"] {
   --shell: #eeece5;

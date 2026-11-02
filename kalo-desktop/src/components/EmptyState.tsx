@@ -59,12 +59,12 @@ const ICONS: Record<QuickActionIcon, ReactNode> = {
 export default function EmptyState() {
   const zoom = useChatZoom();
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4" style={{ zoom }}>
-      <h1 className="workspace-greeting mb-9 flex flex-wrap items-center justify-center gap-3 text-[30px] font-semibold tracking-tight">
-        今天想和
+    <div className="welcome-screen" style={{ zoom }}>
+      <div className="welcome-heading">
         <KaloMark />
-        一起完成什么？
-      </h1>
+        <h1 className="workspace-greeting">今天，一起完成些什么？</h1>
+        <p>从一个问题开始，让想法成为成果。</p>
+      </div>
       <div className="w-full max-w-3xl">
         {/* An empty timeline can still hold a pending ask (the engine streams
             the question, the messages arrive later). Without this the composer
@@ -73,18 +73,18 @@ export default function EmptyState() {
         <InputBox />
         {/* 只在空会话首屏出现：给第一次用的人几个能直接点的入口。
             填进输入框而不是直接发送——多数场景还要补个代码或链接。 */}
-        <div className="mt-5 flex flex-wrap justify-center gap-2.5">
+        <div className="welcome-actions">
           {QUICK_ACTIONS.map((a) => (
             <button
               key={a.label}
               type="button"
               onClick={() => chatStore.setInputDraft(a.prompt)}
-              className="group flex items-center gap-2.5 rounded-xl border border-edge bg-elevated px-3.5 py-2.5 text-[13px] text-ink shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-lift"
+              className="welcome-action"
             >
               <span
                 className={`flex size-7 shrink-0 items-center justify-center rounded-lg ${TONE_CLASS[a.tone]}`}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
                   {ICONS[a.icon]}
                 </svg>
               </span>
@@ -104,7 +104,7 @@ export default function EmptyState() {
  */
 function KaloMark() {
   return (
-    <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-ink text-[var(--accent-contrast)]">
+    <span aria-hidden="true" className="welcome-mark inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent text-[var(--accent-contrast)]">
       <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.4">
         <circle cx="10" cy="2.6" r="1" fill="currentColor" stroke="none" />
         <path d="M10 3.6v1.6" strokeLinecap="round" />

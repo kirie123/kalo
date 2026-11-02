@@ -317,7 +317,7 @@ export default function InputBox() {
       <InputQueue />
       <div
         ref={cardRef}
-        className="relative rounded-2xl border border-edge bg-elevated shadow-soft transition-shadow focus-within:shadow-lift"
+        className="composer-surface relative rounded-2xl bg-elevated"
       >
         {/* Drop hint while a file is dragged over the window */}
         {dragging && (

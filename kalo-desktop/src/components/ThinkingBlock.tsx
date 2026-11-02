@@ -1,17 +1,21 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 /** Compact collapsible row for assistant thinking content; folded by default. */
 export default function ThinkingBlock({ thinking, live }: { thinking: string; live?: boolean }) {
   const [open, setOpen] = useState(false);
+  const contentId = useId();
   if (!thinking.trim() && !live) return null;
   return (
     <div className="thinking-block my-1">
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-controls={contentId}
         className="flex w-full items-center gap-1.5 py-1.5 text-left text-[13px] text-dim hover:text-ink"
       >
         <svg
+          aria-hidden="true"
           width="8"
           height="8"
           viewBox="0 0 16 16"
@@ -27,11 +31,11 @@ export default function ThinkingBlock({ thinking, live }: { thinking: string; li
           {live && <span className="spinner ml-2 align-middle" />}
         </span>
       </button>
-      {open && (
-        <div className="ml-2 mt-1 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md border border-edge bg-card px-3 py-2 text-xs not-italic leading-relaxed text-dim">
-          {thinking}
+      <div id={contentId} className="thinking-disclosure" data-open={open} aria-hidden={!open}>
+        <div>
+          <div className="thinking-content">{thinking}</div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

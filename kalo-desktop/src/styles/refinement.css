@@ -1,0 +1,120 @@
+/* Shared finishing rules; palette and motion values live in skins.css. */
+body { font-weight: var(--weight-body); font-variant-numeric: tabular-nums; }
+.font-normal { font-weight: var(--weight-body); }
+.font-medium { font-weight: var(--weight-medium); }
+.font-semibold, .markdown :is(h1, h2, h3, h4),
+.titlebar-brand :is(b, span), .sidebar-heading,
+.settings-content > h1, .appearance-section h2, .skin-options strong {
+  font-weight: var(--weight-semibold);
+}
+.font-bold, strong, b { font-weight: var(--weight-bold); }
+.markdown :is(p, li), .assistant-message, .welcome-heading p { text-wrap: pretty; }
+.markdown pre { text-wrap: nowrap; }
+svg { vertical-align: -.125em; }
+.markdown a { color: var(--tone-blue); }
+
+/* The composer owns the focus ring, including its toolbar. */
+.composer-surface {
+  box-shadow: var(--shadow-composer);
+  transition: box-shadow 180ms var(--ease-settle), background-color 180ms var(--ease-settle);
+}
+.composer-surface:focus-within { box-shadow: var(--shadow-focus), var(--shadow-composer); }
+.composer-surface > textarea { min-height: 76px; padding: 18px 18px 8px; }
+.sidebar-search { transition: box-shadow 180ms var(--ease-settle); }
+.sidebar-search:focus-within { box-shadow: var(--shadow-focus); }
+:is(input.border, textarea.border, select.border):focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: var(--shadow-focus);
+}
+.composer-surface button, .navigation-rail button, .welcome-action {
+  transition: background-color 160ms var(--ease-settle), color 160ms var(--ease-settle),
+    opacity 160ms var(--ease-settle), transform 160ms var(--ease-settle);
+}
+.composer-surface button:not(:disabled):active, .welcome-action:active { transform: scale(.98); }
+.navigation-rail button[aria-current="page"] { box-shadow: inset 0 0 0 1px var(--border); }
+.session-sidebar { border-right-color: transparent; }
+
+.welcome-screen {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  overflow-y: auto;
+  padding: 40px clamp(20px, 4vw, 56px);
+}
+.welcome-heading { margin-top: auto; padding-top: 8px; text-align: center; }
+.welcome-heading + div { margin-bottom: auto; }
+.welcome-mark { margin-bottom: 22px; width: 44px; height: 44px; border-radius: 15px; }
+.welcome-heading h1 {
+  margin: 0;
+  font-size: clamp(23px, 2.5vw, 32px);
+  line-height: 1.45;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+.welcome-heading p { margin: 12px 0 32px; font-size: 13px; color: var(--text-dim); }
+.welcome-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
+.welcome-action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.welcome-action:hover { background: var(--bubble); }
+
+/* Grid owns the height; visibility also keeps collapsed text out of selection. */
+.thinking-disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 200ms var(--ease-settle), visibility 200ms;
+}
+.thinking-disclosure[data-open="true"] { grid-template-rows: 1fr; visibility: visible; }
+.thinking-disclosure > div { min-height: 0; overflow: hidden; }
+.thinking-content {
+  max-height: 24rem;
+  overflow-y: auto;
+  margin: 4px 0 0 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.75;
+}
+.copy-button { display: inline-grid; position: relative; place-items: center; min-width: 26px; min-height: 26px; }
+.copy-button > svg { grid-area: 1 / 1; transition: opacity 160ms var(--ease-settle), transform 160ms var(--ease-settle); }
+.copy-button .copy-glyph { opacity: 1; }
+.copy-button .copy-check { opacity: 0; transform: scale(.75); }
+.copy-button[data-copied="true"] .copy-glyph { opacity: 0; }
+.copy-button[data-copied="true"] .copy-check { opacity: 1; transform: scale(1); animation: copy-confirm 280ms var(--ease-settle); }
+.copy-button[data-failed="true"] { grid-template-columns: 12px auto; gap: 6px; color: var(--danger); }
+.copy-error { grid-area: 1 / 2; padding: 2px 6px; border-radius: 6px; background: var(--error-bg); color: var(--danger); font-size: 12px; }
+@keyframes copy-confirm { 0% { transform: scale(.75); } 65% { transform: scale(1.12); } 100% { transform: scale(1); } }
+
+@media (max-width: 900px) {
+  .welcome-screen { padding: 28px 20px; }
+  .welcome-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-surface, .composer-surface button, .sidebar-search, .navigation-rail button,
+  .welcome-action, .thinking-disclosure, .thinking-block svg, .copy-button > svg { transition: none; }
+  .copy-button[data-copied="true"] .copy-check,
+  .streaming-cursor::after, .typing-dots span, .spinner { animation: none; }
+  .composer-surface button:not(:disabled):active, .welcome-action:active { transform: none; }
+}
+@media (forced-colors: active) {
+  .composer-surface, .welcome-action { border: 1px solid CanvasText; }
+  .composer-surface:focus-within, .sidebar-search:focus-within,
+  :is(input.border, textarea.border, select.border):focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+}

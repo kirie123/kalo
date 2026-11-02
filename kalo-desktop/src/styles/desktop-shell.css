@@ -5,7 +5,7 @@
 .titlebar-brand b { font-weight: 600; }
 .window-control { height: 48px; }
 .window-control-danger:hover { background: var(--danger); color: var(--accent-contrast); }
-.app-surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); border: 1px solid var(--border); border-bottom: 0; border-right: 0; border-radius: 18px 0 0 0; box-shadow: var(--shadow-shell); }
+.app-surface { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); border-radius: 18px 0 0 0; box-shadow: var(--shadow-shell); }
 .navigation-rail { width: 58px; flex-shrink: 0; display: flex; align-items: center; flex-direction: column; gap: 12px; padding: 17px 7px 14px; }
 .navigation-rail button { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; color: var(--text-dim); transition: background .15s, color .15s; }
 .navigation-rail button:hover { background: var(--bg-card); color: var(--text); }

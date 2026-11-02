@@ -10,6 +10,7 @@ import "./styles/files.css";
 import "./styles/automation.css";
 import "./styles/conversation.css";
 import "./styles/data-transfer.css";
+import "./styles/refinement.css";
 import Bootstrap from "./Bootstrap";
 
 /**
