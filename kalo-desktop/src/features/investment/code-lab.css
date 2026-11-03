@@ -97,3 +97,16 @@
 .dark .investment :is(.experiment-name input,.experiment-records strong) { font-weight:400; }
 @media (max-width:850px) { .experiment-create { margin-top:16px; } .experiment-records > button { flex-wrap:wrap; } .experiment-records > button > span:last-child { text-align:start; } .experiment-settings > summary { flex-wrap:wrap; } }
 @media (prefers-reduced-motion:reduce) { .experiment-settings > summary::before { transition:none; } }
+
+.experiment-idea { display:grid; gap:12px; }
+.experiment-idea > label { font-size:14px; }
+.experiment-idea textarea { display:block; width:100%; min-height:190px; max-height:420px; resize:vertical; padding:16px; font:inherit; line-height:1.7; color:var(--text); background:var(--bg-elevated); border:.5px solid var(--border); border-radius:8px; }
+.experiment-idea textarea:focus-visible { outline:2px solid var(--tone-blue); outline-offset:2px; }
+.experiment-idea textarea::placeholder { color:var(--text-dim); }
+.experiment-idea > p { margin:0; }
+.experiment-idea-actions { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-top:12px; }
+.experiment-idea-actions > span { color:var(--text-dim); font-size:12px; flex:1; }
+.experiment-idea-actions .investment-primary { margin:0; }
+.experiment-entry-switch { margin-block:24px; padding-top:16px; border-top:.5px solid var(--border); }
+.investment .experiment-entry-switch > button { border:0; background:transparent; color:var(--text-dim); padding-inline:0; }
+.investment .experiment-entry-switch > button:hover { color:var(--text); background:transparent; }

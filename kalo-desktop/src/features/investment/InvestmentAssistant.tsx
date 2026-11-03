@@ -23,7 +23,7 @@ export default function InvestmentAssistant({ context, open, onClose }: { contex
       {marginPage ? <>
       <button disabled={chat.busy} onClick={() => ask("同步最新沪深两融和海康威视两融数据，说明交易日、来源与精度。")}>同步两融数据</button>
       <button disabled={chat.busy} onClick={() => ask("分析当前范围的融资余额变化、融资买入和融券情况，明确缺失、舍入精度与数据时点，不把余额变化当ETF净申购。")}>分析当前两融</button>
-      </> : codePage && context.mode === "report" ? <>
+      </> : codePage && context.mode === "idea" ? null : codePage && context.mode === "report" ? <>
       <button disabled={chat.busy} onClick={() => ask("分析当前 reportId 对应的回测，核对 spec 中实际代码和参数，解释策略相对持有基准的差额、成本与风险，不自动更改策略或运行新实验。")}>解读回测结果</button>
       <button disabled={chat.busy} onClick={() => ask("检查当前报告实际运行的代码与参数，结合成交和拒单查找策略问题。保留原研究思路，先说明建议，不自动修改或回测。")}>检查策略逻辑</button>
       </> : codePage && context.mode === "create" ? <>
