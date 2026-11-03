@@ -99,7 +99,9 @@
 @media (prefers-reduced-motion:reduce) { .experiment-settings > summary::before { transition:none; } }
 
 .experiment-idea { display:grid; gap:12px; }
-.experiment-idea > label { font-size:14px; }
+.experiment-idea-label { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; font-size:14px; }
+.experiment-idea-label > span { color:var(--text-dim); font-size:12px; }
+.experiment-idea-label kbd { padding:1px 5px; border:.5px solid var(--border); border-radius:3px; font:inherit; background:var(--bg-sidebar); }
 .experiment-idea textarea { display:block; width:100%; min-height:190px; max-height:420px; resize:vertical; padding:16px; font:inherit; line-height:1.7; color:var(--text); background:var(--bg-elevated); border:.5px solid var(--border); border-radius:8px; }
 .experiment-idea textarea:focus-visible { outline:2px solid var(--tone-blue); outline-offset:2px; }
 .experiment-idea textarea::placeholder { color:var(--text-dim); }

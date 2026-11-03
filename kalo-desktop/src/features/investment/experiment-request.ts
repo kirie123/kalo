@@ -1,5 +1,10 @@
 export const strategyIdeaKey = "kalo.investment.strategy-idea.v1";
 export const strategyIdeaLimit = 6000;
+export const strategyIdeaExample = "选一只创业板 ETF，用 15 分钟 KDJ 做底仓做 T。已有 1000 份、现金 10 万元，每次 100 份。帮我选数据、写代码并回测，和一直持有比较。";
+
+export function acceptsStrategyExample(value: string, event: { key: string; shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean; isComposing?: boolean; keyCode?: number }, compositionGuard: boolean): boolean {
+  return value === "" && event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing && event.keyCode !== 229 && !compositionGuard;
+}
 
 export function strategyIdeaError(idea: string): string | null {
   if (!idea.trim()) return "请先描述你想研究的策略";
