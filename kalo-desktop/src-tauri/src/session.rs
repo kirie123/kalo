@@ -152,6 +152,7 @@ fn engine_args(cwd: &Path) -> Vec<OsString> {
 
 /// One running `pi --mode rpc` subprocess.
 pub struct PiProcess {
+    investment_bridge: Option<crate::investment_bridge::BridgeLease>,
     child: Arc<Mutex<Child>>,
     stdin_tx: mpsc::Sender<String>,
     /// Working directory the engine was spawned in (job center display).
@@ -229,6 +230,12 @@ impl PiProcess {
             if let Some(file) = &task.session_file { cmd.arg("--session").arg(file); }
         }
         crate::proc::no_window(&mut cmd);
+
+        // Only interactive desktop engines receive a session-scoped investment capability.
+        cmd.env_remove("KALO_INVESTMENT_PORT").env_remove("KALO_INVESTMENT_TOKEN");
+        let investment_bridge = if !unattended && task.is_none() {
+            Some(crate::investment_bridge::attach(&app, session_id, &mut cmd)?)
+        } else { None };
 
         let mut child = cmd
             .spawn()
@@ -322,6 +329,7 @@ impl PiProcess {
 
         // exit watcher: report the exit code once the child terminates.
         {
+            let investment_stop = investment_bridge.as_ref().map(|b| b.stopped.clone());
             let event_name = format!("pi-exit:{session_id}");
             let session_id = session_id.to_string();
             let child = Arc::clone(&child);
@@ -329,6 +337,7 @@ impl PiProcess {
                 // Polls instead of blocking in `wait`, so `kill` can take the
                 // lock while the engine is still alive. See `proc.rs`.
                 let code = crate::proc::wait_released(&child);
+                if let Some(stop) = investment_stop { stop.store(true, std::sync::atomic::Ordering::SeqCst); }
                 crate::task_workers::cleanup_exited(&app, &session_id);
                 if let Err(e) = app.emit(&event_name, serde_json::json!({ "code": code })) {
                     eprintln!("[kalo] emit {event_name} failed: {e}");
@@ -338,6 +347,7 @@ impl PiProcess {
         }
 
         Ok(Self {
+            investment_bridge,
             child,
             stdin_tx,
             cwd: cwd.to_string(),
@@ -360,6 +370,7 @@ impl PiProcess {
     /// Terminate the child process and everything it spawned. Errors are
     /// logged, never panicked.
     pub fn kill(&mut self) {
+        self.investment_bridge.take();
         // Recover from poisoning: a watcher thread that panicked is exactly
         // when the engine still needs killing.
         let mut child = self.child.lock().unwrap_or_else(|p| p.into_inner());

@@ -100,6 +100,8 @@
 
 ## 科研 / 金融数据（skills 生态）
 
+- [投行 Rust 架构与回测交互（免费数据、Agent 工具、面板联动与端到端验收）](2026-11-03-投行Rust架构与回测交互.md)
+- [Agent 原生投行决策系统（A 股 / ETF、免费与付费数据源、策略回测与交互原型）](2026-11-02-Agent原生量化决策系统.md)
 - [科研与实验能力设计（论文沉淀 / 在线调研 / 实验队列 / math）](2026-08-15-research-experiment-capabilities.md)
 - [Feeds：声明式定期拉取机制](2026-08-20-feeds-declarative-data-pull.md)
 - [market-data：金融取数底座 + 宏观风向 / 财报两个 skill](2026-08-20-market-data-framework.md)

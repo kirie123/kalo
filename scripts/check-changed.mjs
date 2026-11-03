@@ -44,6 +44,10 @@ const files = changedFiles();
 const plan = new Set();
 
 for (const f of files) {
+  if (f.startsWith("kalo-desktop/investment-core/") && (f.endsWith(".rs") || f.endsWith(".toml") || f.endsWith("Cargo.lock"))) {
+    plan.add("investment-rust");
+    plan.add("desktop-rust");
+  }
   if (f.startsWith("kalo-desktop/src/") && (f.endsWith(".ts") || f.endsWith(".tsx"))) {
     plan.add("desktop-ts"); // tsc + vitest
   }
@@ -83,6 +87,9 @@ const run = (label, cmd, args, cwd) => {
 };
 
 let ok = true;
+if (plan.has("investment-rust")) {
+  ok = run("投行 Rust 内核单测", "cargo", ["test", "--manifest-path", "kalo-desktop/investment-core/Cargo.toml"], ROOT) && ok;
+}
 if (plan.has("desktop-ts")) {
   ok = run(...packageStep("TypeScript typecheck", "typescript", "bin/tsc", ["--noEmit"], path.join(ROOT, "kalo-desktop"))) && ok;
   ok = run(...packageStep("Vitest 单测", "vitest", "vitest.mjs", ["run"], path.join(ROOT, "kalo-desktop"))) && ok;

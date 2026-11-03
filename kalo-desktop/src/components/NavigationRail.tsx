@@ -1,6 +1,6 @@
 import AppIcon, { type IconName } from "./AppIcon";
 
-export type AppPage = "chat" | "workbench" | "settings" | "era" | "notes" | "automation" | "experts";
+export type AppPage = "chat" | "workbench" | "settings" | "era" | "notes" | "automation" | "experts" | "investment";
 
 const items: Array<{ page: AppPage; icon: IconName; label: string }> = [
   { page: "chat", icon: "home", label: "对话" },
@@ -9,6 +9,7 @@ const items: Array<{ page: AppPage; icon: IconName; label: string }> = [
   { page: "automation", icon: "clock", label: "自动化" },
   { page: "experts", icon: "users", label: "数字专家" },
   { page: "era", icon: "sprout", label: "演化" },
+  { page: "investment", icon: "chart", label: "投行" },
 ];
 
 export default function NavigationRail({ page, onNavigate }: { page: AppPage; onNavigate: (page: AppPage) => void }) {

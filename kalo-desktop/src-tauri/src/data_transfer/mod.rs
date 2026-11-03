@@ -27,6 +27,11 @@ pub fn normal_only() -> TransferResult<()> {
     }
 }
 
+/// Shared application data root; keeps feature storage aligned with profile locking.
+pub(crate) fn data_root() -> TransferResult<PathBuf> {
+    platform::root()
+}
+
 pub struct TransferState {
     _profile_lock: File,
     root: PathBuf,

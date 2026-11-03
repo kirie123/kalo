@@ -1,6 +1,7 @@
 import type { InlineExtension } from "../core/extensions/types.ts";
 import askUserExtension from "./ask-user/index.ts";
 import expertContextExtension from "./expert-context/index.ts";
+import investmentExtension from "./investment/index.ts";
 import kaloJobsExtension from "./kalo-jobs/index.ts";
 import llamaExtension from "./llama/index.ts";
 import mcpExtension from "./mcp/index.ts";
@@ -27,6 +28,7 @@ export const builtInExtensions: InlineExtension[] = process.env.KALO_TASK_ROLE
 			{ name: "expert-context", factory: expertContextExtension, hidden: true },
 			{ name: "skill", factory: skillExtension, hidden: true },
 			{ name: "kalo-jobs", factory: kaloJobsExtension, hidden: true },
+			{ name: "investment", factory: investmentExtension, hidden: true },
 			{ name: "webfetch", factory: webFetchExtension, hidden: true },
 			{ name: "mcp", factory: mcpExtension, hidden: true },
 			{ name: "subagent", factory: subagentExtension, hidden: true },

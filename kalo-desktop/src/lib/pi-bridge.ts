@@ -59,6 +59,13 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Catalog as InvestmentCatalog, JobStatus as InvestmentStatus, Request as InvestmentRequest } from "../features/investment/types";
+import type { Activity as InvestmentActivity } from "../features/investment/types";
+export const investmentActivity = () => invoke<InvestmentActivity>("investment_activity");
+export const investmentCatalog = () => invoke<InvestmentCatalog>("investment_catalog");
+export const investmentStart = (request: InvestmentRequest) => invoke<string>("investment_start", { request });
+export const investmentStatus = (id: string) => invoke<InvestmentStatus>("investment_status", { id });
+export const investmentCancel = (id: string) => invoke<void>("investment_cancel", { id });
 import { listen } from "@tauri-apps/api/event";
 import type { WorkbenchRequest, WorkbenchReply } from "../../shared/workbench";
 

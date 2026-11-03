@@ -38,6 +38,12 @@ export const TOOL_VERBS: Record<string, { verb: string; noun: string }> = {
   job_kill: { verb: "停止", noun: "个后台任务" },
   present_files: { verb: "呈现", noun: "次产物" },
   show_widget: { verb: "渲染", noun: "个可视化" },
+  investment_catalog: { verb: "查看", noun: "次投行数据" },
+  investment_sync: { verb: "同步", noun: "次 ETF 数据" },
+  investment_flows: { verb: "分析", noun: "次 ETF 资金" },
+  investment_backtest: { verb: "运行", noun: "次策略回测" },
+  investment_status: { verb: "读取", noun: "次投行结果" },
+  investment_cancel: { verb: "取消", noun: "次投行任务" },
 };
 
 /** Fallback for unmapped tools: the raw id says nothing to a reader. */
@@ -129,6 +135,12 @@ export function rowLabel(rec: ToolCallRecord): string {
       return "向你提问";
     case "job_list":
       return "查看后台任务";
+    case "investment_catalog": return "查看投行数据与历史实验";
+    case "investment_sync": return "同步 ETF 免费数据";
+    case "investment_flows": return `分析 ${String(args.days ?? 5)} 个交易日 ETF 资金`;
+    case "investment_backtest": return "运行策略回测";
+    case "investment_status": return "读取投行任务结果";
+    case "investment_cancel": return "取消投行任务";
     case "job_output":
       return args.job_id ? `读取任务 ${String(args.job_id)} 的输出` : "读取后台任务输出";
     case "job_kill":

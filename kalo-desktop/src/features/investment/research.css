@@ -1,0 +1,127 @@
+/* Research surfaces extend the shared investment controls and semantic tokens. */
+.investment button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+.investment button.investment-expand { display: none; }
+.investment-collapsed button.investment-expand { display: inline-flex; }
+.investment :is(button, select, input):focus-visible, .investment-assistant button:focus-visible { outline: 2px solid var(--tone-blue); outline-offset: 2px; }
+.investment :is(button, input, select) { min-height: 32px; padding: 6px 10px; border-radius: 6px; }
+.investment-sidebar { width: 204px; padding: 22px 12px 14px; }
+.investment-sidebar > .investment-between { padding: 0 8px 12px; }
+.investment-sidebar h1 { font-size: 18px; margin: 0; }
+.investment-sidebar > .investment-primary { margin: 0 4px 18px; font-weight: 500; }
+.investment-sidebar nav { gap: 3px; }
+.investment-sidebar button { justify-content: flex-start; padding: 8px 10px; }
+.investment-sidebar nav button { gap: 10px; }
+.investment-sidebar > button:not(.investment-primary) { display: block; }
+.investment-sidebar h3 { font-weight: 500; margin: 20px 10px 8px; }
+.investment-sidebar .investment-nav-empty { margin: 4px 10px; }
+.investment-sidebar-footer { display: flex; align-items: center; gap: 7px; margin-block-start: auto; padding: 28px 8px 0; color: var(--text-dim); font-size: 12px; }
+.investment h1 { letter-spacing: -.5px; text-wrap: balance; }
+.investment h2 { text-wrap: balance; }
+.investment-main { scrollbar-gutter: stable; }
+.investment-main > header { position: sticky; top: 0; z-index: 2; min-height: 62px; padding: 12px 24px; background: var(--bg); }
+.investment-main > header strong { font-size: 14px; font-weight: 500; }
+.investment-content { padding: 22px 28px 36px; max-width: 1440px; }
+.investment-controls { gap: 8px; }
+.investment-controls button { white-space: nowrap; font-size: 12px; }
+.investment-breadcrumb { color: var(--text-dim); display: flex; gap: 14px; font-size: 12px; }
+.investment-breadcrumb > span { opacity: .4; }
+.investment-page-heading, .investment-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.investment-page-heading { margin-block: 18px 24px; }
+.investment-eyebrow { display: block; font-size: 12px; color: var(--text-dim); margin-block-end: 7px; }
+.investment-badge { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; border: .5px solid var(--border); padding: 2px 7px; border-radius: 4px; font-size: 12px; font-weight: 400; color: var(--text-dim); background: var(--bg-card); }
+.investment-badge.is-ready { color: var(--ok); background: var(--tone-green-soft); border-color: transparent; }
+.investment-snapshot { padding-block-end: 16px; margin-block-end: 24px; border-bottom: .5px solid var(--border); }
+.investment-snapshot label { display: flex; align-items: center; gap: 10px; }
+.investment-snapshot select { width: auto; max-width: 260px; padding: 3px 6px; min-height: 28px; background: transparent; }
+.investment-section-title { margin-block: 24px 12px; }
+.investment-section-title h2 { margin: 0; }
+.investment-section-title > span { color: var(--text-dim); font-size: 12px; }
+.investment-section-title button { background: transparent; border: none; color: var(--text-dim); font-size: 12px; padding: 0; }
+.investment label { color: var(--text-dim); }
+.investment label :is(input, select) { color: var(--text); font-size: 14px; }
+.investment-between > select { width: auto; font-size: 12px; }
+.investment-config { border: .5px solid var(--border); border-radius: 6px; padding: 0 18px; }
+.investment-config > summary { font-weight: 500; }
+.investment-config > summary span { font-weight: 400; font-size: 12px; color: var(--text-dim); margin-inline-start: 12px; }
+.investment-config .investment-section { margin-top: 0; }
+.investment-config .investment-section > h2 { display: none; }
+.investment-costs { border-block: .5px solid var(--border); }
+.investment-metrics { margin: 20px 0 28px; padding: 20px 0; }
+.investment-metrics > div + div { border-inline-start: .5px solid var(--border); padding-inline-start: 24px; }
+.investment-metrics strong { display: flex; gap: 8px; align-items: baseline; white-space: nowrap; }
+.investment-metrics strong small { display: inline; font-size: 12px; font-weight: 400; }
+.investment-report-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.investment .investment-up { color: var(--danger); }
+.investment .investment-down { color: var(--ok); }
+.investment-chart { margin-block: 14px; }
+.investment-chart-legend { display: flex; gap: 8px; align-items: center; }
+.investment-chart-legend i { display: inline-block; width: 16px; height: 2px; background: var(--text); }
+.investment-chart-legend i.benchmark { background: var(--tone-blue); margin-inline-start: 10px; }
+.investment-sparkline { width: 112px; height: 32px; }
+.investment-table { margin: 12px 0 24px; max-height: 560px; }
+.investment table { border-collapse: separate; border-spacing: 0; }
+.investment :is(th, td) { padding: 12px 14px; font-variant-numeric: tabular-nums; }
+.investment th { position: sticky; top: 0; background: var(--bg-sidebar); font-weight: 400; padding-block: 9px; z-index: 1; }
+.investment td { font-size: 14px; }
+.investment tr:hover td { background: var(--bg-card); }
+.investment .number { text-align: end; direction: ltr; }
+.investment .investment-link { display: block; border: 0; background: transparent; text-align: start; padding: 0; font-size: 14px; }
+.investment .investment-link:hover { background: transparent; color: var(--tone-blue); }
+.investment-error { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; font-size: 12px; }
+.investment-error p { margin: 5px 0 0; color: inherit; }
+.investment-error .investment-controls { flex-shrink: 0; }
+.investment-tabs { gap: 20px; margin: 20px 0 16px; border-bottom: .5px solid var(--border); }
+.investment-tabs button { background: transparent; border: 0; border-radius: 0; padding: 8px 0 12px; color: var(--text-dim); }
+.investment-tabs button[aria-pressed="true"] { color: var(--text); border-bottom: .5px solid var(--text); font-weight: 500; }
+.investment summary { font-size: 12px; padding: 12px 0; }
+.investment-empty { display: flex; flex-direction: column; align-items: center; padding: 50px 24px; margin-block: 20px 36px; background: var(--bg-sidebar); border: .5px solid var(--border); max-width: none; }
+.investment-empty > svg { color: var(--text-dim); margin-bottom: 16px; }
+.investment-empty h2 { font-size: 18px; }
+.investment-empty .investment-controls { margin-top: 10px; }
+.investment-empty-workflow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 18px; padding: 24px 0; margin-top: 22px; border-top: .5px solid var(--border); font-size: 12px; color: var(--text-dim); }
+.investment-sources { display: grid; gap: 0; }
+.investment-source { display: flex; align-items: center; gap: 12px; padding-block: 16px; border-bottom: .5px solid var(--border); font-size: 14px; }
+.investment-source > svg { color: var(--text-dim); flex-shrink: 0; }
+.investment-source strong { font-weight: 500; }
+.investment-source .investment-badge { margin-inline-start: auto; }
+.investment-overview-bottom { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(250px, 1fr); gap: 32px; }
+.investment-overview-bottom > section + section { border-inline-start: .5px solid var(--border); padding-inline-start: 28px; }
+.investment-inline-metrics { display: flex; gap: 32px; font-size: 12px; color: var(--text-dim); margin-block: 12px 20px; }
+.investment-inline-metrics strong { display: block; color: var(--text); font-size: 24px; font-weight: 500; margin-top: 5px; }
+.investment-placeholder { padding: 36px 12px; text-align: center; color: var(--text-dim); }
+.investment-placeholder > svg { margin-inline: auto; }
+.investment-quote { display: flex; gap: 20px; flex-wrap: wrap; align-items: baseline; margin: 20px 0; color: var(--text-dim); font-size: 12px; }
+.investment-quote > div { display: flex; align-items: baseline; gap: 12px; }
+.investment-quote strong { font-size: 24px; font-weight: 500; }
+.investment-flow-bars { display: grid; gap: 8px; margin: 20px 0 32px; }
+.investment-flow-bars button { display: grid; grid-template-columns: 145px minmax(50px, 1fr) 95px; align-items: center; gap: 16px; width: 100%; border: 0; border-radius: 0; padding: 9px 0; text-align: start; background: transparent; }
+.investment-flow-bars strong { text-align: end; font-size: 14px; font-weight: 500; }
+.investment-flow-track { display: block; height: 20px; border-inline-start: .5px solid var(--border); }
+.investment-flow-track i { display: block; height: 100%; background: var(--danger); opacity: .65; border-radius: 0 2px 2px 0; }
+.investment-flow-track i.is-negative { background: var(--ok); }
+.investment-assistant-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 16px; font-size: 12px; color: var(--text-dim); }
+.investment-suggestions { border-bottom: .5px solid var(--border); padding-bottom: 14px; }
+.investment-assistant .markdown, .investment-assistant textarea { font-size: 14px; }
+.investment-assistant div:has(> button[title="添加附件"]) { gap: 6px; flex-wrap: wrap; }
+.investment-assistant button[title^="权限模式"], .investment-assistant button[title^="查看本会话的子 agent"] { white-space: nowrap; flex-shrink: 0; }
+.investment-assistant span[title^="本次运行的工作目录"] { display: none; }
+.dark .investment :is(h1, h2, th, strong), .dark .investment-sidebar button[aria-current="page"] { font-weight: 500; }
+.dark .investment-metrics strong, .dark .investment-inline-metrics strong { font-weight: 400; }
+@media (max-width: 1300px) {
+  .investment-content { padding: 20px; }
+  .investment-overview-bottom { grid-template-columns: 1fr; gap: 8px; }
+  .investment-overview-bottom > section + section { padding-inline-start: 0; border-inline-start: 0; }
+  .investment-sidebar { width: 184px; }
+}
+@media (max-width: 850px) {
+  .investment-report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .investment-sidebar { width: 160px; padding-inline: 8px; }
+  .investment-content { padding: 16px; }
+  .investment-main > header { padding: 12px 16px; }
+  .investment-breadcrumb { display: none; }
+  .investment-metrics { gap: 12px; }
+  .investment-metrics > div + div { padding-inline-start: 12px; }
+  .investment-metrics strong { flex-wrap: wrap; gap: 0 6px; }
+  .investment-flow-bars button { grid-template-columns: 125px minmax(30px, 1fr) 85px; gap: 10px; }
+}
+@media (max-width: 600px) { .investment-config > summary span { display: none; } }

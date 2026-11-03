@@ -13,6 +13,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const DT = path.join(ROOT, "kalo-desktop");
 
 const steps = [
+  ["投行 Rust 内核单测", "cargo", ["test"], path.join(DT, "investment-core")],
   packageStep("TypeScript typecheck", "typescript", "bin/tsc", ["--noEmit"], DT),
   packageStep("Vitest 单测", "vitest", "vitest.mjs", ["run"], DT),
   packageStep("Gateway typecheck", "typescript", "bin/tsc", ["--noEmit"], path.join(DT, "gateway")),

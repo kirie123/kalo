@@ -5,6 +5,10 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod investment;
+mod investment_bridge;
+#[cfg(debug_assertions)]
+mod investment_acceptance;
 mod bundled_tools;
 mod data_transfer;
 mod files;
@@ -637,6 +641,18 @@ pub(crate) fn gen_session_id() -> String {
 }
 
 fn main() {
+    #[cfg(debug_assertions)]
+    if std::env::args().nth(1).as_deref() == Some("--investment-acceptance") {
+        if let Err(error) = investment_acceptance::run() { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
+    if std::env::args().nth(1).as_deref() == Some("--investment-worker") {
+        let result = std::env::var_os("KALO_INVESTMENT_WORKER_ROOT")
+            .map(std::path::PathBuf::from).ok_or("缺少计算目录".to_string())
+            .and_then(|root| kalo_investment::worker(&root, true));
+        if let Err(error) = result { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
     // A local import uses the same validation and registry as the desktop UI.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--import-expert") {
@@ -656,6 +672,7 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(SessionManager::default())
+        .manage(investment::InvestmentManager::default())
         .manage(task_workers::TaskWorkers::default())
         .manage(GatewayManager::default())
         .manage(terminal::TerminalManager::new())
@@ -727,6 +744,11 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            investment::investment_start,
+            investment::investment_status,
+            investment::investment_cancel,
+            investment::investment_catalog,
+            investment::investment_activity,
             task_workers::workbench_request,
             data_transfer::data_transfer_status,
             data_transfer::data_transfer_arm,
@@ -825,6 +847,7 @@ fn main() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
+            app_handle.state::<investment::InvestmentManager>().shutdown();
             // Reap child processes so nothing outlives the app window.
             if let Some(gateway) = app_handle.try_state::<GatewayManager>() {
                 gateway.shutdown();

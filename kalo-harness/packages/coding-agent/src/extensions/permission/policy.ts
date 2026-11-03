@@ -57,6 +57,16 @@ function isGranted(grants: readonly GrantScope[], tool: string, target: string):
 export function decide(request: DecideInput): PermissionDecision {
 	const { mode, tool, input, workspace, agentDir, grants } = request;
 
+	// Bounded application operations: fixed data sources and managed outputs, no arbitrary paths.
+	if ((tool === "investment_sync" || tool === "investment_backtest") && mode === "read-only") {
+		return {
+			kind: "ask",
+			reason: "write-in-readonly",
+			subject: tool === "investment_sync" ? "投行：下载免费行情并保存数据快照" : "投行：执行本地回测并保存实验报告",
+			grantable: undefined,
+		};
+	}
+
 	if (tool === "bash") {
 		const command = commandOf(input);
 		if (command === undefined) return ALLOW;

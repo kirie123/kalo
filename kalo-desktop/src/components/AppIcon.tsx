@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 const glyphs = {
+  chart: <><path d="M4 3v17h17M8 16v-4M13 16V8M18 16V5" /><path d="m7 8 5-5 4 1 5-3" /></>,
   home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h5v-6h4v6h5V9" /></>,
   note: <><path d="M13 4H6a2 2 0 0 0-2 2v14h13a2 2 0 0 0 2-2v-7" /><path d="m10 13 1-4 7-7 3 3-7 7-4 1Z" /><path d="M2 8h4M2 12h4M2 16h4" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,

@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView";
 import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
+import InvestmentPanel from "./features/investment/InvestmentPanel";
 import ExpertsPanel from "./features/experts/ExpertsPanel";
 import Workbench from "./features/workbench/Workbench";
 import FeedsSettings from "./components/FeedsSettings";
@@ -305,7 +306,7 @@ export default function App() {
   // Title-bar caption: whichever page is up, then the engine's session name,
   // falling back to the working directory's basename.
   const barTitle =
-    page === "workbench" ? "工作台" : page === "settings"
+    page === "investment" ? "投行" : page === "workbench" ? "工作台" : page === "settings"
       ? "设置"
       : page === "era"
         ? "演化"
@@ -356,7 +357,7 @@ export default function App() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
-          {page !== "settings" && <header className="workspace-header flex shrink-0 items-center justify-between gap-2 border-b border-edge px-5">
+          {page !== "settings" && page !== "investment" && <header className="workspace-header flex shrink-0 items-center justify-between gap-2 border-b border-edge px-5">
             <span className="truncate text-xs text-dim" title={chat.cwd || undefined}>
               {page === "workbench" ? "工作台 · 委托与交付" : page === "era" ? "演化实验" : page === "notes" ? "个人空间 / 笔记" : page === "experts" ? "数字专家" : page === "automation" ? "自动化 · 定时任务与数据源" : cwdBasename(chat.cwd) || "个人工作空间"}
             </span>
@@ -385,6 +386,8 @@ export default function App() {
             <div className="flex min-w-0 flex-1 flex-col">
               {page === "settings" ? (
                 <SettingsPage theme={theme} skin={skin} onThemeChange={setTheme} onSkinChange={setSkin} onBack={() => setPage("chat")} initialTab={settingsTab} />
+              ) : page === "investment" ? (
+                <InvestmentPanel />
               ) : page === "workbench" ? (
                 <Workbench cwd={chat.cwd} />
               ) : page === "era" ? (
