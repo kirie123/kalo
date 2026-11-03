@@ -3,22 +3,26 @@ import ChatView from "../../components/ChatView";
 import { chatStore, useChatSelector } from "../../lib/chat-store";
 import { useState } from "react";
 import type { ResearchContext } from "./code-logic";
+import { contextDelivery, lastUserId } from "./context-delivery";
 
 export default function InvestmentAssistant({ context, open, onClose }: { context: ResearchContext; open: boolean; onClose: () => void }) {
-  const chat = useChatSelector((s) => ({ name: s.sessionName, busy: s.isStreaming || s.connecting }));
+  const chat = useChatSelector((s) => ({ name: s.sessionName, busy: s.isStreaming || s.connecting, delivery: contextDelivery(context.text, s.timeline), lastUser: lastUserId(s.timeline), session: s.sessionId }));
   const [dismissed, setDismissed] = useState("");
+  const [forced, setForced] = useState<{ session: string | null; after: string }>();
   const included = dismissed !== context.text;
+  const forcePending = forced?.session === chat.session && forced?.after === chat.lastUser;
+  const promptContext = included && (chat.delivery !== "shared" || forcePending) ? context.text : undefined;
   const codePage = context.page === "code" || context.label.includes("代码策略");
   const marginPage = context.label.includes("两融观察");
   const ask = (question: string) => {
-    void chatStore.sendPrompt(`${question}${included ? `\n\n${context.text}` : ""}`);
+    void chatStore.sendPrompt(`${question}${promptContext ? `\n\n${promptContext}` : ""}`);
   };
   return <aside className="investment-assistant" hidden={!open} aria-label="投行研究助手">
     <header>
       <div><strong>研究助手</strong><small>{chat.name || "新对话"}</small></div>
       <button onClick={onClose} aria-label="收起研究助手"><AppIcon name="close" size={16} /></button>
     </header>
-    <div className="investment-assistant-context">{included ? <><details><summary>已带入：{context.label}</summary><pre>{context.text}</pre></details><button onClick={() => setDismissed(context.text)} aria-label="移除研究上下文"><AppIcon name="close" size={14} /></button></> : <button onClick={() => setDismissed("")}>重新带入当前页面</button>}</div>
+    <div className="investment-assistant-context">{included ? <><details><summary>{promptContext ? "本轮带入" : "已共享"}：{context.label}</summary><pre>{context.text}</pre></details>{!promptContext && <button onClick={() => setForced({ session: chat.session, after: chat.lastUser })}>重新带入</button>}<button onClick={() => setDismissed(context.text)} aria-label="移除研究上下文"><AppIcon name="close" size={14} /></button></> : <button onClick={() => { setDismissed(""); setForced({ session: chat.session, after: chat.lastUser }); }}>带入当前页面</button>}</div>
     <div className="investment-suggestions">
       {marginPage ? <>
       <button disabled={chat.busy} onClick={() => ask("同步最新沪深两融和海康威视两融数据，说明交易日、来源与精度。")}>同步两融数据</button>
@@ -41,6 +45,6 @@ export default function InvestmentAssistant({ context, open, onClose }: { contex
       <button disabled={chat.busy} onClick={() => ask("用 100 万元跑最近 60 个交易日的价格动量轮动回测，其余使用投行默认参数；说明参数、费用、收益和最大回撤。")}>运行动量回测</button>
       </>}
     </div>
-    <ChatView promptContext={included ? context.text : undefined} />
+    <ChatView promptContext={promptContext} />
   </aside>;
 }
