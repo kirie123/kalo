@@ -20,7 +20,7 @@ import CodeLab from "./CodeLab";
 import MarginView from "./MarginView";
 import { researchContext, type ResearchContext } from "./code-logic";
 import "./code-lab.css";
-const pageIcons: Record<string, IconName> = { home: "panel", flows: "chart", margin: "chart", charts: "chart", backtest: "checklist", code: "checklist", data: "plug" };
+const pageIcons: Record<string, IconName> = { home: "overview", flows: "chart", margin: "chart", charts: "candles", backtest: "checklist", code: "flask", data: "database" };
 const pages = [
   ["home", "总览"],
   ["flows", "ETF 资金"],
@@ -209,7 +209,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
         <div className="investment-between">
           <h1>投行</h1>
           <button aria-label="收起投行导航" onClick={() => setCollapsed(true)}>
-            ‹
+            <AppIcon name="chevronLeft" size={16} />
           </button>
         </div>
         <button
@@ -225,11 +225,11 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
               aria-current={(page === id || id === "charts" && marketPages.includes(page) || id === "code" && strategyPages.includes(page)) ? "page" : undefined}
               onClick={() => setPage(id)}
             >
-              <AppIcon name={pageIcons[id]} size={17} /><span>{label}</span>
+              <AppIcon name={pageIcons[id]} size={18} /><span>{label}</span>
             </button>
           ))}
         </nav>
-        <details className="investment-nav-group"><summary>研究池 <span>{snapshot?.instruments.length ?? 0}</span></summary>
+        <details className="investment-nav-group"><summary>研究池 <span>{snapshot?.instruments.length ?? 0}</span><AppIcon name="chevronDown" size={14} /></summary>
         {snapshot?.instruments.map((i) => (
           <button key={i.code} onClick={() => selectInstrument(i.code)}>
             {i.name}
@@ -237,7 +237,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
           </button>
         ))}
         {!snapshot && <p className="investment-nav-empty">等待数据同步</p>}
-        </details><details className="investment-nav-group"><summary>历史实验 <span>{catalog.reports.length}</span></summary>
+        </details><details className="investment-nav-group"><summary>历史实验 <span>{catalog.reports.length}</span><AppIcon name="chevronDown" size={14} /></summary>
         {catalog.reports.slice(0, 8).map((r) => (
           <button
             key={r.id}
@@ -263,15 +263,15 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
               aria-label="展开投行导航"
               onClick={() => setCollapsed(false)}
             >
-              ☰
+              <AppIcon name="panel" size={18} />
             </button>
             <span className="investment-breadcrumb">投行 <span>/</span></span>
             <strong>{marketPages.includes(page) ? "市场研究" : strategyPages.includes(page) ? "策略实验" : pages.find(([id]) => id === page)?.[1]}</strong>
           </div>
           <div className="investment-controls">
-            <button className="investment-assistant-toggle" onClick={() => setAssistantOpen(true)}><AppIcon name="model" size={16} />讨论此页</button>
+            <button className="investment-assistant-toggle" onClick={() => setAssistantOpen(true)}><AppIcon name="sparkles" size={16} />讨论此页</button>
           {page !== "code" && <button disabled={busy} onClick={() => void start(page === "margin" ? { operation: "marginSync" } : { operation: "sync" })}>
-            <AppIcon name="plug" size={16} />{busy ? "任务处理中" : "同步数据"}
+            <AppIcon name="refresh" size={16} />{busy ? "任务处理中" : "同步数据"}
           </button>}
           </div>
         </header>
@@ -292,7 +292,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
             <div className="investment-controls">
             {!busy && (lastRequest.current || !snapshot) && <button onClick={() => void start(lastRequest.current ?? { operation: "sync" })}>重试</button>}
             <button onClick={() => setError("")} aria-label="关闭错误提示">
-              ×
+              <AppIcon name="close" size={16} />
             </button>
             </div>
           </div>

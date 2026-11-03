@@ -33,7 +33,7 @@
 .research-select-menu button.is-active { background: var(--bg-card); border-color: var(--border); }
 .research-select-menu strong { display: block; font-size: 14px; font-weight: 500; line-height: 1.5; }
 .research-select-menu small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.research-select-check { flex-shrink: 0; width: 16px; color: var(--accent); }
+.research-select-check { display: grid; place-items: center; flex-shrink: 0; width: 16px; color: var(--accent); }
 .investment .investment-snapshot { align-items: center; gap: 12px; }
 .investment-snapshot .research-select { min-width: 220px; }
 .investment-snapshot > span { font-size: 12px; color: var(--text-dim); }

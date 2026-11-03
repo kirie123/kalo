@@ -1,7 +1,16 @@
 import type { ReactNode } from "react";
 
 const glyphs = {
-  chart: <><path d="M4 3v17h17M8 16v-4M13 16V8M18 16V5" /><path d="m7 8 5-5 4 1 5-3" /></>,
+  chart: <><path d="M4 4v16h16" /><path d="m8 14 4-4 3 2 5-6M16 6h4v4" /></>,
+  overview: <><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></>,
+  candles: <><path d="M6 3v4m0 9v5M12 3v9m0 5v4M18 3v3m0 8v7" /><rect x="4" y="7" width="4" height="9" rx="1" /><rect x="10" y="12" width="4" height="5" rx="1" /><rect x="16" y="6" width="4" height="8" rx="1" /></>,
+  flask: <><path d="M9 3h6M10 3v6l-6 9a2 2 0 0 0 1.7 3h12.6a2 2 0 0 0 1.7-3l-6-9V3M7.5 15h9" /><path d="M10 18h.01M14 17h.01" /></>,
+  database: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" /></>,
+  sparkles: <><path d="m12 4 2.4 6.6L21 13l-6.6 2.4L12 22l-2.4-6.6L3 13l6.6-2.4L12 4ZM4 2v4M2 4h4M20 3v4M18 5h4" /></>,
+  refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></>,
+  chevronLeft: <path d="m14 6-6 6 6 6" />,
+  chevronDown: <path d="m6 9 6 6 6-6" />,
+  close: <path d="m6 6 12 12M18 6 6 18" />,
   home: <><path d="m3 10 9-7 9 7" /><path d="M5 9v11h5v-6h4v6h5V9" /></>,
   note: <><path d="M13 4H6a2 2 0 0 0-2 2v14h13a2 2 0 0 0 2-2v-7" /><path d="m10 13 1-4 7-7 3 3-7 7-4 1Z" /><path d="M2 8h4M2 12h4M2 16h4" /></>,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,

@@ -1,3 +1,4 @@
+import AppIcon from "../../components/AppIcon";
 import ChatView from "../../components/ChatView";
 import { chatStore, useChatSelector } from "../../lib/chat-store";
 import { useState } from "react";
@@ -15,9 +16,9 @@ export default function InvestmentAssistant({ context, open, onClose }: { contex
   return <aside className="investment-assistant" hidden={!open} aria-label="投行研究助手">
     <header>
       <div><strong>研究助手</strong><small>{chat.name || "新对话"}</small></div>
-      <button onClick={onClose} aria-label="收起研究助手">×</button>
+      <button onClick={onClose} aria-label="收起研究助手"><AppIcon name="close" size={16} /></button>
     </header>
-    <div className="investment-assistant-context">{included ? <><details><summary>已带入：{context.label}</summary><pre>{context.text}</pre></details><button onClick={() => setDismissed(context.text)} aria-label="移除研究上下文">×</button></> : <button onClick={() => setDismissed("")}>重新带入当前页面</button>}</div>
+    <div className="investment-assistant-context">{included ? <><details><summary>已带入：{context.label}</summary><pre>{context.text}</pre></details><button onClick={() => setDismissed(context.text)} aria-label="移除研究上下文"><AppIcon name="close" size={14} /></button></> : <button onClick={() => setDismissed("")}>重新带入当前页面</button>}</div>
     <div className="investment-suggestions">
       {marginPage ? <>
       <button disabled={chat.busy} onClick={() => ask("同步最新沪深两融和海康威视两融数据，说明交易日、来源与精度。")}>同步两融数据</button>

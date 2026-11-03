@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import AppIcon from "../../components/AppIcon";
 import { selectLayout } from "./select-layout";
 
 type Choice = { value: string; label: string; detail?: string };
@@ -51,7 +52,7 @@ export function ResearchSelect({ label, value, options, onChange }: {
         }
       }}>
       <span className="research-select-value">{selected?.label ?? "请选择"}</span>
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <AppIcon name="chevronDown" size={14} />
     </button>
     {open && createPortal(<div ref={menu} className="research-select-menu" style={position} onMouseDown={e => e.preventDefault()}>
       <div className="research-select-heading">{label}<span>{options.length} 项</span></div>
@@ -60,7 +61,7 @@ export function ResearchSelect({ label, value, options, onChange }: {
           key={option.value} aria-selected={value === option.value} className={active === index ? "is-active" : ""}
           onPointerMove={() => setActive(index)} onClick={() => choose(option)}>
           <span><strong>{option.label}</strong>{option.detail && <small>{option.detail}</small>}</span>
-          <span className="research-select-check" aria-hidden="true">{value === option.value ? "✓" : ""}</span>
+          <span className="research-select-check" aria-hidden="true">{value === option.value && <AppIcon name="check" size={16} />}</span>
         </button>)}
       </div>
     </div>, document.body)}
