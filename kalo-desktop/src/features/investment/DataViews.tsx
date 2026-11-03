@@ -26,15 +26,9 @@ export function FlowView({
           <h1>ETF 资金观察</h1>
           <span className="investment-eyebrow">净申购估算 / 人民币</span>
         </div>
-        <select
-          aria-label="资金窗口"
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-        >
-          <option value={1}>1 交易日</option>
-          <option value={5}>5 交易日</option>
-          <option value={20}>20 交易日</option>
-        </select>
+        <div className="investment-tabs investment-period" role="group" aria-label="资金窗口">
+          {[1, 5, 20].map(value => <button type="button" key={value} aria-pressed={days === value} onClick={() => setDays(value)}>{value} 日</button>)}
+        </div>
       </div>
       <PoolFilter instruments={snapshot.instruments} value={category} onChange={setCategory} />
       {!rows.length && <p>当前快照没有此类 ETF，请同步最新数据。</p>}
@@ -184,7 +178,7 @@ export function DataView({ snapshot }: { snapshot: Snapshot }) {
         ) : (
           <p>本次接口未返回缺口警告。</p>
         )}
-        <details><summary>数据存储与历史可用性</summary><p>资金采用本地首次观察时间。原响应和快照保存于应用数据目录 investment，刷新不覆盖已有实验。当前仅支持免费源和固定研究池；完整公司行为校验尚未开放。</p></details>
+        <details><summary>数据存储与历史可用性</summary><p>资金采用本地首次观察时间。原响应和快照保存于应用数据目录 investment，刷新不覆盖已有实验。深交所份额按统计日对齐净值，盘后数据可能在次日上午修订。当前仅支持免费源和固定研究池；完整公司行为校验尚未开放。</p></details>
       </section>
     </>
   );

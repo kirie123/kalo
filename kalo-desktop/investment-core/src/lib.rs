@@ -3,6 +3,7 @@ pub mod engine;
 pub mod model;
 pub mod sources;
 pub mod storage;
+mod szse;
 mod transport;
 pub mod universe;
 pub use model::*;

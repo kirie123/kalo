@@ -1,3 +1,4 @@
+import { ResearchSelect } from "./ResearchSelect";
 import { useEffect, useState } from "react";
 import type { Report, Snapshot, Spec } from "./types";
 import { categories, categoryOf, inCategory, defaultSpec, formatMoney, percent, specError } from "./logic";
@@ -66,15 +67,9 @@ export function BacktestForm({
         <div className="investment-form">
           <label>
             策略
-            <select
-              value={spec.flowFilter ? "flow" : "price"}
-              onChange={(e) =>
-                setSpec({ ...spec, flowFilter: e.target.value === "flow" })
-              }
-            >
-              <option value="price">价格动量轮动</option>
-              <option value="flow">动量 + 5 日净申购过滤</option>
-            </select>
+            <ResearchSelect label="策略" value={spec.flowFilter ? "flow" : "price"}
+              onChange={value => setSpec({ ...spec, flowFilter: value === "flow" })}
+              options={[{value: "price", label: "价格动量轮动", detail: "按历史收益排序，次日开盘调仓"}, {value: "flow", label: "动量 + 5 日净申购过滤", detail: "需要决策日前已观测的资金数据"}]} />
           </label>
           {field("capital", "初始资金 / 元", 1000, 100000000, 1000)}
           <label>

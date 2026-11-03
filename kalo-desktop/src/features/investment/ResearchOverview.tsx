@@ -8,10 +8,10 @@ import type { Report, Snapshot } from "./types";
 export function DataSources({ snapshot }: { snapshot?: Snapshot }) {
   const instruments = snapshot?.instruments ?? [];
   const prices = instruments.reduce((n, i) => n + i.bars.length, 0);
-  const shares = instruments.reduce((n, i) => n + i.funds.filter(f => f.shares != null).length, 0);
+  const shares = (market: string) => instruments.filter(i => i.code.endsWith(market)).reduce((n, i) => n + i.funds.filter(f => f.shares != null).length, 0);
   const navs = instruments.reduce((n, i) => n + i.funds.filter(f => f.nav != null).length, 0);
   return <div className="investment-sources">
-    {[["腾讯行情", "日线 / 前复权", prices], ["上海证券交易所", "ETF 基金份额", shares], ["东方财富", "基金单位净值", navs]].map(([name, type, count]) =>
+    {[["腾讯行情", "日线 / 前复权", prices], ["上海证券交易所", "沪市 ETF 基金份额", shares(".SH")], ["深圳证券交易所", "深市 ETF 基金份额", shares(".SZ")], ["东方财富", "基金单位净值", navs]].map(([name, type, count]) =>
       <div className="investment-source" key={name}>
         <AppIcon name="plug" size={18} />
         <div><strong>{name}</strong><small>{type}</small></div>
@@ -26,8 +26,8 @@ export function ResearchEmpty({ busy, onSync, onAssistant }: { busy: boolean; on
     <section className="investment-empty">
       <AppIcon name="chart" size={32} />
       <h2>连接数据，开始研究</h2>
-      <p>13 只 ETF / 宽基 / 双创 / 行业主题</p>
-      <p>双创50、科创50，以及半导体、军工、银行、证券、医疗、医药、酒、新能源车</p>
+      <p>15 只 ETF / 宽基 / 双创 / 行业主题</p>
+      <p>创业板、创业板50、双创50、科创50，以及半导体、军工、银行、证券、医疗、医药、酒、新能源车</p>
       <div className="investment-controls"><button className="investment-primary" disabled={busy} onClick={onSync}>{busy ? "同步中…" : "同步免费数据"}</button><button onClick={onAssistant}>交给研究助手</button></div>
     </section>
     <div className="investment-section-title"><h2>数据源</h2><span>无需数据账号</span></div>

@@ -11,6 +11,8 @@ import { BacktestForm, ReportView } from "./Backtest";
 import { DataView, FlowView, MarketView } from "./DataViews";
 import "./investment.css";
 import "./research.css";
+import "./controls.css";
+import { ResearchSelect } from "./ResearchSelect";
 import InvestmentAssistant from "./InvestmentAssistant";
 import AppIcon, { type IconName } from "../../components/AppIcon";
 import ResearchOverview, { ResearchEmpty } from "./ResearchOverview";
@@ -271,17 +273,10 @@ export default function InvestmentPanel() {
             <div className="investment-between investment-snapshot">
               <label>
                 研究快照{" "}
-                <select
-                  value={snapshot.id}
-                  onChange={(e) => setSnapshotId(e.target.value)}
-                >
-                  {catalog.snapshots.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {new Date(s.createdAt).toLocaleString()} /{" "}
-                      {s.id.slice(0, 8)}
-                    </option>
-                  ))}
-                </select>
+                <ResearchSelect label="研究快照" value={snapshot.id} onChange={setSnapshotId}
+                  options={catalog.snapshots.map((s, index) => ({ value: s.id,
+                    label: `${index === 0 ? "最新 / " : ""}${new Date(s.createdAt).toLocaleString()}`,
+                    detail: `${s.instruments.length} 只 ETF / 行情 ${s.instruments[0]?.bars.at(-1)?.date ?? "暂无"} / ${s.id.slice(0, 8)}` }))} />
               </label>
               <span>
                 行情截至 {snapshot.instruments[0]?.bars.at(-1)?.date}
@@ -298,17 +293,8 @@ export default function InvestmentPanel() {
               )}
               {page === "charts" && instrument && (
                 <>
-                  <select
-                    aria-label="行情标的"
-                    value={instrument.code}
-                    onChange={(e) => setInstrumentCode(e.target.value)}
-                  >
-                    {snapshot.instruments.map((i) => (
-                      <option key={i.code} value={i.code}>
-                        {i.name}
-                      </option>
-                    ))}
-                  </select>
+                  <ResearchSelect label="行情标的" value={instrument.code} onChange={setInstrumentCode}
+                    options={snapshot.instruments.map(i => ({ value: i.code, label: i.name, detail: `${i.code} / ${i.category || "未分类"}` }))} />
                   <MarketView
                     instrument={instrument}
                     onBacktest={() => setPage("backtest")}
@@ -331,19 +317,11 @@ export default function InvestmentPanel() {
                   </details>
                   {report && (
                     <>
-                      <label>
+                      <label className="investment-report-select">
                         查看历史报告
-                        <select
-                          value={report.id}
-                          onChange={(e) => setReportId(e.target.value)}
-                        >
-                          {catalog.reports.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {new Date(r.createdAt).toLocaleString()} / {r.spec.codes ? `${r.spec.codes.length} 只` : "全池"} /{" "}
-                              {r.id.slice(0, 8)}
-                            </option>
-                          ))}
-                        </select>
+                        <ResearchSelect label="历史报告" value={report.id} onChange={setReportId}
+                          options={catalog.reports.map(r => ({ value: r.id, label: `${r.spec.flowFilter ? "资金过滤" : "价格动量"} / ${r.spec.codes ? `${r.spec.codes.length} 只` : "全池"} / ${r.spec.start} → ${r.spec.end}`,
+                            detail: `${new Date(r.createdAt).toLocaleString()} / ${r.id.slice(0, 8)}` }))} />
                       </label>
 
                       <div ref={reportAnchor}><ReportView key={report.id} report={report} /></div>

@@ -44,12 +44,12 @@ export default function investmentExtension(pi: ExtensionAPI): void {
 		name: "investment_catalog",
 		label: "投行数据与实验",
 		description:
-			"Read the Kalo investment panel's real snapshot coverage, ETF codes/categories, default backtest specifications and report summaries. Supports configured Shanghai-listed broad-market, STAR/ChiNext innovation and sector ETFs. Read before analysis or backtesting; never invent codes, snapshot IDs or dates. Old snapshots may contain only three broad-market ETFs; sync when requested ETFs are missing.",
+			"Read the Kalo investment panel's real snapshot coverage, ETF codes/categories, default backtest specifications and report summaries. Supports configured Shanghai/Shenzhen-listed broad-market, STAR/ChiNext innovation and sector ETFs. Read before analysis or backtesting; never invent codes, snapshot IDs or dates. Old snapshots may contain only three broad-market ETFs; sync when requested ETFs are missing.",
 		promptSnippet: "investment_catalog — 查询投行数据、可回测区间、默认参数及历史报告",
 		promptGuidelines: [
 			"用户要求同步 ETF、分析资金或回测时使用 investment 工具，结果会直接呈现在投行面板。不要用 shell 绕过工具或编造结果。",
 			"先读 catalog；无数据时按用户的研究请求同步。沿用明确的快照 ID，完整说明默认参数与用户参数。unsupported 标的/策略应说明限制，不能静默替换。",
-			"回测特定板块或双创时，从 catalog 按 category/name 选择实际代码写入 spec.codes，并使 holdings 不超过选池数量。资金工具返回全池，分析时按返回的 category 分组，说明实际覆盖；双创50覆盖科创板与创业板，不等于单独创业板ETF。",
+			"回测特定板块或双创时，从 catalog 按 category/name 选择实际代码写入 spec.codes，并使 holdings 不超过选池数量。资金工具返回全池，分析时按返回的 category 分组，说明实际覆盖；双创50覆盖科创板与创业板，不等于单独创业板ETF。创业板ETF为159915.SZ，创业板50为159949.SZ；若旧快照缺少深市标的先同步。",
 		],
 		parameters: Type.Object({}),
 		async execute() {

@@ -1,0 +1,44 @@
+.investment .investment-tabs {
+  display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; gap: 3px;
+  padding: 4px; margin: 20px 0; border: .5px solid var(--border); border-radius: 9px; background: var(--bg-sidebar);
+}
+.investment .investment-tabs button {
+  min-height: 32px; padding: 6px 12px; gap: 8px; border: .5px solid transparent;
+  border-radius: 5px; color: var(--text-dim); background: transparent; font-size: 12px; white-space: nowrap;
+}
+.investment .investment-tabs button:hover { background: var(--bg-card); color: var(--text); }
+.investment .investment-tabs button[aria-pressed="true"] {
+  background: var(--bg); color: var(--text); border-color: var(--border); font-weight: 500;
+}
+.investment-tabs button > span { font-size: 12px; min-width: 18px; padding: 0 4px; border-radius: 3px; background: var(--bg-card); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.investment .investment-period { margin: 0; }
+.investment .research-select {
+  display: inline-flex; justify-content: space-between; gap: 16px; min-height: 36px;
+  padding: 8px 12px; max-width: 100%; min-width: 180px; border: .5px solid var(--border);
+  border-radius: 7px; background: var(--bg); color: var(--text); font-size: 14px; text-align: start;
+}
+.research-select-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.research-select svg { flex-shrink: 0; color: var(--text-dim); transition: transform .12s ease; }
+.investment .research-select:hover { background: var(--bg-card); border-color: var(--text-dim); }
+.investment .research-select[aria-expanded="true"] { border-color: var(--accent); background: var(--bg-card); }
+.research-select[aria-expanded="true"] svg { transform: rotate(180deg); }
+.research-select-menu {
+  position: fixed; z-index: 10000; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain;
+  padding: 6px; border: .5px solid var(--border); border-radius: 10px;
+  background: var(--bg); color: var(--text); box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  font-family: inherit; font-size: 14px; scrollbar-gutter: stable;
+}
+.research-select-heading { display: flex; justify-content: space-between; padding: 7px 10px 9px; color: var(--text-dim); font-size: 12px; }
+.research-select-menu button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 10px; border: .5px solid transparent; border-radius: 4px; background: transparent; color: var(--text); text-align: start; font: inherit; cursor: pointer; }
+.research-select-menu button.is-active { background: var(--bg-card); border-color: var(--border); }
+.research-select-menu strong { display: block; font-size: 14px; font-weight: 500; line-height: 1.5; }
+.research-select-menu small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.research-select-check { flex-shrink: 0; width: 16px; color: var(--accent); }
+.investment .investment-snapshot { align-items: center; gap: 12px; }
+.investment-snapshot .research-select { min-width: 220px; }
+.investment-snapshot > span { font-size: 12px; color: var(--text-dim); }
+.investment-form .research-select { width: 100%; }
+.investment .investment-report-select { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-block: 24px 16px; font-size: 12px; }
+.dark .research-select-menu strong { font-weight: 400; }
+.dark .research-select-menu { box-shadow: 0 4px 12px color-mix(in srgb, var(--accent-contrast) 50%, transparent); }
+@media (prefers-reduced-motion: reduce) { .research-select svg { transition: none; } }

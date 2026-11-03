@@ -4,12 +4,12 @@ use reqwest::blocking::Client;
 use serde_json::Value;
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-fn number(v: &Value) -> Option<f64> {
+pub(crate) fn number(v: &Value) -> Option<f64> {
     v.as_f64()
         .or_else(|| v.as_str()?.replace(',', "").parse().ok())
         .filter(|v| v.is_finite())
 }
-fn get(
+pub(crate) fn get(
     client: &Client,
     root: &Path,
     url: &str,
@@ -101,7 +101,8 @@ pub fn sync(root: &Path) -> Result<Snapshot, String> {
     for entry in crate::universe::ENTRIES {
         let code = &entry.code[..6];
         eprintln!("同步 {code} 日线");
-        let symbol = format!("sh{code}");
+        let market = entry.code.split_once('.').ok_or("证券代码缺少市场")?.1;
+        let symbol = format!("{}{code}", market.to_lowercase());
         let url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
         let raw = get(
             &client,
@@ -127,7 +128,7 @@ pub fn sync(root: &Path) -> Result<Snapshot, String> {
             bar.adjusted_close = *map.get(bar.date.as_str()).ok_or("复权与原始行情日期不齐")?;
         }
         instruments.push(Instrument {
-            code: format!("{code}.SH"),
+            code: entry.code.into(),
             name: entry.name.into(),
             category: entry.category.into(),
             bars,
@@ -177,6 +178,17 @@ pub fn sync(root: &Path) -> Result<Snapshot, String> {
                 }
             }
             Err(e) => warnings.push(format!("{date} 份额：{e}")),
+        }
+    }
+    for instrument in instruments.iter().filter(|i| i.code.ends_with(".SZ")) {
+        eprintln!("同步 {} 深交所份额", instrument.code);
+        match crate::szse::shares(&client, root, &instrument.code[..6], &dates) {
+            Ok(rows) => {
+                for (date, qty) in rows {
+                    shares.insert((instrument.code.clone(), date), qty);
+                }
+            }
+            Err(e) => warnings.push(format!("{} 深交所份额：{e}", instrument.code)),
         }
     }
     // Preserve first-observed timestamps only when the observed values are unchanged.
@@ -284,7 +296,7 @@ pub fn sync(root: &Path) -> Result<Snapshot, String> {
     Ok(Snapshot {
         id: uuid::Uuid::new_v4().to_string(),
         created_at: now,
-        source: "腾讯日线 / 上交所份额 / 东方财富单位净值".into(),
+        source: "腾讯日线 / 上交所及深交所份额 / 东方财富单位净值".into(),
         instruments,
         warnings,
     })

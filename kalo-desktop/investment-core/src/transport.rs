@@ -30,6 +30,8 @@ pub fn fetch(
         "腾讯日线"
     } else if url.contains("sse.com.cn") {
         "上交所份额"
+    } else if url.contains("szse.cn") {
+        "深交所份额"
     } else {
         "东方财富净值"
     };

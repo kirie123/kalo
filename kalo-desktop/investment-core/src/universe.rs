@@ -1,4 +1,4 @@
-//! One source of truth for supported Shanghai-listed equity ETFs.
+//! One source of truth for supported Shanghai/Shenzhen-listed equity ETFs.
 pub struct Entry {
     pub code: &'static str,
     pub name: &'static str,
@@ -7,6 +7,18 @@ pub struct Entry {
 }
 
 pub const ENTRIES: &[Entry] = &[
+    Entry {
+        code: "159915.SZ",
+        name: "创业板 ETF",
+        category: "双创",
+        price_limit: 0.20,
+    },
+    Entry {
+        code: "159949.SZ",
+        name: "创业板50 ETF",
+        category: "双创",
+        price_limit: 0.20,
+    },
     Entry {
         code: "510300.SH",
         name: "沪深300 ETF",
@@ -108,6 +120,8 @@ mod tests {
     #[test]
     fn innovation_uses_twenty_percent_and_tick_rounding() {
         assert!(!at_price_limit("588300.SH", 1.003, 1.15, true));
+        assert!(!at_price_limit("159915.SZ", 1.003, 1.15, true));
+        assert!(at_price_limit("159949.SZ", 1.003, 1.204, true));
         assert!(at_price_limit("512480.SH", 1.003, 1.15, true));
         assert!(at_price_limit("588000.SH", 1.003, 1.204, true));
         assert!(!at_price_limit("588000.SH", 1.003, 1.203, true));
