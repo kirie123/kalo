@@ -48,6 +48,8 @@ pub struct MarketBar {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {
+    #[serde(default)]
+    pub corporate_actions: Vec<crate::corporate_actions::CorporateAction>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub series_key: String,
     #[serde(default)]
@@ -102,6 +104,16 @@ pub struct ScriptOrder {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptEquity {
+    #[serde(default)]
+    pub dividend_receivable: f64,
+    #[serde(default)]
+    pub pending_shares: u64,
+    #[serde(default)]
+    pub average_cost: f64,
+    #[serde(default)]
+    pub realized_pnl: f64,
+    #[serde(default)]
+    pub dividend_income: f64,
     pub time: String,
     pub equity: f64,
     pub benchmark: f64,
@@ -115,6 +127,12 @@ pub struct ScriptEquity {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptReport {
+    #[serde(default)]
+    pub accounting: String,
+    #[serde(default)]
+    pub corporate_actions: Vec<crate::corporate_actions::CorporateAction>,
+    #[serde(default)]
+    pub action_ledger: Vec<crate::corporate_ledger::ActionEntry>,
     #[serde(default = "default_timeframe")]
     pub timeframe: String,
     pub kind: String,

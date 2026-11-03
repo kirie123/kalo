@@ -27,4 +27,14 @@ describe("code experiment input", () => {
     expect(codeError({...spec,start:"bar-60"},market)).toContain("除权除息");
     expect(codeDefaults({...market,blockedSessions:["2026-11-03"]},spec.source).start).toBe("");
   });
+  it("allows verified distributions across full range but guards unknown initial entitlements", () => {
+    const market = { ...data, bars: data.bars.map((b,i) => ({...b, session: i < 48 ? "2026-11-02" : "2026-11-03"})),
+      corporateActions: [{id:"cash",recordDate:"2026-11-02",exDate:"2026-11-03",payDate:"2026-11-03",listingDate:null}] } as Dataset;
+    const spec = codeDefaults(market, "fn on_bar(ctx) { #{side: \"hold\", quantity: 0} }");
+    expect(spec.start).toBe("bar-30");
+    expect(codeError(spec,market)).toBeNull();
+    expect(codeError({...spec,start:"bar-78"},market)).toContain("起点前");
+    expect(codeError({...spec,start:"bar-78",basePosition:0},market)).toBeNull();
+    expect(codeError(spec,{...market,blockedSessions:["2026-11-03"]})).toContain("未核实");
+  });
 });

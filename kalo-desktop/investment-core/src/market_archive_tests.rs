@@ -10,6 +10,7 @@ impl Drop for Temp { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.
 
 fn data(days: &[u32]) -> Dataset {
     Dataset {
+        corporate_actions: vec![],
         series_key: SINA_SERIES.into(), kind: "marketDataset".into(), schema_version: 1,
         id: uuid::Uuid::new_v4().to_string(), created_at: "2026-11-10T00:00:00Z".into(),
         security: security("002415.SZ").unwrap(), timeframe: "5m".into(), timezone: "Asia/Shanghai".into(),

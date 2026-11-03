@@ -91,7 +91,7 @@ pub fn compact_result(value: &Value) -> Result<Value, String> {
         let data: crate::market_model::Dataset =
             serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
         return Ok(
-            json!({"kind":data.kind,"id":data.id,"createdAt":data.created_at,"security":data.security,"timeframe":data.timeframe,"source":data.source,"sourceHash":data.source_hash,"bars":data.bars.len(),"sessions":data.sessions,"firstBar":data.bars.first(),"lastBar":data.bars.last(),"warnings":data.warnings,"blockedSessions":data.blocked_sessions,"defaultSpec":crate::strategy_runtime::defaults(&data),"runtime":crate::strategy_runtime::contract()}),
+            json!({"kind":data.kind,"id":data.id,"createdAt":data.created_at,"security":data.security,"timeframe":data.timeframe,"source":data.source,"sourceHash":data.source_hash,"bars":data.bars.len(),"sessions":data.sessions,"firstBar":data.bars.first(),"lastBar":data.bars.last(),"warnings":data.warnings,"blockedSessions":data.blocked_sessions,"corporateActions":data.corporate_actions,"defaultSpec":crate::strategy_runtime::defaults(&data),"runtime":crate::strategy_runtime::contract()}),
         );
     }
     if value["kind"] == "scriptReport" {

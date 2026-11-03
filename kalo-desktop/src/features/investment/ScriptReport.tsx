@@ -1,3 +1,4 @@
+import CorporateActionLedger from "./CorporateActionLedger";
 import { useState } from "react";
 import type { ScriptReport as Report } from "./code-types";
 import { formatMoney, percent } from "./logic";
@@ -24,10 +25,12 @@ export default function ScriptReportView({ report }: { report: Report }) {
         <div>持有基准<strong>{percent(report.benchmarkReturn)}</strong></div>
         <div>最大回撤<strong>{percent(report.maxDrawdown)}</strong></div>
       </div>
+      {report.accounting && <p className="investment-footnote">含分红送转总回报 · 税前股息 · 策略与基准采用相同账务</p>}
       <div className="investment-chart-legend"><i />代码策略 <i className="benchmark" />同等底仓持有</div>
       <svg className="investment-chart" viewBox="0 0 900 200" role="img" aria-label="代码策略与底仓持有资产曲线"><polyline points={line("equity")} fill="none" stroke="var(--text)" strokeWidth="2" /><polyline points={line("benchmark")} fill="none" stroke="var(--tone-blue)" strokeWidth="1.5" /></svg>
-      <div className="investment-between"><span>初始资产 ¥ {formatMoney(report.initialEquity)}</span><span>{filled} 笔成交 / {report.orders.length - filled} 笔拒单</span><span>显式费用 ¥ {formatMoney(report.costs)}</span></div>
+      <div className="investment-between"><span>初始资产 ¥ {formatMoney(report.initialEquity)}</span><span>{filled} 笔成交 / {report.orders.length - filled} 笔拒单</span><span>显式费用 ¥ {formatMoney(report.costs || 0)}</span></div>
       <p>期末现金 ¥ {formatMoney(final?.cash ?? 0)} / 持仓 {final?.position ?? 0} 股 / 可卖 {final?.sellable ?? 0} 股</p>
+      <CorporateActionLedger report={report} />
       <details><summary>KDJ 与逐根账户</summary><div className="investment-table"><table><thead><tr><th>时间</th><th>K / D / J</th><th>资产</th><th>持仓 / 可卖</th></tr></thead><tbody>{points.slice(accountPage*100,(accountPage+1)*100).map(p => <tr key={p.time}><td>{p.time.slice(0, 16).replace("T", " ")}</td><td>{p.k.toFixed(2)} / {p.d.toFixed(2)} / {p.j.toFixed(2)}</td><td>{formatMoney(p.equity)}</td><td>{p.position} / {p.sellable}</td></tr>)}</tbody></table></div>{pager(points.length,accountPage,setAccountPage)}</details>
     </>}
     {tab === "orders" && <>{pager(report.orders.length,orderPage,setOrderPage)}<div className="investment-table"><table><thead><tr><th>信号收盘 → 实际成交</th><th>方向 / 请求 / 成交</th><th>价格</th><th>佣金 / 印花税 / 过户费</th><th>持仓 / 可卖</th><th>原因</th></tr></thead><tbody>{report.orders.slice(orderPage*100,(orderPage+1)*100).map((o, i) => <tr key={i}><td>{o.signalAt.slice(0, 16).replace("T", " ")}<small>{o.executedAt?.slice(0, 16).replace("T", " ") ?? "未成交"}</small></td><td>{o.side === "buy" ? "买入" : "卖出"} / {o.requested} / {o.quantity}</td><td>{o.quantity ? o.price.toFixed(report.security.tickSize < .01 ? 3 : 2) : "—"}</td><td>{o.commission.toFixed(2)} / {o.stampTax.toFixed(2)} / {o.transferFee.toFixed(2)}</td><td>{o.positionAfter} / {o.sellableAfter}</td><td>{o.reason}</td></tr>)}</tbody></table>{!report.orders.length && <p>代码未产生买卖信号，保持现金与初始底仓。</p>}</div></>}

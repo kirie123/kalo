@@ -56,9 +56,9 @@ pub fn defaults(dataset: &Dataset) -> Option<ScriptSpec> {
 }
 pub fn contract() -> Value {
     json!({"language":"rhai","entry":"fn on_bar(ctx)","maxSourceBytes":16384,"maxOperationsPerBar":100000,
-        "inputs":["code","date","time","history (至当前收盘，最多120根，OHLCV)","kdj / previousKdj (9,3,3; K,D初值50; ready)","cash","position","sellable","basePosition","tradeSize","state"],
+        "inputs":["code","date","time","history (至当前收盘，最多120根，按当时已生效分派调整价格尺度的OHLCV，撮合仍用原始价)","kdj / previousKdj (9,3,3; K,D初值50; ready)","cash","position","sellable","basePosition (含已上市送转的基准目标)","tradeSize","state","dividendReceivable","pendingShares","averageCost","corporateActions (当日生效)"],
         "output":{"side":"hold | buy | sell","quantity":"非负整数股，数量须遵守security.lotSize及科创板最少200股、其他证券最少100股","state":"传递到下一根K线的JSON对象，可省略以保留"},
-        "execution":"次根开盘，跨日订单失效；按冻结security.settlementDays控制T+0/T+1库存，初始底仓计入资产；不开放文件、网络、时间与模块加载。",
+        "execution":"次根开盘，跨日订单失效；按冻结security.settlementDays控制T+0/T+1库存，初始底仓计入资产；已核实分红送转自动入账，现金支付与股份上市前不可用，税前股息口径；不开放文件、网络、时间与模块加载。",
         "range":"必须使用dataset.defaultSpec.start或更晚的时刻，开始之前至少留30根预热K线；不能直接用firstBar作为start。",
         "example":EXAMPLE})
 }
@@ -93,7 +93,7 @@ pub fn kdj(dataset: &Dataset) -> Vec<Kdj> {
                     ready: false,
                 };
             }
-            let window = &dataset.bars[i - 8..=i];
+            let window = crate::corporate_actions::history(dataset, i - 8, i);
             let high = window
                 .iter()
                 .map(|b| b.high)

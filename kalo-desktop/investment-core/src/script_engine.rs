@@ -6,12 +6,7 @@ use chrono::{Timelike, Utc};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-fn cents(v: f64) -> i64 {
-    (v * 100.0).round() as i64
-}
-fn yuan(v: i64) -> f64 {
-    v as f64 / 100.0
-}
+use crate::corporate_ledger::{cents, yuan, Account};
 fn fees(amount: i64, buy: bool, spec: &ScriptSpec, security: &Security) -> (i64, i64, i64) {
     // Current A-share tariff, restricted to datasets after its effective date.
     let commission = cents((yuan(amount) * spec.commission_bps / 10000.0).max(spec.minimum_fee));
@@ -26,11 +21,6 @@ fn fees(amount: i64, buy: bool, spec: &ScriptSpec, security: &Security) -> (i64,
         cents(yuan(amount) * 0.00001)
     };
     (commission, stamp, transfer)
-}
-struct Account {
-    cash: i64,
-    position: u64,
-    sellable: u64,
 }
 fn execute(
     intent: &Intent,
@@ -68,8 +58,13 @@ fn execute(
         row.reason = "下一根无实际成交，不能用陈旧价格撮合".into();
         return row;
     }
-    if intent.quantity < crate::securities::minimum(security)
-        || intent.quantity % security.lot_size != 0
+    let odd_sale = intent.side == "sell"
+        && intent.quantity == account.sellable
+        && (account.sellable % security.lot_size != 0
+            || account.sellable < crate::securities::minimum(security));
+    if !odd_sale
+        && (intent.quantity < crate::securities::minimum(security)
+            || intent.quantity % security.lot_size != 0)
     {
         row.reason = "订单数量未满足该证券最低申报数量或数量步长".into();
         return row;
@@ -99,7 +94,10 @@ fn execute(
         (signal.volume * 0.01 / security.lot_size as f64).floor() as u64 * security.lot_size;
     let mut quantity = intent.quantity.min(capacity);
     if !buy {
-        quantity = quantity.min(account.sellable) / security.lot_size * security.lot_size;
+        quantity = quantity.min(account.sellable);
+        if !(odd_sale && quantity == account.sellable) {
+            quantity = quantity / security.lot_size * security.lot_size;
+        }
     }
     if buy {
         let (mut lo, mut hi) = (0, quantity / security.lot_size);
@@ -115,7 +113,10 @@ fn execute(
         }
         quantity = lo * security.lot_size;
     }
-    if quantity < crate::securities::minimum(security) {
+    if quantity == 0
+        || (quantity < crate::securities::minimum(security)
+            && !(odd_sale && quantity == account.sellable))
+    {
         row.reason = if capacity == 0 {
             "前根成交量容量不足"
         } else if buy {
@@ -129,12 +130,14 @@ fn execute(
     let amount = cents(price * quantity as f64);
     let (c, s, t) = fees(amount, buy, spec, security);
     if buy {
+        account.bought(quantity, amount + c + s + t);
         account.cash -= amount + c + s + t;
         account.position += quantity;
         if security.settlement_days == 0 {
             account.sellable += quantity;
         }
     } else {
+        account.sold(quantity, amount - c - s - t);
         account.cash += amount - c - s - t;
         account.position -= quantity;
         account.sellable -= quantity;
@@ -214,8 +217,9 @@ pub fn validate(data: &Dataset, spec: &ScriptSpec) -> Result<(), String> {
         .iter()
         .any(|d| d >= &data.bars[start.saturating_sub(30)].session && d <= &data.bars[end].session)
     {
-        return Err("所选区间或指标预热跨越除权除息，尚未支持分红送转账务。请选择同一公司行为区间并预留30根预热。".into());
+        return Err("所选区间或指标预热跨越除权除息，分派证据未核实。请重新同步数据核实该事件，不能跳过账务。".into());
     }
+    crate::corporate_actions::validate(data, start, end, spec.base_position)?;
     let mut sessions: std::collections::BTreeMap<String, Vec<u32>> =
         std::collections::BTreeMap::new();
     for (i, b) in data.bars.iter().enumerate() {
@@ -276,7 +280,7 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
     let indicators = strategy_runtime::kdj(data);
     let start = data.bars.iter().position(|b| b.end == spec.start).unwrap();
     let end = data.bars.iter().position(|b| b.end == spec.end).unwrap();
-    let history_start = data.bars[..=start]
+    let mut history_start = data.bars[..=start]
         .iter()
         .enumerate()
         .filter(|(i, b)| {
@@ -290,11 +294,9 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
     if initial_equity <= 0.0 {
         return Err("初始现金和底仓资产不能同时为零".into());
     }
-    let mut account = Account {
-        cash: cents(spec.cash),
-        position: spec.base_position,
-        sellable: spec.base_position,
-    };
+    let mut account = Account::new(spec.cash, spec.base_position, data.bars[start].open);
+    let mut benchmark = Account::new(spec.cash, spec.base_position, data.bars[start].open);
+    let mut action_ledger = vec![];
     let mut state = json!({});
     let mut pending: Option<(usize, Intent)> = None;
     let mut orders = vec![];
@@ -304,13 +306,25 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
     for i in start..=end {
         let bar = &data.bars[i];
         if i > start && bar.session != data.bars[i - 1].session {
-            account.sellable = account.position;
+            account.open(&bar.session, "strategy", &mut action_ledger);
+            benchmark.open(&bar.session, "benchmark", &mut action_ledger);
+            if data.blocked_sessions.contains(&bar.session) {
+                history_start = i;
+            }
+        }
+        let mut execution_bar = bar.clone();
+        if let Some(a) = data
+            .corporate_actions
+            .iter()
+            .find(|a| a.ex_date == bar.session)
+        {
+            execution_bar.previous_close = a.reference_price;
         }
         if let Some((index, intent)) = pending.take() {
             orders.push(execute(
                 &intent,
                 &data.bars[index],
-                Some(bar),
+                Some(&execution_bar),
                 &mut account,
                 spec,
                 &data.security,
@@ -318,20 +332,43 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
             ));
         }
         let kdj = indicators[i];
-        let intent=runtime.call(json!({"code":data.security.code,"date":bar.session,"time":&bar.end[11..16],"history":&data.bars[i.saturating_sub(119).max(history_start)..=i],"kdj":kdj,"previousKdj":indicators[i-1],"cash":yuan(account.cash),"position":account.position,"sellable":account.sellable,"basePosition":spec.base_position,"tradeSize":spec.trade_size,"state":state})).map_err(|e|format!("{} {e}",bar.end))?;
+        let intent=runtime.call(json!({"code":data.security.code,"date":bar.session,"time":&bar.end[11..16],"history":crate::corporate_actions::history(data,i.saturating_sub(119).max(history_start),i),"kdj":kdj,"previousKdj":indicators[i-1],"cash":yuan(account.cash),"position":account.position,"sellable":account.sellable,"basePosition":benchmark.position,"dividendReceivable":yuan(account.receivable),"pendingShares":account.pending_shares,"averageCost":account.average_cost(),"corporateActions":data.corporate_actions.iter().filter(|a| a.ex_date == bar.session).collect::<Vec<_>>(),"tradeSize":spec.trade_size,"state":state})).map_err(|e|format!("{} {e}",bar.end))?;
         if let Some(next) = &intent.state {
             state = next.clone();
         }
         if intent.side != "hold" {
             pending = Some((i, intent));
         }
-        let value = yuan(account.cash) + account.position as f64 * bar.close;
+        if data
+            .bars
+            .get(i + 1)
+            .is_none_or(|next| next.session != bar.session)
+        {
+            account.record(
+                &data.corporate_actions,
+                &bar.session,
+                "strategy",
+                &mut action_ledger,
+            )?;
+            benchmark.record(
+                &data.corporate_actions,
+                &bar.session,
+                "benchmark",
+                &mut action_ledger,
+            )?;
+        }
+        let value = account.value(bar.close);
         peak = peak.max(value);
         max_drawdown = max_drawdown.min(value / peak - 1.0);
         equity.push(ScriptEquity {
             time: bar.end.clone(),
             equity: value,
-            benchmark: spec.cash + spec.base_position as f64 * bar.close,
+            benchmark: benchmark.value(bar.close),
+            dividend_receivable: yuan(account.receivable),
+            pending_shares: account.pending_shares,
+            average_cost: account.average_cost(),
+            realized_pnl: yuan(account.realized),
+            dividend_income: yuan(account.dividend_income),
             cash: yuan(account.cash),
             position: account.position,
             sellable: account.sellable,
@@ -360,6 +397,7 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
         .map(|o| o.commission + o.stamp_tax + o.transfer_fee)
         .sum();
     let mut warnings = data.warnings.clone();
+    warnings.push("收益包含税前股息及送转权益，不含个人差别化红利所得税；应收股息和未上市股份计入资产但不可交易。初始成本按起点开盘估值，卖出采用移动平均成本；持有基准采用相同公司行为账务。".into());
     warnings.push("价格信号在收盘形成、下一根开盘撮合；跨日订单失效。成交量容量只使用前根已知成交量；涨跌停保守拒单，不模拟盘口队列。".into());
     warnings.push(
         if data.security.asset_type == "etf" {
@@ -369,13 +407,16 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
         }
         .into(),
     );
-    if account.position != spec.base_position {
+    if account.position + account.pending_shares != benchmark.position + benchmark.pending_shares {
         warnings.push(format!(
             "期末持仓{}股，初始底仓{}股；未强制回补，存在仓位偏离。",
             account.position, spec.base_position
         ));
     }
     Ok(ScriptReport {
+        accounting: "gross-dividend-v1".into(),
+        corporate_actions: data.corporate_actions.clone(),
+        action_ledger,
         kind: "scriptReport".into(),
         timeframe: data.timeframe.clone(),
         id: uuid::Uuid::new_v4().to_string(),
@@ -387,7 +428,9 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
         engine_hash: format!(
             "{:x}",
             Sha256::digest(format!(
-                "{}{}{}{}{}{}",
+                "{}{}{}{}{}{}{}{}",
+                include_str!("corporate_actions.rs"),
+                include_str!("corporate_ledger.rs"),
                 include_str!("script_engine.rs"),
                 include_str!("strategy_runtime.rs"),
                 include_str!("market_model.rs"),
@@ -451,6 +494,7 @@ mod tests {
             }
         }
         Dataset {
+            corporate_actions: vec![],
             series_key: String::new(),
             kind: "marketDataset".into(),
             blocked_sessions: vec![],
@@ -523,6 +567,7 @@ mod tests {
             cash: 1000000,
             position: 100,
             sellable: 100,
+            ..Account::default()
         };
         let b = bar();
         let s = spec();
@@ -557,6 +602,7 @@ mod tests {
             cash: 1000000,
             position: 100,
             sellable: 100,
+            ..Account::default()
         };
         let b = bar();
         let s = spec();
@@ -607,6 +653,7 @@ mod tests {
             cash: 1000000,
             position: 0,
             sellable: 0,
+            ..Account::default()
         };
         let buy = Intent {
             side: "buy".into(),
@@ -649,6 +696,7 @@ mod tests {
             cash: 1000000,
             position: 1000,
             sellable: 1000,
+            ..Account::default()
         };
         let b = bar();
         let mut intent = Intent {
@@ -684,5 +732,8 @@ mod tests {
         assert!(!indicators[48].ready);
         assert_eq!(indicators[48].k, 50.0);
         assert!(strategy_runtime::defaults(&data).is_none());
+    }
+    mod corporate_tests {
+        include!("corporate_engine_tests.rs");
     }
 }

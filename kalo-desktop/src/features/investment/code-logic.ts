@@ -9,7 +9,8 @@ export function codeError(spec: ScriptSpec, data: Dataset): string | null {
   const start = data.bars.findIndex(b => b.end === spec.start), end = data.bars.findIndex(b => b.end === spec.end);
   if (start < 30 || end <= start) return "区间须预留30根指标预热K线，至少运行2根K线";
   if (![spec.basePosition, spec.tradeSize].every(n => Number.isSafeInteger(n) && n >= 0 && n <= 10000000 && n % data.security.lotSize === 0) || spec.tradeSize < (data.security.code.startsWith("688") ? 200 : 100)) return "底仓与每笔数量不符合证券整手规则或最低申报数量";
-  if (data.blockedSessions?.some(d => d >= data.bars[Math.max(0,start-30)].session && d <= data.bars[end].session)) return "区间或预热跨越除权除息，请选择同一公司行为区间";
+  if (data.blockedSessions?.some(d => d >= data.bars[Math.max(0,start-30)].session && d <= data.bars[end].session)) return "区间或预热跨越未核实的除权除息，请重新同步分派数据";
+  if (spec.basePosition > 0 && data.corporateActions?.some(a => a.recordDate < data.bars[start].session && [a.exDate, a.payDate, a.listingDate].some(d => d && d >= data.bars[start].session))) return "起点前已登记的权益尚未结清，请从登记日或更早开始回测";
   for (const [n, max] of [[spec.cash, 100000000], [spec.commissionBps, 100], [spec.minimumFee, 1000], [spec.slippageBps, 100]]) if (!Number.isFinite(n) || n < 0 || n > max) return "资金或费用超出范围";
   return null;
 }

@@ -210,7 +210,7 @@ pub fn sync(
     }
     let (bars, mut warnings, blocked_sessions) = normalize(&minute, &daily, &today, minutes)?;
     warnings.push(
-        "涨跌幅按同步时已核实规则模拟，未还原历史ST变更及上市初期特殊规则；不支持跨除权除息账务。"
+        "涨跌幅按同步时已核实规则模拟，未还原历史ST变更及上市初期特殊规则；公司行为以已核实分派条款入账，未知事件保留隔离。"
             .into(),
     );
     if security.asset_type == "etf" {
@@ -238,6 +238,7 @@ pub fn sync(
         )
     );
     let mut data = Dataset {
+        corporate_actions: vec![],
         series_key: crate::market_archive::SINA_SERIES.into(),
         kind: "marketDataset".into(),
         schema_version: 1,
@@ -256,6 +257,7 @@ pub fn sync(
         blocked_sessions,
     };
     crate::market_archive::extend(root, &mut data, &daily, &today)?;
+    crate::action_source::attach(&client, root, &mut data, &daily)?;
     Ok(data)
 }
 
