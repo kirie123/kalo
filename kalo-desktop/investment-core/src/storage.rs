@@ -57,7 +57,9 @@ pub fn catalog(root: &Path) -> Result<serde_json::Value, String> {
             })
             .collect()
     }
-    Ok(serde_json::json!({"snapshots": list(root,"snapshots")?, "reports":list(root,"reports")?}))
+    Ok(
+        serde_json::json!({"snapshots": list(root,"snapshots")?, "reports":list(root,"reports")?, "datasets":list(root,"datasets")?, "scriptReports":list(root,"script-reports")?, "marginSnapshots":list(root,"margin")?, "strategyRuntime":crate::strategy_runtime::contract()}),
+    )
 }
 
 #[cfg(test)]

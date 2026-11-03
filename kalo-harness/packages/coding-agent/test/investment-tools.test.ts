@@ -98,7 +98,7 @@ describe("investment tools", () => {
 		vi.stubEnv("KALO_UNATTENDED", "");
 		vi.stubEnv("KALO_TASK_ROLE", "");
 		investmentExtension(api);
-		expect(tools.size).toBe(6);
+		expect(tools.size).toBe(9);
 		await expect(
 			tools.get("investment_sync")?.execute("call", {}, undefined, undefined, {} as ExtensionContext),
 		).rejects.toThrow("资金数据不足");
@@ -110,7 +110,15 @@ describe("investment tools", () => {
 		expect((await new InvestmentClient(port, "token").wait("job", 0)).status).toBe("running");
 	});
 	it("preserves read-only approval for mutations while allowing evidence queries", () => {
-		for (const tool of ["investment_sync", "investment_backtest", "investment_catalog", "investment_flows"]) {
+		for (const tool of [
+			"investment_sync",
+			"investment_backtest",
+			"investment_market_sync",
+			"investment_margin_sync",
+			"investment_script_backtest",
+			"investment_catalog",
+			"investment_flows",
+		]) {
 			const decision = decide({
 				mode: "read-only",
 				tool,
@@ -119,7 +127,7 @@ describe("investment tools", () => {
 				agentDir: "/agent",
 				grants: [],
 			});
-			expect(decision.kind).toBe(tool === "investment_sync" || tool === "investment_backtest" ? "ask" : "allow");
+			expect(decision.kind).toBe(tool.endsWith("sync") || tool.endsWith("backtest") ? "ask" : "allow");
 		}
 	});
 });

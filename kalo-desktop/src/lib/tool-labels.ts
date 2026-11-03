@@ -42,6 +42,9 @@ export const TOOL_VERBS: Record<string, { verb: string; noun: string }> = {
   investment_sync: { verb: "同步", noun: "次 ETF 数据" },
   investment_flows: { verb: "分析", noun: "次 ETF 资金" },
   investment_backtest: { verb: "运行", noun: "次策略回测" },
+  investment_market_sync: { verb: "同步", noun: "次分钟数据" },
+  investment_script_backtest: { verb: "运行", noun: "次代码策略" },
+  investment_margin_sync: { verb: "同步", noun: "次两融数据" },
   investment_status: { verb: "读取", noun: "次投行结果" },
   investment_cancel: { verb: "取消", noun: "次投行任务" },
 };

@@ -6,7 +6,7 @@ import {
   investmentStatus,
   investmentActivity,
 } from "../../lib/pi-bridge";
-import type { Catalog, JobStatus, Request } from "./types";
+import type { Catalog, JobStatus, Request, Spec } from "./types";
 import { BacktestForm, ReportView } from "./Backtest";
 import { DataView, FlowView, MarketView } from "./DataViews";
 import "./investment.css";
@@ -16,15 +16,21 @@ import { ResearchSelect } from "./ResearchSelect";
 import InvestmentAssistant from "./InvestmentAssistant";
 import AppIcon, { type IconName } from "../../components/AppIcon";
 import ResearchOverview, { ResearchEmpty } from "./ResearchOverview";
-const pageIcons: Record<string, IconName> = { home: "panel", flows: "chart", charts: "chart", backtest: "checklist", data: "plug" };
+import CodeLab from "./CodeLab";
+import MarginView from "./MarginView";
+import { researchContext, type ResearchContext } from "./code-logic";
+import "./code-lab.css";
+const pageIcons: Record<string, IconName> = { home: "panel", flows: "chart", margin: "chart", charts: "chart", backtest: "checklist", code: "checklist", data: "plug" };
 const pages = [
   ["home", "决策台"],
   ["flows", "ETF 资金"],
+  ["margin", "两融观察"],
   ["charts", "行情研究"],
   ["backtest", "策略回测"],
+  ["code", "代码策略"],
   ["data", "数据中心"],
 ];
-export default function InvestmentPanel() {
+export default function InvestmentPanel({ assistantOpen, onAssistantChange: setAssistantOpen }: { assistantOpen: boolean; onAssistantChange: (open: boolean) => void }) {
   const [page, setPage] = useState("home");
   const [catalog, setCatalog] = useState<Catalog>({
     snapshots: [],
@@ -44,7 +50,14 @@ export default function InvestmentPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [collapsed, setCollapsed] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [datasetId, setDatasetId] = useState("");
+  const [scriptReportId, setScriptReportId] = useState("");
+  const [marginId, setMarginId] = useState("");
+  const [marginContext, setMarginContext] = useState<ResearchContext>(researchContext("两融观察", { page: "margin" }));
+  const [flowContext, setFlowContext] = useState({ days: 5, category: "全部" });
+  const [overviewCategory, setOverviewCategory] = useState("全部");
+  const [backtestDraft, setBacktestDraft] = useState<Spec | undefined>();
+  const [codeContext, setCodeContext] = useState<ResearchContext>(researchContext("代码策略", { code: "002415.SZ", timeframe: "5m" }));
   const [configOpen, setConfigOpen] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
   const lastRequest = useRef<Request | null>(null);
@@ -84,6 +97,9 @@ export default function InvestmentPanel() {
           if (activity.job && !activity.job.error) setError("");
           if (activity.job?.status !== "running") setCancelPending(false);
           if (focus.snapshotId) setSnapshotId(focus.snapshotId);
+          if (focus.datasetId) setDatasetId(focus.datasetId);
+          if (focus.scriptReportId) setScriptReportId(focus.scriptReportId);
+          if (focus.marginSnapshotId) setMarginId(focus.marginSnapshotId);
           if (focus.reportId) { setReportId(focus.reportId); setConfigOpen(false); }
           if (focus.days) setFlowDays(focus.days);
           if (pages.some(([id]) => id === focus.page)) setPage(focus.page);
@@ -126,7 +142,14 @@ export default function InvestmentPanel() {
         await refresh();
         if (next.result && "instruments" in next.result)
           setSnapshotId(next.result.id);
-        if (next.result && "spec" in next.result) {
+        if (next.result && "kind" in next.result) {
+          if (next.result.kind === "marginSnapshot") { setMarginId(next.result.id); setPage("margin"); }
+          else {
+            if (next.result.kind === "marketDataset") setDatasetId(next.result.id);
+            else { setScriptReportId(next.result.id); setDatasetId(next.result.spec.datasetId); }
+            setPage("code");
+          }
+        } else if (next.result && "spec" in next.result) {
           setReportId(next.result.id);
           setConfigOpen(false);
           setPage("backtest");
@@ -167,6 +190,13 @@ export default function InvestmentPanel() {
     setInstrumentCode(code);
     setPage("charts");
   };
+  const context = page === "code" ? codeContext : page === "margin" ? marginContext : researchContext(pages.find(([id]) => id === page)?.[1] ?? "投行", {
+    page, snapshotId: snapshot?.id, coverage: snapshot?.instruments[0]?.bars.at(-1)?.date,
+    ...(page === "charts" ? { instrument: instrument?.code, name: instrument?.name } : {}),
+    ...(page === "flows" ? flowContext : {}),
+    ...(page === "home" ? { category: overviewCategory } : {}),
+    ...(page === "backtest" ? { reportId: report?.id, reportSpec: report?.spec, ...(configOpen ? { draft: backtestDraft } : {}) } : {}),
+  });
   return (
     <div className="investment-shell">
     <div className={`investment ${collapsed ? "investment-collapsed" : ""}`}>
@@ -234,10 +264,10 @@ export default function InvestmentPanel() {
             <strong>{pages.find(([id]) => id === page)?.[1]}</strong>
           </div>
           <div className="investment-controls">
-            <button className="investment-assistant-toggle" aria-expanded={assistantOpen} onClick={() => setAssistantOpen((open) => !open)}><AppIcon name="model" size={16} />研究助手</button>
+            <button className="investment-assistant-toggle" onClick={() => setAssistantOpen(true)}><AppIcon name="model" size={16} />讨论此页</button>
           <button
             disabled={busy}
-            onClick={() => void start({ operation: "sync" })}
+            onClick={() => void start(page === "code" ? { operation: "marketSync", code: "002415.SZ", timeframe: "5m" } : page === "margin" ? { operation: "marginSync" } : { operation: "sync" })}
           >
             <AppIcon name="plug" size={16} />{busy ? "任务处理中" : "同步数据"}
           </button>
@@ -269,7 +299,7 @@ export default function InvestmentPanel() {
           <p role="status">任务已取消，已有快照和报告保留。</p>
         )}
         <div className="investment-content">
-          {snapshot && (
+          {snapshot && page !== "code" && page !== "margin" && (
             <div className="investment-between investment-snapshot">
               <label>
                 研究快照{" "}
@@ -283,13 +313,16 @@ export default function InvestmentPanel() {
               </span>
             </div>
           )}
-          {!snapshot ? (
+          {page === "code" ? <CodeLab datasets={catalog.datasets ?? []} reports={catalog.scriptReports ?? []} datasetId={datasetId} reportId={scriptReportId}
+            example={catalog.strategyRuntime?.example ?? ""} busy={busy} onDataset={setDatasetId} onReport={setScriptReportId}
+            onSync={() => void start({ operation: "marketSync", code: "002415.SZ", timeframe: "5m" })}
+            onRun={spec => void start({ operation: "scriptBacktest", spec })} onContext={setCodeContext} onAsk={() => setAssistantOpen(true)} /> : page === "margin" ? <MarginView snapshots={catalog.marginSnapshots ?? []} selectedId={marginId} busy={busy} onSelect={setMarginId} onSync={() => void start({ operation: "marginSync" })} onContext={setMarginContext} /> : !snapshot ? (
             <ResearchEmpty busy={busy} onSync={() => void start({ operation: "sync" })} onAssistant={() => setAssistantOpen(true)} />
           ) : (
             <>
-              {page === "home" && <ResearchOverview snapshot={snapshot} report={report} reportCount={catalog.reports.length} onSelect={selectInstrument} onPage={setPage} />}
+              {page === "home" && <ResearchOverview snapshot={snapshot} report={report} reportCount={catalog.reports.length} onSelect={selectInstrument} onPage={setPage} onCategory={setOverviewCategory} />}
               {page === "flows" && (
-                <FlowView key={`${snapshot.id}:${activityRevision}`} initialDays={flowDays} snapshot={snapshot} onSelect={selectInstrument} />
+                <FlowView key={`${snapshot.id}:${activityRevision}`} initialDays={flowDays} snapshot={snapshot} onSelect={selectInstrument} onContextChange={setFlowContext} />
               )}
               {page === "charts" && instrument && (
                 <>
@@ -310,6 +343,7 @@ export default function InvestmentPanel() {
                     key={snapshot.id}
                     snapshot={snapshot}
                     busy={busy}
+                    onDraft={setBacktestDraft}
                     onRun={(spec) =>
                       void start({ operation: "backtest", spec })
                     }
@@ -335,7 +369,7 @@ export default function InvestmentPanel() {
         </div>
       </main>
     </div>
-    {assistantOpen && <InvestmentAssistant snapshotId={snapshot?.id} onClose={() => setAssistantOpen(false)} />}
+    <InvestmentAssistant context={context} open={assistantOpen} onClose={() => setAssistantOpen(false)} />
     </div>
   );
 }

@@ -48,6 +48,7 @@ export default function App() {
     hasMessages: s.timeline.length > 0,
   }));
   const [page, setPage] = useState<AppPage>("chat");
+  const [investmentAssistantOpen, setInvestmentAssistantOpen] = useState(false);
   // undefined → SettingsPage restores the last visited tab.
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -326,7 +327,9 @@ export default function App() {
 
   return (
     <div className="desktop-shell flex h-screen flex-col overflow-hidden text-ink">
-      <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation} />
+      <TitleBar title={barTitle} menus={menus} onOpenFeeds={onOpenAutomation}
+        panelControl={page === "investment" ? { label: "切换研究助手", open: investmentAssistantOpen, onToggle: () => setInvestmentAssistantOpen(v => !v) }
+          : page === "chat" ? { label: "右栏面板（文件 / 浏览器 / 终端）", open: panel.open, onToggle: () => panelTabs.toggle() } : undefined} />
       <div className="relative flex min-h-0 flex-1">
         <NavigationRail page={page} onNavigate={(next) => next === "settings" ? onOpenSettings() : setPage(next)} />
         <div className="app-surface">
@@ -363,22 +366,6 @@ export default function App() {
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
-              {/* The right panel is bound to the chat's cwd; the other pages
-                  have no cwd of their own, so the toggles are hidden there. */}
-              {page === "chat" && (
-                <button
-                  onClick={() => panelTabs.toggle()}
-                  title="右栏面板（文件 / 浏览器 / 终端）"
-                  className={`shrink-0 rounded-md p-1.5 hover:bg-card ${
-                    panel.open ? "text-ink" : "text-dim hover:text-ink"
-                  }`}
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-                    <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                    <path d="M9.5 3v10" />
-                  </svg>
-                </button>
-              )}
             </div>
           </header>}
 
@@ -387,7 +374,7 @@ export default function App() {
               {page === "settings" ? (
                 <SettingsPage theme={theme} skin={skin} onThemeChange={setTheme} onSkinChange={setSkin} onBack={() => setPage("chat")} initialTab={settingsTab} />
               ) : page === "investment" ? (
-                <InvestmentPanel />
+                <InvestmentPanel assistantOpen={investmentAssistantOpen} onAssistantChange={setInvestmentAssistantOpen} />
               ) : page === "workbench" ? (
                 <Workbench cwd={chat.cwd} />
               ) : page === "era" ? (

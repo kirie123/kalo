@@ -16,14 +16,24 @@ pub(crate) fn get(
     params: &[(&str, String)],
     referer: &str,
 ) -> Result<Value, String> {
+    get_evidence(client, root, url, params, referer).map(|(value, _)| value)
+}
+pub(crate) fn get_evidence(
+    client: &Client,
+    root: &Path,
+    url: &str,
+    params: &[(&str, String)],
+    referer: &str,
+) -> Result<(Value, String), String> {
     let value = crate::transport::fetch(client, url, params, referer)?;
+    let id = uuid::Uuid::new_v4().to_string();
     storage::save(
         root,
         "raw",
-        &uuid::Uuid::new_v4().to_string(),
+        &id,
         &serde_json::json!({"url":url,"params":params,"receivedAt":Utc::now().to_rfc3339(),"body":value}),
     )?;
-    Ok(value)
+    Ok((value, id))
 }
 pub fn parse_bars(
     value: &Value,

@@ -43,7 +43,7 @@ const ATTACHMENT_EXTENSIONS = [
   "sh", "bat", "ps1", "sql", "html", "css", "toml",
 ];
 
-export default function InputBox() {
+export default function InputBox({ promptContext }: { promptContext?: string } = {}) {
   // Only the fields the composer actually shows: the timeline churns at
   // ~20fps while streaming and must not re-render the input.
   const chat = useChatSelector((s) => ({
@@ -220,7 +220,7 @@ export default function InputBox() {
     if (!value && chat.attachments.length === 0) return;
     setText("");
     setAc(null);
-    void chatStore.sendPrompt(value);
+    void chatStore.sendPrompt(promptContext ? `${value}\n\n${promptContext}` : value);
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {

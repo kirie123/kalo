@@ -7,10 +7,12 @@ export function BacktestForm({
   snapshot,
   busy,
   onRun,
+  onDraft,
 }: {
   snapshot: Snapshot;
   busy: boolean;
   onRun: (spec: Spec) => void;
+  onDraft?: (spec: Spec) => void;
 }) {
   const draftKey = `kalo.investment.draft.${snapshot.id}`;
   const [spec, setSpec] = useState(() => {
@@ -24,6 +26,7 @@ export function BacktestForm({
     if (!specError(spec, snapshot)) sessionStorage.setItem(draftKey, JSON.stringify(spec));
   }, [draftKey, spec, snapshot]);
   const error = specError(spec, snapshot);
+  useEffect(() => { onDraft?.(spec); }, [spec, onDraft]);
   const codes = spec.codes ?? snapshot.instruments.map(i => i.code);
   const selectCodes = (next: string[]) => setSpec({ ...spec, codes: next, holdings: Math.max(1, Math.min(spec.holdings, next.length)) });
   const field = (

@@ -1,3 +1,5 @@
+import type { Dataset, ScriptReport, ScriptSpec } from "./code-types";
+import type { MarginSnapshot } from "./margin-logic";
 export interface Bar {
   date: string;
   open: number;
@@ -76,17 +78,24 @@ export interface Report {
 export interface Catalog {
   snapshots: Snapshot[];
   reports: Report[];
+  datasets?: Dataset[];
+  scriptReports?: ScriptReport[];
+  marginSnapshots?: MarginSnapshot[];
+  strategyRuntime?: { example: string };
 }
 export interface JobStatus {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
   phase: string;
   error: string | null;
-  result: Snapshot | Report | null;
+  result: Snapshot | Report | Dataset | ScriptReport | MarginSnapshot | null;
 }
 export type Request =
   | { operation: "sync" }
-  | { operation: "backtest"; spec: Spec };
+  | { operation: "marginSync" }
+  | { operation: "backtest"; spec: Spec }
+  | { operation: "marketSync"; code: string; timeframe: "5m" }
+  | { operation: "scriptBacktest"; spec: ScriptSpec };
 
 export interface Activity {
   focus: {
@@ -94,6 +103,9 @@ export interface Activity {
     page: string;
     snapshotId: string | null;
     reportId: string | null;
+    datasetId?: string | null;
+    scriptReportId?: string | null;
+    marginSnapshotId?: string | null;
     days: number | null;
     jobId: string | null;
     owner: string | null;

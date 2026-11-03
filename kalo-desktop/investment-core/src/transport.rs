@@ -27,11 +27,11 @@ pub fn fetch(
     referer: &str,
 ) -> Result<Value, String> {
     let provider = if url.contains("gtimg.cn") {
-        "腾讯日线"
+        "腾讯行情"
     } else if url.contains("sse.com.cn") {
-        "上交所份额"
+        "上交所数据"
     } else if url.contains("szse.cn") {
-        "深交所份额"
+        "深交所数据"
     } else {
         "东方财富净值"
     };
@@ -86,7 +86,19 @@ pub fn fetch(
         if bytes.len() > 8_000_000 {
             return Err(format!("{provider}返回超过 8MB 限制"));
         }
-        return serde_json::from_slice(&bytes)
+        // Tencent's minute endpoint can return GBK despite a JSON content type.
+        let decoded;
+        let body = if std::str::from_utf8(&bytes).is_err() && url.contains("gtimg.cn") {
+            let (text, _, malformed) = encoding_rs::GBK.decode(&bytes);
+            if malformed {
+                return Err("腾讯行情字符编码损坏".into());
+            }
+            decoded = text.into_owned();
+            decoded.as_bytes()
+        } else {
+            &bytes
+        };
+        return serde_json::from_slice(body)
             .map_err(|_| format!("{provider}返回格式异常，请稍后重试；没有生成替代数据。"));
     }
     unreachable!("each final attempt returns")

@@ -58,11 +58,20 @@ export function decide(request: DecideInput): PermissionDecision {
 	const { mode, tool, input, workspace, agentDir, grants } = request;
 
 	// Bounded application operations: fixed data sources and managed outputs, no arbitrary paths.
-	if ((tool === "investment_sync" || tool === "investment_backtest") && mode === "read-only") {
+	if (
+		[
+			"investment_sync",
+			"investment_backtest",
+			"investment_market_sync",
+			"investment_script_backtest",
+			"investment_margin_sync",
+		].includes(tool) &&
+		mode === "read-only"
+	) {
 		return {
 			kind: "ask",
 			reason: "write-in-readonly",
-			subject: tool === "investment_sync" ? "投行：下载免费行情并保存数据快照" : "投行：执行本地回测并保存实验报告",
+			subject: tool.endsWith("sync") ? "投行：下载免费行情并保存数据快照" : "投行：执行本地回测并保存实验报告",
 			grantable: undefined,
 		};
 	}

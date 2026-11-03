@@ -1,8 +1,13 @@
 pub mod analysis;
 pub mod engine;
+pub mod margin;
+pub mod market_data;
+pub mod market_model;
 pub mod model;
+pub mod script_engine;
 pub mod sources;
 pub mod storage;
+pub mod strategy_runtime;
 mod szse;
 mod transport;
 pub mod universe;
@@ -15,6 +20,9 @@ use std::path::Path;
 pub enum Request {
     Sync {},
     Backtest { spec: Spec },
+    MarketSync { code: String, timeframe: String },
+    ScriptBacktest { spec: market_model::ScriptSpec },
+    MarginSync {},
 }
 
 pub fn execute(root: &Path, request: Request) -> Result<serde_json::Value, String> {
@@ -27,7 +35,13 @@ pub fn commit(root: &Path, result: &serde_json::Value) -> Result<(), String> {
     let id = result["id"].as_str().ok_or("结果缺少 ID")?;
     storage::save(
         root,
-        if result.get("instruments").is_some() {
+        if result["kind"] == "marginSnapshot" {
+            "margin"
+        } else if result["kind"] == "marketDataset" {
+            "datasets"
+        } else if result["kind"] == "scriptReport" {
+            "script-reports"
+        } else if result.get("instruments").is_some() {
             "snapshots"
         } else {
             "reports"
@@ -39,6 +53,9 @@ pub fn commit(root: &Path, result: &serde_json::Value) -> Result<(), String> {
 
 fn compute(root: &Path, request: Request) -> Result<serde_json::Value, String> {
     match request {
+        Request::MarginSync {} => {
+            serde_json::to_value(margin::sync(root)?).map_err(|e| e.to_string())
+        }
         Request::Sync {} => {
             let snapshot = sources::sync(root)?;
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
@@ -47,6 +64,14 @@ fn compute(root: &Path, request: Request) -> Result<serde_json::Value, String> {
             let snapshot: Snapshot = storage::read(root, "snapshots", &spec.snapshot_id)?;
             let report = engine::run(&snapshot, &spec)?;
             serde_json::to_value(report).map_err(|e| e.to_string())
+        }
+        Request::MarketSync { code, timeframe } => {
+            serde_json::to_value(market_data::sync(root, &code, &timeframe)?)
+                .map_err(|e| e.to_string())
+        }
+        Request::ScriptBacktest { spec } => {
+            let dataset = storage::read(root, "datasets", &spec.dataset_id)?;
+            serde_json::to_value(script_engine::run(&dataset, &spec)?).map_err(|e| e.to_string())
         }
     }
 }

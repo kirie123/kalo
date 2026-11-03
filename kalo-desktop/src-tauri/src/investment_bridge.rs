@@ -162,7 +162,10 @@ fn dispatch(
                 .iter()
                 .map(kalo_investment::analysis::compact_result)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(json!({"snapshots":snapshots,"reports":reports}))
+            let compact = |key: &str| -> Result<Vec<Value>, String> {
+                catalog[key].as_array().ok_or("代码研究目录格式错误")?.iter().map(kalo_investment::analysis::compact_result).collect()
+            };
+            Ok(json!({"snapshots":snapshots,"reports":reports,"datasets":compact("datasets")?,"scriptReports":compact("scriptReports")?,"marginSnapshots":compact("marginSnapshots")?,"strategyRuntime":kalo_investment::strategy_runtime::contract(),"supportedMarketData":[{"code":"002415.SZ","name":"海康威视","timeframe":"5m"}]}))
         }
         Operation::Flows { snapshot_id, days } => {
             let snapshot =

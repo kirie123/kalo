@@ -38,11 +38,13 @@ export default function TitleBar({
   title,
   menus,
   onOpenFeeds,
+  panelControl,
 }: {
   title: string;
   menus?: TitleMenu[];
   /** Clicking the ticker jumps to the page that manages data sources. */
   onOpenFeeds?: () => void;
+  panelControl?: { label: string; open: boolean; onToggle: () => void };
 }) {
   const [win] = useState<Window | null>(tauriWindow);
   const [maximized, setMaximized] = useState(false);
@@ -86,6 +88,10 @@ export default function TitleBar({
         {/* Market/data ticker — pointer events must reach it (hover pauses the
             scroll), so it stays outside every drag region. */}
         {onOpenFeeds && <TickerBar onOpen={onOpenFeeds} />}
+        {panelControl && <button type="button" title={panelControl.label} aria-label={panelControl.label} aria-expanded={panelControl.open}
+          onClick={panelControl.onToggle} className={`window-control flex w-10 items-center justify-center rounded-md hover:bg-card ${panelControl.open ? "text-ink bg-card" : "text-dim"}`}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M9.5 3v10" /></svg>
+        </button>}
         {win && (
           <>
             <WindowButton label="最小化" onClick={() => void win.minimize()}>

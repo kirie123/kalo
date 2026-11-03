@@ -84,6 +84,66 @@ pub fn flows(snapshot: &Snapshot, days: usize) -> Result<Value, String> {
 }
 
 pub fn compact_result(value: &Value) -> Result<Value, String> {
+    if value["kind"] == "marginSnapshot" {
+        return Ok(value.clone());
+    }
+    if value["kind"] == "marketDataset" {
+        let data: crate::market_model::Dataset =
+            serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+        return Ok(
+            json!({"kind":data.kind,"id":data.id,"createdAt":data.created_at,"security":data.security,"timeframe":data.timeframe,"source":data.source,"sourceHash":data.source_hash,"bars":data.bars.len(),"sessions":data.sessions,"firstBar":data.bars.first(),"lastBar":data.bars.last(),"warnings":data.warnings,"defaultSpec":crate::strategy_runtime::defaults(&data),"runtime":crate::strategy_runtime::contract()}),
+        );
+    }
+    if value["kind"] == "scriptReport" {
+        let mut report = value.clone();
+        let obj = report.as_object_mut().ok_or("代码报告格式无效")?;
+        let orders = obj.remove("orders").unwrap_or(json!([]));
+        let equity = obj.remove("equity").unwrap_or(json!([]));
+        let rows = orders.as_array().cloned().unwrap_or_default();
+        obj.insert(
+            "orders".into(),
+            json!(rows.iter().take(200).collect::<Vec<_>>()),
+        );
+        obj.insert("ordersTruncated".into(), json!(rows.len() > 200));
+        obj.insert("orderCount".into(), json!(rows.len()));
+        obj.insert(
+            "costBreakdown".into(),
+            json!({
+                "commission": rows.iter().filter_map(|o| o["commission"].as_f64()).sum::<f64>(),
+                "stampTax": rows.iter().filter_map(|o| o["stampTax"].as_f64()).sum::<f64>(),
+                "transferFee": rows.iter().filter_map(|o| o["transferFee"].as_f64()).sum::<f64>()
+            }),
+        );
+        obj.insert("inventoryRule".into(), json!("T+1只锁定当日新买股份，剩余旧仓仍可卖。例如底仓1000股、卖100再买100后，position=1000、sellable=900，仍可卖旧仓900股；并非每天最多做T一次。是否继续下单由代码条件决定。state里的计数为策略意图，不等于实际成交。归因须核对逐笔订单，不从8笔成交推断每笔均亏或每日仅一次。"));
+        obj.insert(
+            "filledOrderCount".into(),
+            json!(orders.as_array().map_or(0, |a| a
+                .iter()
+                .filter(|o| o["quantity"].as_u64().unwrap_or(0) > 0)
+                .count())),
+        );
+        obj.insert(
+            "rejectedOrders".into(),
+            json!(orders
+                .as_array()
+                .map(|a| a
+                    .iter()
+                    .filter(|o| o["quantity"] == 0)
+                    .take(20)
+                    .collect::<Vec<_>>())
+                .unwrap_or_default()),
+        );
+        obj.insert(
+            "finalAccount".into(),
+            equity
+                .as_array()
+                .and_then(|a| a.last())
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        obj.insert("costDefinition".into(), json!("costs为佣金+印花税+过户费，滑点已进入成交价；excessPnl相对于持有同等初始现金与底仓，不等于总收益。逐笔明细在原生面板。"));
+        return Ok(report);
+    }
     if value.get("instruments").is_some() {
         let snapshot: Snapshot =
             serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;

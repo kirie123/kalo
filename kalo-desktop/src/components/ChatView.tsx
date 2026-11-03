@@ -6,7 +6,7 @@ import MessageList from "./MessageList";
 import TodoPanel from "./TodoPanel";
 import AskUserPanel from "./AskUserPanel";
 
-export default function ChatView() {
+export default function ChatView({ promptContext }: { promptContext?: string } = {}) {
   const zoom = useChatZoom();
   const rootRef = useRef<HTMLDivElement>(null);
   // Transient "120%" badge, shown for a moment after each zoom change.
@@ -43,7 +43,7 @@ export default function ChatView() {
       <div className="shrink-0 px-4 pb-4 pt-1" style={{ zoom }}>
         <TodoPanel />
         <AskUserPanel />
-        <InputBox />
+        <InputBox promptContext={promptContext} />
       </div>
 
       {badge && (

@@ -40,6 +40,9 @@ pub struct Activity {
     days: Option<usize>,
     job_id: Option<String>,
     owner: Option<String>,
+    dataset_id: Option<String>,
+    script_report_id: Option<String>,
+    margin_snapshot_id: Option<String>,
 }
 pub fn root() -> Result<std::path::PathBuf, String> {
     Ok(crate::data_transfer::data_root()?.join("investment"))
@@ -103,7 +106,16 @@ impl InvestmentManager {
                 days,
                 job_id: job,
                 owner,
+                dataset_id: None,
+                script_report_id: None,
+                margin_snapshot_id: None,
             };
+        }
+    }
+
+    fn focus_code(&self, dataset: Option<String>, report: Option<String>, job: Option<String>, owner: Option<String>) {
+        if let Ok(mut activity) = self.activity.lock() {
+            *activity = Activity { revision: activity.revision + 1, page: "code".into(), dataset_id: dataset, script_report_id: report, job_id: job, owner, ..Default::default() };
         }
     }
 
@@ -198,7 +210,9 @@ pub fn start(
     drop(jobs);
     let (page, snapshot_id) = match &request {
         kalo_investment::Request::Sync {} => ("data", None),
+        kalo_investment::Request::MarginSync {} => ("margin", None),
         kalo_investment::Request::Backtest { spec } => ("backtest", Some(spec.snapshot_id.clone())),
+        kalo_investment::Request::MarketSync { .. } | kalo_investment::Request::ScriptBacktest { .. } => ("code", None),
     };
     state.focus(page, snapshot_id, None, None, Some(id.clone()), owner);
     let state_jobs = state.jobs.clone();
@@ -259,6 +273,19 @@ pub fn start(
                     });
                 }
                 let result = job.status.result.as_ref();
+                if page == "margin" {
+                    if let Ok(mut activity) = manager.activity.lock() {
+                        *activity = Activity { revision: activity.revision + 1, page: "margin".into(), margin_snapshot_id: result.and_then(|r| r["id"].as_str()).map(str::to_owned), job_id: Some(run_id.clone()), owner: job.owner.clone(), ..Default::default() };
+                    }
+                    return;
+                }
+                if page == "code" {
+                    manager.focus_code(
+                        result.and_then(|r| if r["kind"] == "scriptReport" { r["spec"]["datasetId"].as_str() } else { r["id"].as_str() }).map(str::to_owned),
+                        result.filter(|r| r["kind"] == "scriptReport").and_then(|r|r["id"].as_str()).map(str::to_owned),
+                        Some(run_id.clone()), job.owner.clone());
+                    return;
+                }
                 let report = result.filter(|r| r.get("spec").is_some());
                 manager.focus(
                     if report.is_some() { "backtest" } else { page },

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Instrument, Snapshot } from "./types";
 import { rankedFlows, formatMoney, inCategory } from "./logic";
 import { PoolFilter } from "./PoolFilter";
@@ -8,13 +8,16 @@ export function FlowView({
   snapshot,
   onSelect,
   initialDays = 5,
+  onContextChange,
 }: {
   snapshot: Snapshot;
   onSelect: (code: string) => void;
   initialDays?: number;
+  onContextChange?: (context: { days: number; category: string }) => void;
 }) {
   const [days, setDays] = useState(initialDays);
   const [category, setCategory] = useState("全部");
+  useEffect(() => { onContextChange?.({ days, category }); }, [days, category, onContextChange]);
   const rows = rankedFlows({ ...snapshot, instruments: inCategory(snapshot.instruments, category) }, days);
   const complete = rows.filter(r => r.flow.total != null);
   const total = complete.reduce((sum, r) => sum + (r.flow.total ?? 0), 0);

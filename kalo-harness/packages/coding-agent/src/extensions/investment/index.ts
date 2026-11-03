@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { InvestmentClient } from "./client.ts";
+import { registerCodeTools } from "./code-tools.ts";
 
 const spec = Type.Object(
 	{
@@ -40,6 +41,7 @@ export default function investmentExtension(pi: ExtensionAPI): void {
 	)
 		return;
 	const client = new InvestmentClient(port, token);
+	registerCodeTools(pi, client);
 	pi.registerTool({
 		name: "investment_catalog",
 		label: "投行数据与实验",

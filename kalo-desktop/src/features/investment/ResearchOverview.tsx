@@ -1,5 +1,5 @@
 import AppIcon from "../../components/AppIcon";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PoolFilter } from "./PoolFilter";
 import { EquityChart, Sparkline } from "./Charts";
 import { flowWindow, formatMoney, percent, inCategory, categoryOf } from "./logic";
@@ -36,10 +36,12 @@ export function ResearchEmpty({ busy, onSync, onAssistant }: { busy: boolean; on
   </>;
 }
 
-export default function ResearchOverview({ snapshot, report, reportCount, onSelect, onPage }: {
+export default function ResearchOverview({ snapshot, report, reportCount, onSelect, onPage, onCategory }: {
   snapshot: Snapshot; report?: Report; reportCount: number; onSelect: (code: string) => void; onPage: (page: string) => void;
+  onCategory?: (category: string) => void;
 }) {
   const [category, setCategory] = useState("全部");
+  useEffect(() => { onCategory?.(category); }, [category, onCategory]);
   const instruments = inCategory(snapshot.instruments, category);
   const complete = instruments.filter(i => flowWindow(i, 5).total != null).length;
   return <>
