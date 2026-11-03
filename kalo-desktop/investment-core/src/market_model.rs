@@ -48,6 +48,8 @@ pub struct MarketBar {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub series_key: String,
     #[serde(default)]
     pub blocked_sessions: Vec<String>,
     pub kind: String,

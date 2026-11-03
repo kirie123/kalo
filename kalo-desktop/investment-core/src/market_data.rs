@@ -238,6 +238,7 @@ pub fn sync(
         )
     );
     let mut data = Dataset {
+        series_key: crate::market_archive::SINA_SERIES.into(),
         kind: "marketDataset".into(),
         schema_version: 1,
         id: uuid::Uuid::new_v4().to_string(),
@@ -254,7 +255,7 @@ pub fn sync(
         warnings,
         blocked_sessions,
     };
-    crate::market_archive::extend(root, &mut data, &daily)?;
+    crate::market_archive::extend(root, &mut data, &daily, &today)?;
     Ok(data)
 }
 

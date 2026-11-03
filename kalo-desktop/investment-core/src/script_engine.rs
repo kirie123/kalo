@@ -451,6 +451,7 @@ mod tests {
             }
         }
         Dataset {
+            series_key: String::new(),
             kind: "marketDataset".into(),
             blocked_sessions: vec![],
             schema_version: 1,

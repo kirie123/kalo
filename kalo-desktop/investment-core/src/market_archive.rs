@@ -1,43 +1,58 @@
-//! Extend immutable local history only where an overlapping window proves continuity.
+//! Extend a verified window using compatible immutable history, never across providers.
 use crate::{market_model::Dataset, Bar};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 
-fn merge(current: &mut Dataset, old: &Dataset) -> Result<bool, String> {
-    if old.security != current.security
-        || old.timeframe != current.timeframe
-        || old.price_basis != current.price_basis
-        || old.bars.is_empty()
-        || current.bars.is_empty()
-    {
-        return Ok(false);
+pub(crate) const SINA_SERIES: &str = "sina-kline-v1/close-time/shares";
+const TENCENT_SERIES: &str = "tencent-mkline-v1/close-time/shares";
+
+fn series(data: &Dataset) -> Option<&str> {
+    if !data.series_key.is_empty() {
+        return Some(&data.series_key);
     }
-    let current_by_time: BTreeMap<_, _> =
-        current.bars.iter().map(|b| (b.end.as_str(), b)).collect();
-    let overlaps: Vec<_> = old
-        .bars
-        .iter()
-        .filter_map(|a| current_by_time.get(a.end.as_str()).map(|b| (a, *b)))
-        .collect();
+    // Read-only compatibility for the two adapters shipped before seriesKey.
+    match data.source.as_str() {
+        "新浪分钟 / 腾讯证券报价与原始、前复权日线" => Some(SINA_SERIES),
+        "腾讯5分钟 / 腾讯原始、前复权日线交叉校验" => Some(TENCENT_SERIES),
+        _ => None,
+    }
+}
+
+fn same_market(a: &Dataset, b: &Dataset) -> bool {
+    a.security == b.security
+        && a.timeframe == b.timeframe
+        && a.price_basis == b.price_basis
+        && a.timezone == b.timezone
+        && a.schema_version == b.schema_version
+        && a.kind == b.kind
+}
+
+#[derive(Debug, PartialEq)]
+enum Merge { Unrelated, Foreign, Disconnected, Contained, Extended }
+
+fn merge(current: &mut Dataset, old: &Dataset) -> Result<Merge, String> {
+    if !same_market(current, old) || old.bars.is_empty() || current.bars.is_empty() {
+        return Ok(Merge::Unrelated);
+    }
+    if series(current).is_none() || series(current) != series(old) {
+        return Ok(Merge::Foreign);
+    }
+    let current_by_time: BTreeMap<_, _> = current.bars.iter().map(|b| (b.end.as_str(), b)).collect();
+    let overlaps: Vec<_> = old.bars.iter().filter_map(|a| current_by_time.get(a.end.as_str()).map(|b| (a, *b))).collect();
     if overlaps.is_empty() {
-        return Ok(false);
+        return Ok(Merge::Disconnected);
     }
     for (a, b) in overlaps {
-        if [
-            a.open - b.open,
-            a.close - b.close,
-            a.high - b.high,
-            a.low - b.low,
-        ]
-        .iter()
-        .any(|v| v.abs() > 0.000001)
-            || (a.volume - b.volume).abs() > 0.01
-            || (a.previous_close - b.previous_close).abs() > 0.000001
-        {
-            return Err(format!(
-                "{} 与本地历史发生冲突，未覆盖旧数据；请核对供应商修订后再同步",
-                a.end
-            ));
+        let fields: Vec<_> = [
+            ("open", a.open, b.open, 0.000001),
+            ("close", a.close, b.close, 0.000001),
+            ("high", a.high, b.high, 0.000001),
+            ("low", a.low, b.low, 0.000001),
+            ("volume", a.volume, b.volume, 0.01),
+            ("previousClose", a.previous_close, b.previous_close, 0.000001),
+        ].into_iter().filter(|(_, x, y, tolerance)| (x-y).abs() > *tolerance).map(|(name, _, _, _)| name).collect();
+        if !fields.is_empty() {
+            return Err(format!("{} 重叠字段不一致：{}", a.end, fields.join("、")));
         }
     }
     let mut map = BTreeMap::new();
@@ -45,119 +60,82 @@ fn merge(current: &mut Dataset, old: &Dataset) -> Result<bool, String> {
         map.insert(b.end.clone(), b.clone());
     }
     if map.len() == current.bars.len() {
-        return Ok(false);
+        return Ok(Merge::Contained);
     }
     if map.len() > 10000 {
-        return Err("本地合并超过10000根上限，请使用更大周期".into());
+        return Err("合并超过10000根上限，请使用更大周期".into());
     }
     current.bars = map.into_values().collect();
-    current
-        .blocked_sessions
-        .extend(old.blocked_sessions.iter().cloned());
     current.raw_ids.extend(old.raw_ids.iter().cloned());
-    Ok(true)
+    Ok(Merge::Extended)
 }
 
-pub fn extend(root: &Path, data: &mut Dataset, daily: &[Bar]) -> Result<(), String> {
+fn verify_extension(data: &mut Dataset, daily: &[Bar], today: &str) -> Result<(), String> {
+    let rows: Result<Vec<_>, String> = data.bars.iter().map(|b| {
+        let stamp = b.end.strip_suffix("+08:00").ok_or("历史时间缺少北京时间偏移")?;
+        if !stamp.starts_with(&format!("{}T", b.session)) {
+            return Err("历史交易日与K线时间不一致".into());
+        }
+        Ok(serde_json::json!({"day":stamp.replace('T', " "),"open":b.open,"high":b.high,"low":b.low,"close":b.close,"volume":b.volume}))
+    }).collect();
+    let minutes = crate::securities::minutes(&data.timeframe)?;
+    let (bars, _, blocked) = crate::market_data::normalize(&serde_json::Value::Array(rows?), daily, today, minutes)?;
+    if bars.len() != data.bars.len() {
+        return Err("历史含未完成交易日，不能通过删除边界后拼接".into());
+    }
+    data.bars = bars;
+    data.blocked_sessions = blocked;
+    Ok(())
+}
+
+pub fn extend(root: &Path, data: &mut Dataset, daily: &[Bar], today: &str) -> Result<(), String> {
     let dir = root.join("datasets");
-    if !dir.exists() {
-        return Ok(());
-    }
-    let mut merged = 0;
-    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let old: Dataset = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("本地分钟历史损坏：{e}"))?;
-        if merge(data, &old)? {
-            merged += 1;
-        }
-    }
-    data.sessions = data
-        .bars
-        .iter()
-        .map(|b| b.session.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    for pair in daily.windows(2) {
-        let prev = &pair[0];
-        let d = &pair[1];
-        if data.sessions.contains(&d.date)
-            && ((d.close / d.adjusted_close) / (prev.close / prev.adjusted_close) - 1.0).abs()
-                > 0.002
-        {
-            data.blocked_sessions.push(d.date.clone());
+    let mut candidates = Vec::new();
+    let mut notes = Vec::new();
+    if dir.exists() {
+        let mut paths: Vec<_> = std::fs::read_dir(dir).map_err(|e| e.to_string())?
+            .map(|e| e.map(|entry| entry.path()).map_err(|e| e.to_string())).collect::<Result<_,_>>()?;
+        paths.sort();
+        for path in paths {
+            if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+            let loaded = std::fs::read(&path).map_err(|e| e.to_string())
+                .and_then(|bytes| serde_json::from_slice::<Dataset>(&bytes).map_err(|e| e.to_string()));
+            match loaded {
+                Ok(old) if same_market(data, &old) => candidates.push(old),
+                Ok(_) => {},
+                Err(_) => notes.push(format!("历史文件 {} 无法读取，已隔离；未覆盖原文件。", path.file_stem().unwrap_or_default().to_string_lossy())),
+            }
         }
     }
-    data.blocked_sessions.sort();
-    data.blocked_sessions.dedup();
+    // Closest windows first permits deterministic chained extension toward older dates.
+    candidates.sort_by(|a,b| (&b.bars.last().map(|r| &r.end), &b.created_at, &b.id).cmp(&(&a.bars.last().map(|r| &r.end), &a.created_at, &a.id)));
+    for old in candidates {
+        let mut candidate = data.clone();
+        let outcome = merge(&mut candidate, &old).and_then(|result| {
+            if result == Merge::Extended { verify_extension(&mut candidate, daily, today)?; }
+            Ok(result)
+        });
+        match outcome {
+            Ok(Merge::Extended) => {
+                *data = candidate;
+                notes.push(format!("已合并同源连续历史 {}，旧快照保留。", old.id));
+            },
+            Ok(Merge::Foreign) => notes.push(format!("历史 {} 的分钟来源或口径不同，未拼接；当前保留新来源的已校验窗口，旧快照与报告不变。", old.id)),
+            Ok(Merge::Disconnected) => notes.push(format!("历史 {} 没有重叠区间，未拼接，未填充行情缺口。", old.id)),
+            Err(reason) => notes.push(format!("未合并历史 {}：{reason}。当前保留已校验窗口，旧快照与报告不变。", old.id)),
+            _ => {},
+        }
+    }
+    data.sessions = data.bars.iter().map(|b| b.session.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
     data.raw_ids.sort();
     data.raw_ids.dedup();
-    if merged > 0 {
-        data.warnings.push(format!(
-            "已合并 {merged} 份有一致重叠区间的本地历史，旧数据保留。"
-        ));
-    }
-    data.source_hash = format!(
-        "{:x}",
-        Sha256::digest(
-            serde_json::to_vec(&(
-                &data.source_hash,
-                &data.raw_ids,
-                &data.bars,
-                &data.blocked_sessions
-            ))
-            .map_err(|e| e.to_string())?
-        )
-    );
+    data.warnings.extend(notes);
+    data.source_hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&(
+        &data.series_key, &data.source_hash, &data.raw_ids, &data.bars, &data.blocked_sessions,
+    )).map_err(|e| e.to_string())?));
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::market_model::*;
-    #[test]
-    fn archive_extends_overlap_but_rejects_revised_prices_and_skips_gaps() {
-        let make = |times: &[&str]| Dataset {
-            kind: "marketDataset".into(),
-            schema_version: 1,
-            id: String::new(),
-            created_at: String::new(),
-            security: security("002415.SZ").unwrap(),
-            timeframe: "5m".into(),
-            timezone: "Asia/Shanghai".into(),
-            price_basis: "raw".into(),
-            source: String::new(),
-            source_hash: String::new(),
-            raw_ids: vec![],
-            sessions: vec![],
-            warnings: vec![],
-            blocked_sessions: vec![],
-            bars: times
-                .iter()
-                .map(|t| MarketBar {
-                    end: t.to_string(),
-                    session: "day".into(),
-                    open: 10.0,
-                    close: 10.0,
-                    high: 10.0,
-                    low: 10.0,
-                    volume: 100.0,
-                    previous_close: 10.0,
-                })
-                .collect(),
-        };
-        let mut now = make(&["b", "c"]);
-        let old = make(&["a", "b"]);
-        assert!(merge(&mut now, &old).unwrap());
-        assert_eq!(now.bars.len(), 3);
-        let mut conflict = old.clone();
-        conflict.bars[1].close = 11.0;
-        assert!(merge(&mut now, &conflict).is_err());
-        assert!(!merge(&mut now, &make(&["z"])).unwrap());
-    }
-}
+#[path = "market_archive_tests.rs"]
+mod tests;
