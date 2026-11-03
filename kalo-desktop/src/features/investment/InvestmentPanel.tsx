@@ -17,6 +17,7 @@ import InvestmentAssistant from "./InvestmentAssistant";
 import AppIcon, { type IconName } from "../../components/AppIcon";
 import ResearchOverview, { ResearchEmpty } from "./ResearchOverview";
 import CodeLab from "./CodeLab";
+import type { CodeView } from "./experiment-drafts";
 import MarginView from "./MarginView";
 import { researchContext, type ResearchContext } from "./code-logic";
 import "./code-lab.css";
@@ -35,6 +36,9 @@ const marketPages = ["charts", "flows", "margin"];
 const strategyPages = ["code", "backtest"];
 export default function InvestmentPanel({ assistantOpen, onAssistantChange: setAssistantOpen }: { assistantOpen: boolean; onAssistantChange: (open: boolean) => void }) {
   const [page, setPage] = useState("home");
+  const [codeView, setCodeView] = useState<CodeView | null>(null);
+  const manualNavigation = useRef(false);
+  const navigate = (next: string) => { manualNavigation.current = true; setPage(next); };
   const [catalog, setCatalog] = useState<Catalog>({
     snapshots: [],
     reports: [],
@@ -55,12 +59,18 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
   const [collapsed, setCollapsed] = useState(false);
   const [datasetId, setDatasetId] = useState("");
   const [scriptReportId, setScriptReportId] = useState("");
+  const scriptResultSeen = useRef("");
+  const revealScriptReport = useCallback((id: string, restoring = false) => {
+    if (scriptResultSeen.current === id) return;
+    scriptResultSeen.current = id;
+    setScriptReportId(id);
+    setCodeView(previous => restoring && previous ? previous : { kind: "report", id });
+  }, []);
   const [marginId, setMarginId] = useState("");
   const [marginContext, setMarginContext] = useState<ResearchContext>(researchContext("两融观察", { page: "margin" }));
   const [flowContext, setFlowContext] = useState({ days: 5, category: "全部" });
   const [overviewCategory, setOverviewCategory] = useState("全部");
   const [backtestDraft, setBacktestDraft] = useState<Spec | undefined>();
-  const [marketRequest, setMarketRequest] = useState<Extract<Request, { operation: "marketSync" }>>({ operation:"marketSync", code:"", timeframe:"5m" });
   const [codeContext, setCodeContext] = useState<ResearchContext>(researchContext("代码策略", { page: "code", selection: "尚未选择证券与数据集" }));
   const [configOpen, setConfigOpen] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
@@ -94,19 +104,23 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
         if (stopped) return;
         const focus = activity.focus;
         if (focus.revision > activitySeen.current) {
+          const restoring = activitySeen.current === 0;
           await refresh();
           if (stopped) return;
           activitySeen.current = focus.revision;
           setActivityRevision(focus.revision);
           if (activity.job && !activity.job.error) setError("");
           if (activity.job?.status !== "running") setCancelPending(false);
-          if (focus.snapshotId) setSnapshotId(focus.snapshotId);
-          if (focus.datasetId) setDatasetId(focus.datasetId);
-          if (focus.scriptReportId) setScriptReportId(focus.scriptReportId);
-          if (focus.marginSnapshotId) setMarginId(focus.marginSnapshotId);
-          if (focus.reportId) { setReportId(focus.reportId); setConfigOpen(false); }
-          if (focus.days) setFlowDays(focus.days);
-          if (pages.some(([id]) => id === focus.page)) setPage(focus.page);
+          const preserveView = (restoring && manualNavigation.current) || (!!focus.scriptReportId && scriptResultSeen.current === focus.scriptReportId);
+          if (!preserveView) {
+            if (focus.snapshotId) setSnapshotId(focus.snapshotId);
+            if (focus.datasetId) setDatasetId(focus.datasetId);
+            if (focus.marginSnapshotId) setMarginId(focus.marginSnapshotId);
+            if (focus.reportId) { setReportId(focus.reportId); setConfigOpen(false); }
+            if (focus.days) setFlowDays(focus.days);
+            if (pages.some(([id]) => id === focus.page)) setPage(focus.page);
+          }
+          if (focus.scriptReportId) revealScriptReport(focus.scriptReportId, restoring);
           if (activity.job) {
             if (activity.job.id !== lastStartedJob.current) lastRequest.current = null;
             setStatus(activity.job);
@@ -125,7 +139,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
     };
     void poll();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [refresh]);
+  }, [refresh, revealScriptReport]);
   useEffect(() => {
     if (!jobId) return;
     let stopped = false;
@@ -140,24 +154,25 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
           timer = setTimeout(poll, 700);
           return;
         }
-        localStorage.removeItem("kalo.investment.job");
-        setJobId("");
         if (next.error) setError(next.error);
         await refresh();
+        if (stopped) return;
         if (next.result && "instruments" in next.result)
           setSnapshotId(next.result.id);
         if (next.result && "kind" in next.result) {
           if (next.result.kind === "marginSnapshot") { setMarginId(next.result.id); setPage("margin"); }
           else {
             if (next.result.kind === "marketDataset") setDatasetId(next.result.id);
-            else { setScriptReportId(next.result.id); setDatasetId(next.result.spec.datasetId); }
-            setPage("code");
+            else if (scriptResultSeen.current !== next.result.id) { revealScriptReport(next.result.id); setDatasetId(next.result.spec.datasetId); setPage("code"); }
+            if (next.result.kind === "marketDataset") setPage("code");
           }
         } else if (next.result && "spec" in next.result) {
           setReportId(next.result.id);
           setConfigOpen(false);
           setPage("backtest");
         }
+        localStorage.removeItem("kalo.investment.job");
+        setJobId("");
       } catch (e) {
         if (!stopped) {
           setError(String(e));
@@ -171,7 +186,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
       stopped = true;
       clearTimeout(timer);
     };
-  }, [jobId, refresh]);
+  }, [jobId, refresh, revealScriptReport]);
   const start = async (request: Request) => {
     if (busy) return;
     lastRequest.current = request;
@@ -193,9 +208,9 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
   };
   const selectInstrument = (code: string) => {
     setInstrumentCode(code);
-    setPage("charts");
+    navigate("charts");
   };
-  const context = page === "code" ? { ...codeContext, text: `${codeContext.text}\n【待同步证券与周期（输入草稿，不改变现有回测数据集）】\n${JSON.stringify(marketRequest)}` } : page === "margin" ? marginContext : researchContext(pages.find(([id]) => id === page)?.[1] ?? "投行", {
+  const context = page === "code" ? codeContext : page === "margin" ? marginContext : researchContext(pages.find(([id]) => id === page)?.[1] ?? "投行", {
     page, snapshotId: snapshot?.id, coverage: snapshot?.instruments[0]?.bars.at(-1)?.date,
     ...(page === "charts" ? { instrument: instrument?.code, name: instrument?.name } : {}),
     ...(page === "flows" ? flowContext : {}),
@@ -214,7 +229,8 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
         </div>
         <button
           className="investment-primary"
-          onClick={() => setPage("code")}
+          disabled={busy}
+          onClick={() => { setCodeView({ kind: "create" }); navigate("code"); mainRef.current?.scrollTo({ top: 0 }); }}
         >
           <AppIcon name="plus" size={16} /> 新建实验
         </button>
@@ -223,7 +239,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
             <button
               key={id}
               aria-current={(page === id || id === "charts" && marketPages.includes(page) || id === "code" && strategyPages.includes(page)) ? "page" : undefined}
-              onClick={() => setPage(id)}
+              onClick={() => navigate(id)}
             >
               <AppIcon name={pageIcons[id]} size={18} /><span>{label}</span>
             </button>
@@ -237,7 +253,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
           </button>
         ))}
         {!snapshot && <p className="investment-nav-empty">等待数据同步</p>}
-        </details><details className="investment-nav-group"><summary>历史实验 <span>{catalog.reports.length}</span><AppIcon name="chevronDown" size={14} /></summary>
+        </details><details className="investment-nav-group"><summary>ETF 轮动记录 <span>{catalog.reports.length}</span><AppIcon name="chevronDown" size={14} /></summary>
         {catalog.reports.slice(0, 8).map((r) => (
           <button
             key={r.id}
@@ -317,8 +333,9 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
             </div>
           )}
           {page === "code" ? <CodeLab datasets={catalog.datasets ?? []} reports={catalog.scriptReports ?? []} datasetId={datasetId} reportId={scriptReportId}
+            view={codeView} onView={setCodeView}
             example={catalog.strategyRuntime?.example ?? ""} busy={busy} onDataset={setDatasetId} onReport={setScriptReportId}
-            onSelection={setMarketRequest} onSync={request => void start(request)}
+            onSync={request => void start(request)}
             onRun={spec => void start({ operation: "scriptBacktest", spec })} onContext={setCodeContext} onAsk={() => setAssistantOpen(true)} /> : page === "margin" ? <MarginView snapshots={catalog.marginSnapshots ?? []} selectedId={marginId} busy={busy} onSelect={setMarginId} onSync={() => void start({ operation: "marginSync" })} onContext={setMarginContext} /> : !snapshot ? (
             <ResearchEmpty busy={busy} onSync={() => void start({ operation: "sync" })} onAssistant={() => setAssistantOpen(true)} />
           ) : (

@@ -6,15 +6,6 @@
 .investment-assistant-context summary { cursor: pointer; font-size: 12px; color: var(--text); }
 .investment-assistant-context pre { margin-top: 10px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .investment-assistant-context > button { padding: 0 5px; border: 0; color: var(--text-dim); }
-.investment-code-data { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 0; border-block: .5px solid var(--border); }
-.investment-code-data strong { font-size: 18px; font-weight: 500; }
-.investment-code-data strong span { font-size: 12px; font-weight: 400; margin-inline-start: 12px; color: var(--text-dim); }
-.investment-code-data small { font-size: 12px; color: var(--text-dim); display: block; margin-top: 6px; }
-.investment-code-config { border: .5px solid var(--border); border-radius: 8px; padding: 0 16px 12px; }
-.investment-code-config > summary { display: flex; justify-content: space-between; gap: 12px; font-weight: 500; }
-.investment-code-config > summary span { font-weight: 400; color: var(--text-dim); }
-.investment-code-title { display: flex; gap: 10px; align-items: center; font-size: 12px; flex: 1; min-width: 0; }
-.investment-code-title input { flex: 1; min-width: 0; max-width: 400px; }
 .investment-code-toolbar { display: flex; align-items: center; gap: 16px; padding: 8px 12px; margin-top: 16px; background: var(--bg-sidebar); border: .5px solid var(--border); border-radius: 6px 6px 0 0; font-size: 12px; color: var(--text-dim); }
 .investment-code-toolbar button { margin-inline-start: auto; min-height: 26px; font-size: 12px; background: transparent; }
 .investment-code-editor { display: flex; height: 360px; border: .5px solid var(--border); border-top: 0; background: var(--bg); border-radius: 0 0 6px 6px; margin-bottom: 12px; }
@@ -24,8 +15,6 @@
 .investment-code-editor textarea:focus-visible { outline: 1px solid var(--accent); }
 .investment-code-editor :is(pre, textarea) { font: 14px/1.6 Consolas, "SFMono-Regular", monospace; }
 .investment-code-evidence { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-sidebar); border: .5px solid var(--border); padding: 16px; max-height: 480px; overflow: auto; font: 12px/1.7 Consolas, "SFMono-Regular", monospace; }
-.investment-code-config .investment-controls { flex-wrap: wrap; }
-@media (max-width: 850px) { .investment-code-config > .investment-between { flex-direction: column; align-items: stretch; } .investment-code-config > summary { flex-wrap: wrap; } }
 
 /* Four task destinations, local views, and one compact research toolbar. */
 .investment .investment-subnav { display:flex; gap:8px; border-bottom:.5px solid var(--border); margin:-6px 0 22px; padding-bottom:6px; }
@@ -66,3 +55,45 @@
 .investment-sidebar nav button:hover > svg { color:var(--text); }
 .investment-assistant > header > button { display:grid; place-items:center; width:30px; height:30px; padding:0; }
 @media (prefers-reduced-motion:reduce) { .investment .investment-subnav button, .investment .investment-subnav button::before, .investment-nav-group summary > svg { transition:none; } }
+
+/* Each experiment shows one task: create, edit, or read its result. */
+.experiment-workspace { min-width:0; }
+.experiment-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:22px; }
+.experiment-state { font-size:12px; color:var(--text-dim); }
+.experiment-toolbar .investment-primary { margin:0; }
+.experiment-workspace > .investment-section { border-top:0; margin-top:0; padding-top:0; }
+.experiment-create { max-width:680px; margin:32px auto 0; }
+.experiment-create .investment-page-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:32px; }
+.experiment-create-fields { display:grid; gap:22px; }
+.experiment-create-fields > label { display:grid; gap:8px; }
+.experiment-create-fields .research-select { width:100%; min-width:0; }
+.experiment-create-fields > p { margin:-10px 0 0; }
+.experiment-sync { margin-top:24px; border-block:.5px solid var(--border); }
+.experiment-sync summary { padding:16px 0; }
+.experiment-sync .investment-market-picker { border:0; }
+.experiment-create-actions { display:flex; justify-content:flex-end; padding-top:24px; }
+.experiment-create-actions .investment-primary { margin:0; }
+.experiment-name { display:grid; gap:8px; color:var(--text-dim); font-size:12px; }
+.investment .experiment-name input { font-size:18px; font-weight:500; width:100%; max-width:none; padding:10px 12px; }
+.experiment-data-summary { display:flex; flex-wrap:wrap; gap:12px; margin:14px 0 18px; font-size:14px; }
+.experiment-data-summary span { color:var(--text-dim); }
+.experiment-editor .investment-code-toolbar { margin-top:0; }
+.experiment-editor .investment-code-toolbar button:last-child { margin-inline-start:0; }
+.experiment-editor .investment-code-editor { height:clamp(240px,40vh,420px); }
+.experiment-settings { border-block:.5px solid var(--border); }
+.experiment-settings > summary { display:flex; align-items:center; gap:16px; padding:16px 0; }
+.experiment-settings > summary::before { content:"›"; color:var(--text-dim); transition:transform .14s ease; }
+.experiment-settings[open] > summary::before { transform:rotate(90deg); }
+.experiment-settings > summary span:last-child { margin-inline-start:auto; font-size:12px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.experiment-api summary { padding:16px 0; color:var(--text-dim); }
+.experiment-records { margin-top:28px; }
+.experiment-records h2 { display:flex; gap:10px; font-size:14px; font-weight:500; }
+.experiment-records h2 span { font-weight:400; color:var(--text-dim); }
+.investment .experiment-records > button { display:flex; justify-content:space-between; align-items:center; gap:16px; width:100%; border:0; border-bottom:.5px solid var(--border); border-radius:0; background:transparent; padding:16px 8px; text-align:start; }
+.experiment-records > button > span { min-width:0; overflow-wrap:anywhere; }
+.experiment-records > button > span:last-child { text-align:end; flex-shrink:0; font-size:12px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.experiment-records strong { font-weight:500; font-size:14px; }
+.experiment-records small { display:block; color:var(--text-dim); margin-top:5px; font-size:12px; }
+.dark .investment :is(.experiment-name input,.experiment-records strong) { font-weight:400; }
+@media (max-width:850px) { .experiment-create { margin-top:16px; } .experiment-records > button { flex-wrap:wrap; } .experiment-records > button > span:last-child { text-align:start; } .experiment-settings > summary { flex-wrap:wrap; } }
+@media (prefers-reduced-motion:reduce) { .experiment-settings > summary::before { transition:none; } }

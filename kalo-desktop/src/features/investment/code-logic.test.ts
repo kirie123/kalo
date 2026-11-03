@@ -12,8 +12,9 @@ describe("code experiment input", () => {
     expect(codeError({ ...spec, end: "missing" }, data)).toContain("区间");
   });
   it("keeps actual edited code and immutable references in visible context", () => {
-    const context = researchContext("海康", { datasetId: "frozen", draft: { source: "用户修改后的代码" }, reportId: "report" });
+    const context = researchContext("海康", { page: "code", mode: "edit", datasetId: "frozen", draft: { source: "用户修改后的代码" }, reportId: "report" });
     expect(context.text).toContain("用户修改后的代码"); expect(context.text).toContain('"datasetId": "frozen"'); expect(context.text).toContain('"reportId": "report"');
+    expect(context.page).toBe("code"); expect(context.mode).toBe("edit");
   });
   it("respects board quantity rules and restarts warmup after corporate actions", () => {
     const market = { ...data, security: { ...data.security, code: "688981.SH", lotSize: 1 },

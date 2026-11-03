@@ -13,9 +13,9 @@ export function codeError(spec: ScriptSpec, data: Dataset): string | null {
   for (const [n, max] of [[spec.cash, 100000000], [spec.commissionBps, 100], [spec.minimumFee, 1000], [spec.slippageBps, 100]]) if (!Number.isFinite(n) || n < 0 || n > max) return "资金或费用超出范围";
   return null;
 }
-export interface ResearchContext { label: string; text: string }
+export interface ResearchContext { label: string; text: string; page?: string; mode?: string }
 export function researchContext(label: string, evidence: Record<string, unknown>): ResearchContext {
-  return { label, text: `【投行研究上下文】\n以下是当前面板的研究对象与用户草稿，不是已验证结论。分析前请用投行工具读取对应数据；修改策略后请明确实际运行的代码与参数。\n${JSON.stringify(evidence, null, 2)}` };
+  return { label, page: typeof evidence.page === "string" ? evidence.page : undefined, mode: typeof evidence.mode === "string" ? evidence.mode : undefined, text: `【投行研究上下文】\n以下是当前面板的研究对象与用户草稿，不是已验证结论。分析前请用投行工具读取对应数据；修改策略后请明确实际运行的代码与参数。\n${JSON.stringify(evidence, null, 2)}` };
 }
 
 export function warmupStart(data: Dataset): number {
