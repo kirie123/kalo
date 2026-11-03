@@ -6,12 +6,13 @@ export function defaultSpec(snapshot: Snapshot): Spec {
   const bars = snapshot.instruments[0]?.bars ?? [];
   return {
     snapshotId: snapshot.id,
+    codes: snapshot.instruments.map(i => i.code),
     start: bars[Math.max(21, bars.length - 60)]?.date ?? "",
     end: bars.at(-1)?.date ?? "",
     capital: 1000000,
     lookback: 20,
     rebalance: 5,
-    holdings: 2,
+    holdings: Math.min(2, snapshot.instruments.length),
     commissionBps: 2.5,
     minimumFee: 5,
     slippageBps: 5,
@@ -36,6 +37,8 @@ export function flowWindow(
 }
 export function specError(spec: Spec, snapshot: Snapshot): string | null {
   const bars = snapshot.instruments[0]?.bars ?? [];
+  if (spec.codes && (!Array.isArray(spec.codes) || !spec.codes.length || new Set(spec.codes).size !== spec.codes.length || spec.codes.some(code => !snapshot.instruments.some(i => i.code === code))))
+    return "请选择当前快照内不重复的回测标的";
   if (!spec.start || !spec.end || spec.start > spec.end)
     return "请选择有效起止日期";
   if (
@@ -53,7 +56,7 @@ export function specError(spec: Spec, snapshot: Snapshot): string | null {
   if (
     !Number.isInteger(spec.holdings) ||
     spec.holdings < 1 ||
-    spec.holdings > snapshot.instruments.length
+    spec.holdings > (spec.codes?.length ?? snapshot.instruments.length)
   )
     return "持仓数量超出证券池范围";
   if (
@@ -87,4 +90,12 @@ export function rankedFlows(snapshot: Snapshot, days: number) {
       if (b.flow.total == null && a.flow.total != null) return -1;
       return (b.flow.total ?? 0) - (a.flow.total ?? 0) || a.instrument.code.localeCompare(b.instrument.code);
     });
+}
+
+export const categories = ["全部", "宽基", "双创", "行业主题"] as const;
+export function categoryOf(instrument: Instrument): string {
+  return instrument.category || (["510300.SH", "510500.SH", "512100.SH"].includes(instrument.code) ? "宽基" : "未分类");
+}
+export function inCategory(instruments: Instrument[], category: string): Instrument[] {
+  return category === "全部" ? instruments : instruments.filter(i => categoryOf(i) === category);
 }

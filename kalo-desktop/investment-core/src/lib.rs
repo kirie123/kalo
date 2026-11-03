@@ -4,6 +4,7 @@ pub mod model;
 pub mod sources;
 pub mod storage;
 mod transport;
+pub mod universe;
 pub use model::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;

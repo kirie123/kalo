@@ -17,6 +17,7 @@ export interface FundPoint {
 export interface Instrument {
   code: string;
   name: string;
+  category?: string;
   bars: Bar[];
   funds: FundPoint[];
 }
@@ -29,6 +30,7 @@ export interface Snapshot {
 }
 export interface Spec {
   snapshotId: string;
+  codes?: string[];
   start: string;
   end: string;
   capital: number;

@@ -82,7 +82,7 @@ export default function InvestmentPanel() {
           if (activity.job && !activity.job.error) setError("");
           if (activity.job?.status !== "running") setCancelPending(false);
           if (focus.snapshotId) setSnapshotId(focus.snapshotId);
-          if (focus.reportId) setReportId(focus.reportId);
+          if (focus.reportId) { setReportId(focus.reportId); setConfigOpen(false); }
           if (focus.days) setFlowDays(focus.days);
           if (pages.some(([id]) => id === focus.page)) setPage(focus.page);
           if (activity.job) {
@@ -126,6 +126,7 @@ export default function InvestmentPanel() {
           setSnapshotId(next.result.id);
         if (next.result && "spec" in next.result) {
           setReportId(next.result.id);
+          setConfigOpen(false);
           setPage("backtest");
         }
       } catch (e) {
@@ -205,10 +206,11 @@ export default function InvestmentPanel() {
             key={r.id}
             onClick={() => {
               setReportId(r.id);
+              setConfigOpen(false);
               setPage("backtest");
             }}
           >
-            {r.spec.flowFilter ? "资金过滤" : "价格动量"}
+            {r.spec.flowFilter ? "资金过滤" : "价格动量"} / {r.spec.codes ? `${r.spec.codes.length} 只` : "全池"}
             <small>
               {r.spec.start} → {r.spec.end}
             </small>
@@ -337,7 +339,7 @@ export default function InvestmentPanel() {
                         >
                           {catalog.reports.map((r) => (
                             <option key={r.id} value={r.id}>
-                              {new Date(r.createdAt).toLocaleString()} /{" "}
+                              {new Date(r.createdAt).toLocaleString()} / {r.spec.codes ? `${r.spec.codes.length} 只` : "全池"} /{" "}
                               {r.id.slice(0, 8)}
                             </option>
                           ))}

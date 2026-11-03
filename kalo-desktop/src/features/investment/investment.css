@@ -106,6 +106,9 @@
   padding-bottom: 18px;
   border-bottom: 0.5px solid var(--border);
 }
+.investment-sidebar > * {
+  flex-shrink: 0;
+}
 .investment-sidebar button {
   text-align: left;
   background: transparent;
@@ -344,3 +347,16 @@
     font-size: 24px;
   }
 }
+.investment-pool {
+  margin: 16px 0;
+  padding: 12px;
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+.investment-pool legend { font-weight: 600; }
+.investment-pool legend span { color: var(--text-dim); font-size: 12px; margin-left: 8px; }
+.investment-pool-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 12px; }
+.investment-pool-options label { display: flex; align-items: center; gap: 8px; cursor: pointer; min-height: 40px; }
+.investment-pool-options input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; padding: 0; }
+.investment-pool-options small { display: block; color: var(--text-dim); font-size: 12px; margin-top: 3px; }

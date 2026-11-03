@@ -16,6 +16,7 @@ export default function InvestmentAssistant({ snapshotId, onClose }: { snapshotI
     <div className="investment-suggestions">
       <button disabled={chat.busy} onClick={() => ask("同步最新免费 ETF 数据，并说明数据覆盖和缺口。")}>同步最新数据</button>
       <button disabled={chat.busy} onClick={() => ask("分析最近 5 个交易日 ETF 净申购，按金额排序，说明缺口和统计口径。")}>分析 5 日资金</button>
+      <button disabled={chat.busy} onClick={() => ask("分析双创与行业主题 ETF 最近 5 个交易日的净申购，分组排名并说明数据缺口；若当前快照没有这些标的，请先同步。")}>双创与板块资金</button>
       <button disabled={chat.busy} onClick={() => ask("用 100 万元跑最近 60 个交易日的价格动量轮动回测，其余使用投行默认参数；说明参数、费用、收益和最大回撤。")}>运行动量回测</button>
     </div>
     <ChatView />

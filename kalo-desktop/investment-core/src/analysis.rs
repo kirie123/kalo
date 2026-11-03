@@ -6,6 +6,13 @@ pub fn defaults(snapshot: &Snapshot) -> Option<Spec> {
     let bars = &snapshot.instruments.first()?.bars;
     Some(Spec {
         snapshot_id: snapshot.id.clone(),
+        codes: Some(
+            snapshot
+                .instruments
+                .iter()
+                .map(|i| i.code.clone())
+                .collect(),
+        ),
         start: bars
             .get(21.max(bars.len().saturating_sub(60)))?
             .date
@@ -25,7 +32,7 @@ pub fn defaults(snapshot: &Snapshot) -> Option<Spec> {
 pub fn describe(snapshot: &Snapshot) -> Value {
     json!({"id":snapshot.id,"createdAt":snapshot.created_at,"source":snapshot.source,
         "warnings":snapshot.warnings,"defaultSpec":defaults(snapshot),
-        "instruments":snapshot.instruments.iter().map(|i| json!({"code":i.code,"name":i.name,
+        "instruments":snapshot.instruments.iter().map(|i| json!({"code":i.code,"name":i.name,"category":crate::universe::find(&i.code).map(|e| e.category),
             "firstDate":i.bars.first().map(|b| &b.date),"lastDate":i.bars.last().map(|b| &b.date),
             "bars":i.bars.len(),"fundPoints":i.funds.len()})).collect::<Vec<_>>()})
 }
@@ -57,7 +64,7 @@ pub fn flows(snapshot: &Snapshot, days: usize) -> Result<Value, String> {
             evidence.push(json!({"date":date,"observation":point}));
         }
         let valid = dates.len() - missing.len();
-        rows.push(json!({"code":instrument.code,"name":instrument.name,
+        rows.push(json!({"code":instrument.code,"name":instrument.name,"category":crate::universe::find(&instrument.code).map(|e| e.category),
             "start":dates.first(),"end":dates.last(),"validDays":valid,"requestedDays":days,
             "netFlowYuan":if valid == days {Some(total)} else {None},
             "missingDates":missing,"evidence":evidence}));
@@ -97,6 +104,15 @@ pub fn compact_result(value: &Value) -> Result<Value, String> {
         let rejected = trades.as_array().map_or(0, Vec::len) - filled;
         obj.insert("filledTradeCount".into(), json!(filled));
         obj.insert("rejectedOrderCount".into(), json!(rejected));
+        let traded_codes: std::collections::BTreeSet<_> = trades
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|t| t["quantity"].as_f64().is_some_and(|q| q > 0.0))
+            .filter_map(|t| t["code"].as_str())
+            .collect();
+        obj.insert("tradedCodes".into(), json!(traded_codes));
+        obj.insert("strategyDefinition".into(), json!("每只标的独立检查正动量；holdings 是最多持仓数及单标的预算分母，并非必须买满。符合条件的不足 holdings 时，其余预算留现金；不要求池内标的同时开仓或同时清仓。"));
         obj.insert(
             "rejectedOrders".into(),
             json!(trades
@@ -131,10 +147,11 @@ mod tests {
     use crate::{Bar, FundPoint, Instrument};
     #[test]
     fn report_summary_separates_fills_from_rejected_orders() {
-        let compact = compact_result(&json!({"trades":[{"quantity":100},{"quantity":0,"code":"510300.SH","date":"2026-10-30","reason":"滑点超出日内范围"},{"quantity":200}],"equity":[{"equity":1000}],"fees":5})).unwrap();
+        let compact = compact_result(&json!({"trades":[{"quantity":100,"code":"588300.SH"},{"quantity":0,"code":"510300.SH","date":"2026-10-30","reason":"滑点超出日内范围"},{"quantity":200,"code":"588300.SH"}],"equity":[{"equity":1000}],"fees":5})).unwrap();
         assert_eq!(compact["orderCount"], 3);
         assert_eq!(compact["filledTradeCount"], 2);
         assert_eq!(compact["rejectedOrderCount"], 1);
+        assert_eq!(compact["tradedCodes"], json!(["588300.SH"]));
         assert_eq!(compact["rejectedOrders"][0]["reason"], "滑点超出日内范围");
         assert_eq!(compact["tradingDays"], 1);
         assert_eq!(compact["lastEquity"]["equity"], 1000);
@@ -155,6 +172,7 @@ mod tests {
         let mut i = Instrument {
             code: "a".into(),
             name: "A".into(),
+            category: String::new(),
             bars: vec![bar("2026-01-05"), bar("2026-01-06")],
             funds: vec![FundPoint {
                 date: "2026-01-06".into(),

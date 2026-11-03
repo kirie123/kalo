@@ -98,11 +98,8 @@ pub fn sync(root: &Path) -> Result<Snapshot, String> {
         .to_string();
     let mut instruments = vec![];
     let mut warnings = vec![];
-    for (code, name) in [
-        ("510300", "沪深300 ETF"),
-        ("510500", "中证500 ETF"),
-        ("512100", "中证1000 ETF"),
-    ] {
+    for entry in crate::universe::ENTRIES {
+        let code = &entry.code[..6];
         eprintln!("同步 {code} 日线");
         let symbol = format!("sh{code}");
         let url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get";
@@ -131,7 +128,8 @@ pub fn sync(root: &Path) -> Result<Snapshot, String> {
         }
         instruments.push(Instrument {
             code: format!("{code}.SH"),
-            name: name.into(),
+            name: entry.name.into(),
+            category: entry.category.into(),
             bars,
             funds: vec![],
         });

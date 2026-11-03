@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Report, Snapshot, Spec } from "./types";
-import { defaultSpec, formatMoney, percent, specError } from "./logic";
+import { categories, categoryOf, inCategory, defaultSpec, formatMoney, percent, specError } from "./logic";
 import { EquityChart } from "./Charts";
 export function BacktestForm({
   snapshot,
@@ -23,6 +23,8 @@ export function BacktestForm({
     if (!specError(spec, snapshot)) sessionStorage.setItem(draftKey, JSON.stringify(spec));
   }, [draftKey, spec, snapshot]);
   const error = specError(spec, snapshot);
+  const codes = spec.codes ?? snapshot.instruments.map(i => i.code);
+  const selectCodes = (next: string[]) => setSpec({ ...spec, codes: next, holdings: Math.max(1, Math.min(spec.holdings, next.length)) });
   const field = (
     key: keyof Spec,
     label: string,
@@ -45,13 +47,22 @@ export function BacktestForm({
   return (
     <section className="investment-section">
       <h2>定义实验</h2>
-      <div className="investment-controls"><span className="investment-badge">宽基 ETF 轮动</span><span className="investment-badge">次日开盘成交</span><span className="investment-badge">只做多</span></div>
+      <div className="investment-controls"><span className="investment-badge">ETF 动量轮动</span><span className="investment-badge">次日开盘成交</span><span className="investment-badge">只做多</span></div>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           if (!error) onRun(spec);
         }}
       >
+        <fieldset className="investment-pool">
+          <legend>回测标的 <span>已选 {codes.length} / {snapshot.instruments.length} 只</span></legend>
+          <div className="investment-controls">{categories.map(category => <button type="button" key={category} onClick={() => selectCodes(inCategory(snapshot.instruments, category).map(i => i.code))}>{category}</button>)}</div>
+          <div className="investment-pool-options">{snapshot.instruments.map(i => <label key={i.code}>
+            <input type="checkbox" checked={codes.includes(i.code)} onChange={e => selectCodes(e.target.checked ? [...codes, i.code] : codes.filter(code => code !== i.code))} />
+            <span>{i.name}<small>{i.code} / {categoryOf(i)}</small></span>
+          </label>)}</div>
+          <p>基准固定为沪深300 ETF；只在勾选的标的中轮动。</p>
+        </fieldset>
         <div className="investment-form">
           <label>
             策略
@@ -84,7 +95,7 @@ export function BacktestForm({
           </label>
           {field("lookback", "动量窗口 / 交易日", 2, 120)}
           {field("rebalance", "调仓间隔 / 交易日", 1, 60)}
-          {field("holdings", "持仓数量", 1, snapshot.instruments.length)}
+          {field("holdings", "持仓数量", 1, codes.length)}
         </div>
         <details className="investment-costs"><summary>交易成本与撮合假设</summary><div className="investment-form">
           {field("commissionBps", "双向佣金 / bp", 0, 100, 0.1)}
@@ -122,6 +133,7 @@ export function ReportView({ report }: { report: Report }) {
         {report.spec.flowFilter ? "资金过滤" : "价格动量"} / 引擎版本{" "}
         {report.engineVersion}
       </p>
+      <p>回测标的：{report.spec.codes?.join("、") ?? "该历史快照的全部标的"}</p>
       <div className="investment-tabs">
         {[
           ["overview", "收益与风险"],

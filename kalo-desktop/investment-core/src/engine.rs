@@ -17,6 +17,17 @@ pub fn validate(snapshot: &Snapshot, spec: &Spec) -> Result<(), String> {
     if spec.snapshot_id != snapshot.id {
         return Err("快照 ID 不一致".into());
     }
+    if let Some(codes) = &spec.codes {
+        let unique: std::collections::BTreeSet<_> = codes.iter().collect();
+        if codes.is_empty()
+            || unique.len() != codes.len()
+            || codes
+                .iter()
+                .any(|code| !snapshot.instruments.iter().any(|i| &i.code == code))
+        {
+            return Err("回测标的不能为空、重复或超出当前快照".into());
+        }
+    }
     for d in [&spec.start, &spec.end] {
         NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| "日期格式错误")?;
     }
@@ -26,7 +37,11 @@ pub fn validate(snapshot: &Snapshot, spec: &Spec) -> Result<(), String> {
         || spec.rebalance < 1
         || spec.rebalance > 60
         || spec.holdings == 0
-        || spec.holdings > snapshot.instruments.len()
+        || spec.holdings
+            > spec
+                .codes
+                .as_ref()
+                .map_or(snapshot.instruments.len(), Vec::len)
     {
         return Err("请检查日期、动量窗口（2–120）、调仓间隔（1–60）和持仓数".into());
     }
@@ -43,7 +58,12 @@ pub fn validate(snapshot: &Snapshot, spec: &Spec) -> Result<(), String> {
     if snapshot.instruments.is_empty() {
         return Err("快照没有证券".into());
     }
-    let reference = &snapshot.instruments[0].bars;
+    let reference = &snapshot
+        .instruments
+        .iter()
+        .find(|i| i.code == "510300.SH")
+        .ok_or("缺少沪深300 ETF 基准行情")?
+        .bars;
     if reference.len() < spec.lookback + 3 {
         return Err("历史不足，请先同步更多日线".into());
     }
@@ -55,8 +75,11 @@ pub fn validate(snapshot: &Snapshot, spec: &Spec) -> Result<(), String> {
         ));
     }
     for instrument in &snapshot.instruments {
-        if !["510300.SH", "510500.SH", "512100.SH"].contains(&instrument.code.as_str()) {
-            return Err("此版本仅支持配置的沪市宽基 ETF".into());
+        if !selected(spec, &instrument.code) && instrument.code != "510300.SH" {
+            continue;
+        }
+        if crate::universe::find(&instrument.code).is_none() {
+            return Err("此版本仅支持配置的宽基、双创与行业主题 ETF".into());
         }
         if instrument.bars.len() != reference.len()
             || instrument
@@ -145,9 +168,20 @@ fn has_flow(instrument: &Instrument, signal_date: &str) -> Result<bool, String> 
     Ok(recent.iter().map(|p| p.net_flow.unwrap()).sum::<f64>() > 0.0)
 }
 
+fn selected(spec: &Spec, code: &str) -> bool {
+    spec.codes
+        .as_ref()
+        .is_none_or(|codes| codes.iter().any(|c| c == code))
+}
+
 pub fn run(snapshot: &Snapshot, spec: &Spec) -> Result<Report, String> {
     validate(snapshot, spec)?;
-    let days = &snapshot.instruments[0].bars;
+    let days = &snapshot
+        .instruments
+        .iter()
+        .find(|i| i.code == "510300.SH")
+        .ok_or("缺少基准")?
+        .bars;
     let indices: Vec<_> = days
         .iter()
         .enumerate()
@@ -169,6 +203,9 @@ pub fn run(snapshot: &Snapshot, spec: &Spec) -> Result<Report, String> {
         if step % spec.rebalance == 0 {
             let mut ranked = vec![];
             for (j, instrument) in snapshot.instruments.iter().enumerate() {
+                if !selected(spec, &instrument.code) {
+                    continue;
+                }
                 if spec.flow_filter && !has_flow(instrument, &days[i - 1].date)? {
                     continue;
                 }
@@ -195,6 +232,7 @@ pub fn run(snapshot: &Snapshot, spec: &Spec) -> Result<Report, String> {
                 + positions
                     .iter()
                     .enumerate()
+                    .filter(|(_, q)| **q > 0)
                     .map(|(j, q)| *q as f64 * snapshot.instruments[j].bars[i - 1].close)
                     .sum::<f64>();
             let targets: Vec<u64> = snapshot
@@ -238,8 +276,12 @@ pub fn run(snapshot: &Snapshot, spec: &Spec) -> Result<Report, String> {
                         || (bar.high - bar.low).abs() < 0.00001
                         || price > bar.high
                         || price < bar.low
-                        || (buy && bar.open >= prev.close * 1.099)
-                        || (!buy && bar.open <= prev.close * 0.901);
+                        || crate::universe::at_price_limit(
+                            &instrument.code,
+                            prev.close,
+                            bar.open,
+                            buy,
+                        );
                     if blocked {
                         qty = 0;
                     }
@@ -300,6 +342,7 @@ pub fn run(snapshot: &Snapshot, spec: &Spec) -> Result<Report, String> {
             + positions
                 .iter()
                 .enumerate()
+                .filter(|(_, q)| **q > 0)
                 .map(|(j, q)| *q as f64 * snapshot.instruments[j].bars[i].close)
                 .sum::<f64>();
         peak = peak.max(nav);
@@ -320,7 +363,14 @@ pub fn run(snapshot: &Snapshot, spec: &Spec) -> Result<Report, String> {
     );
     let engine_hash = format!(
         "{:x}",
-        Sha256::digest(concat!(include_str!("engine.rs"), include_str!("model.rs")).as_bytes())
+        Sha256::digest(
+            concat!(
+                include_str!("engine.rs"),
+                include_str!("model.rs"),
+                include_str!("universe.rs")
+            )
+            .as_bytes()
+        )
     );
     Ok(Report {
         id: uuid::Uuid::new_v4().to_string(),
@@ -363,6 +413,7 @@ mod tests {
             instruments: vec![Instrument {
                 code: "510300.SH".into(),
                 name: "test".into(),
+                category: "宽基".into(),
                 bars,
                 funds: vec![],
             }],
@@ -370,6 +421,7 @@ mod tests {
         };
         let spec = Spec {
             snapshot_id: snapshot.id.clone(),
+            codes: None,
             start: "2026-01-05".into(),
             end: "2026-01-12".into(),
             capital: 100000.0,
@@ -392,6 +444,29 @@ mod tests {
         assert_eq!(r.equity.last().unwrap().equity, 146200.0);
         assert_eq!(r.equity[0].equity, 100000.0);
         assert!(r.equity.iter().all(|e| e.cash >= 0.0));
+    }
+    #[test]
+    fn selected_sector_excludes_benchmark_and_unselected_broken_bars() {
+        let (mut s, mut p) = fixture();
+        let mut sector = s.instruments[0].clone();
+        sector.code = "512480.SH".into();
+        sector.category = "行业主题".into();
+        s.instruments.push(sector);
+        let mut broken = s.instruments[0].clone();
+        broken.code = "512660.SH".into();
+        broken.bars.clear();
+        s.instruments.push(broken);
+        p.codes = Some(vec!["512480.SH".into()]);
+        let report = run(&s, &p).unwrap();
+        assert!(!report.trades.is_empty());
+        assert!(report.trades.iter().all(|t| t.code == "512480.SH"));
+        assert_eq!(report.equity[0].benchmark, 100000.0);
+        p.codes = Some(vec![]);
+        assert!(run(&s, &p).unwrap_err().contains("回测标的"));
+        p.codes = Some(vec!["512480.SH".into(), "512480.SH".into()]);
+        assert!(run(&s, &p).unwrap_err().contains("回测标的"));
+        p.codes = Some(vec!["159915.SZ".into()]);
+        assert!(run(&s, &p).unwrap_err().contains("回测标的"));
     }
     #[test]
     fn fees_reduce_affordable_quantity() {

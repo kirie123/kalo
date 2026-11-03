@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flowWindow, specError, defaultSpec, rankedFlows } from "./logic";
+import { flowWindow, specError, defaultSpec, rankedFlows, categoryOf, inCategory } from "./logic";
 import type { Instrument, Snapshot } from "./types";
 const instrument: Instrument = {
   code: "510300.SH",
@@ -23,6 +23,22 @@ const snapshot: Snapshot = {
   instruments: [instrument],
 };
 describe("investment coverage and form", () => {
+  it("filters categories without silently reclassifying old unknown instruments", () => {
+    const sector = { ...instrument, code: "512480.SH", category: "行业主题" };
+    expect(categoryOf(instrument)).toBe("宽基");
+    expect(categoryOf({ ...instrument, code: "unknown" })).toBe("未分类");
+    expect(inCategory([instrument, sector], "行业主题")).toEqual([sector]);
+    expect(inCategory([instrument, sector], "双创")).toEqual([]);
+  });
+  it("rejects empty, duplicate, absent or undersized backtest pools", () => {
+    const spec = defaultSpec(snapshot);
+    expect(specError(spec, snapshot)).toBeNull();
+    for (const codes of [[], [instrument.code, instrument.code], ["588300.SH"]]) {
+      expect(specError({ ...spec, codes }, snapshot)).not.toBeNull();
+    }
+    expect(specError({ ...spec, holdings: 2 }, snapshot)).not.toBeNull();
+    expect(specError({ ...spec, codes: undefined }, snapshot)).toBeNull();
+  });
   it("ranks complete zero and negative flows ahead of missing data without changing the pool", () => {
     const complete = (code: string, netFlow: number) => ({ ...instrument, code, funds: instrument.bars.slice(-5).map(b => ({ date: b.date, shares: 100, nav: 4, netFlow, availableAt: "" })) });
     const pool = { ...snapshot, instruments: [instrument, complete("negative", -2), complete("zero", 0), complete("positive", 3)] };

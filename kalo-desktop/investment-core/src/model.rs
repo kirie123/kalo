@@ -25,6 +25,8 @@ pub struct FundPoint {
 pub struct Instrument {
     pub code: String,
     pub name: String,
+    #[serde(default)]
+    pub category: String,
     pub bars: Vec<Bar>,
     pub funds: Vec<FundPoint>,
 }
@@ -41,6 +43,8 @@ pub struct Snapshot {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Spec {
     pub snapshot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codes: Option<Vec<String>>,
     pub start: String,
     pub end: String,
     pub capital: f64,

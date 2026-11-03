@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Instrument, Snapshot } from "./types";
-import { rankedFlows, formatMoney } from "./logic";
+import { rankedFlows, formatMoney, inCategory } from "./logic";
+import { PoolFilter } from "./PoolFilter";
 import { Candles } from "./Charts";
 import { DataSources } from "./ResearchOverview";
 export function FlowView({
@@ -13,7 +14,8 @@ export function FlowView({
   initialDays?: number;
 }) {
   const [days, setDays] = useState(initialDays);
-  const rows = rankedFlows(snapshot, days);
+  const [category, setCategory] = useState("全部");
+  const rows = rankedFlows({ ...snapshot, instruments: inCategory(snapshot.instruments, category) }, days);
   const complete = rows.filter(r => r.flow.total != null);
   const total = complete.reduce((sum, r) => sum + (r.flow.total ?? 0), 0);
   const maximum = Math.max(1, ...complete.map(r => Math.abs(r.flow.total!)));
@@ -34,6 +36,8 @@ export function FlowView({
           <option value={20}>20 交易日</option>
         </select>
       </div>
+      <PoolFilter instruments={snapshot.instruments} value={category} onChange={setCategory} />
+      {!rows.length && <p>当前快照没有此类 ETF，请同步最新数据。</p>}
       <div className="investment-metrics">
         <div>{complete.length === rows.length ? "窗口净申购" : "完整标的合计"}<strong className={total >= 0 ? "investment-up" : "investment-down"}>{complete.length ? `${total > 0 ? "+" : ""}${formatMoney(total / 1e8)}` : "—"}<small>亿元</small></strong></div>
         <div>净流入标的<strong>{complete.filter(r => r.flow.total! > 0).length}<small>/ {complete.length} 只有效</small></strong></div>
