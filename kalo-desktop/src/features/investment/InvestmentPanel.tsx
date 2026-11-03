@@ -22,7 +22,7 @@ import { researchContext, type ResearchContext } from "./code-logic";
 import "./code-lab.css";
 const pageIcons: Record<string, IconName> = { home: "panel", flows: "chart", margin: "chart", charts: "chart", backtest: "checklist", code: "checklist", data: "plug" };
 const pages = [
-  ["home", "决策台"],
+  ["home", "总览"],
   ["flows", "ETF 资金"],
   ["margin", "两融观察"],
   ["charts", "行情研究"],
@@ -30,6 +30,9 @@ const pages = [
   ["code", "代码策略"],
   ["data", "数据中心"],
 ];
+const navigation = [["home", "总览"], ["charts", "市场研究"], ["code", "策略实验"], ["data", "数据中心"]];
+const marketPages = ["charts", "flows", "margin"];
+const strategyPages = ["code", "backtest"];
 export default function InvestmentPanel({ assistantOpen, onAssistantChange: setAssistantOpen }: { assistantOpen: boolean; onAssistantChange: (open: boolean) => void }) {
   const [page, setPage] = useState("home");
   const [catalog, setCatalog] = useState<Catalog>({
@@ -57,7 +60,8 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
   const [flowContext, setFlowContext] = useState({ days: 5, category: "全部" });
   const [overviewCategory, setOverviewCategory] = useState("全部");
   const [backtestDraft, setBacktestDraft] = useState<Spec | undefined>();
-  const [codeContext, setCodeContext] = useState<ResearchContext>(researchContext("代码策略", { code: "002415.SZ", timeframe: "5m" }));
+  const [marketRequest, setMarketRequest] = useState<Extract<Request, { operation: "marketSync" }>>({ operation:"marketSync", code:"", timeframe:"5m" });
+  const [codeContext, setCodeContext] = useState<ResearchContext>(researchContext("代码策略", { page: "code", selection: "尚未选择证券与数据集" }));
   const [configOpen, setConfigOpen] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
   const lastRequest = useRef<Request | null>(null);
@@ -172,6 +176,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
     if (busy) return;
     lastRequest.current = request;
     setCancelPending(false);
+    setStatus(null);
     setSubmitting(true);
     setError("");
     try {
@@ -190,7 +195,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
     setInstrumentCode(code);
     setPage("charts");
   };
-  const context = page === "code" ? codeContext : page === "margin" ? marginContext : researchContext(pages.find(([id]) => id === page)?.[1] ?? "投行", {
+  const context = page === "code" ? { ...codeContext, text: `${codeContext.text}\n【待同步证券与周期（输入草稿，不改变现有回测数据集）】\n${JSON.stringify(marketRequest)}` } : page === "margin" ? marginContext : researchContext(pages.find(([id]) => id === page)?.[1] ?? "投行", {
     page, snapshotId: snapshot?.id, coverage: snapshot?.instruments[0]?.bars.at(-1)?.date,
     ...(page === "charts" ? { instrument: instrument?.code, name: instrument?.name } : {}),
     ...(page === "flows" ? flowContext : {}),
@@ -209,22 +214,22 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
         </div>
         <button
           className="investment-primary"
-          onClick={() => { setPage("backtest"); setConfigOpen(true); }}
+          onClick={() => setPage("code")}
         >
           <AppIcon name="plus" size={16} /> 新建实验
         </button>
         <nav aria-label="投行功能">
-          {pages.map(([id, label]) => (
+          {navigation.map(([id, label]) => (
             <button
               key={id}
-              aria-current={page === id ? "page" : undefined}
+              aria-current={(page === id || id === "charts" && marketPages.includes(page) || id === "code" && strategyPages.includes(page)) ? "page" : undefined}
               onClick={() => setPage(id)}
             >
               <AppIcon name={pageIcons[id]} size={17} /><span>{label}</span>
             </button>
           ))}
         </nav>
-        <h3>研究池</h3>
+        <details className="investment-nav-group"><summary>研究池 <span>{snapshot?.instruments.length ?? 0}</span></summary>
         {snapshot?.instruments.map((i) => (
           <button key={i.code} onClick={() => selectInstrument(i.code)}>
             {i.name}
@@ -232,7 +237,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
           </button>
         ))}
         {!snapshot && <p className="investment-nav-empty">等待数据同步</p>}
-        <h3>历史实验</h3>
+        </details><details className="investment-nav-group"><summary>历史实验 <span>{catalog.reports.length}</span></summary>
         {catalog.reports.slice(0, 8).map((r) => (
           <button
             key={r.id}
@@ -248,7 +253,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
             </small>
           </button>
         ))}
-        <div className="investment-sidebar-footer"><AppIcon name="shield" size={15} /><span>本地研究 / 无交易执行</span></div>
+        </details><div className="investment-sidebar-footer"><AppIcon name="shield" size={15} /><span>本地研究 / 无交易执行</span></div>
       </aside>
       <main className="investment-main" ref={mainRef}>
         <header className="investment-between">
@@ -261,23 +266,20 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
               ☰
             </button>
             <span className="investment-breadcrumb">投行 <span>/</span></span>
-            <strong>{pages.find(([id]) => id === page)?.[1]}</strong>
+            <strong>{marketPages.includes(page) ? "市场研究" : strategyPages.includes(page) ? "策略实验" : pages.find(([id]) => id === page)?.[1]}</strong>
           </div>
           <div className="investment-controls">
             <button className="investment-assistant-toggle" onClick={() => setAssistantOpen(true)}><AppIcon name="model" size={16} />讨论此页</button>
-          <button
-            disabled={busy}
-            onClick={() => void start(page === "code" ? { operation: "marketSync", code: "002415.SZ", timeframe: "5m" } : page === "margin" ? { operation: "marginSync" } : { operation: "sync" })}
-          >
+          {page !== "code" && <button disabled={busy} onClick={() => void start(page === "margin" ? { operation: "marginSync" } : { operation: "sync" })}>
             <AppIcon name="plug" size={16} />{busy ? "任务处理中" : "同步数据"}
-          </button>
+          </button>}
           </div>
         </header>
         {busy && (
           <div className="investment-task" role="status">
-            <span>{status?.phase ?? "正在启动任务…"}</span>
+            <span>{status?.status === "running" ? status.phase : submitting ? "正在启动任务…" : "正在刷新结果…"}</span>
             <button
-              disabled={!jobId || cancelPending}
+              disabled={!jobId || cancelPending || status?.status !== "running"}
               onClick={() => { setCancelPending(true); void investmentCancel(jobId).catch((e) => { setCancelPending(false); setError(String(e)); }); }}
             >
               {cancelPending ? "正在取消…" : "取消任务"}
@@ -299,6 +301,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
           <p role="status">任务已取消，已有快照和报告保留。</p>
         )}
         <div className="investment-content">
+          {(marketPages.includes(page) || strategyPages.includes(page)) && <nav className="investment-subnav" aria-label="研究视图">{(marketPages.includes(page) ? [["charts","行情"],["flows","ETF 资金"],["margin","两融"]] : [["code","代码策略"],["backtest","ETF 轮动"]]).map(([id,label]) => <button key={id} aria-current={page === id ? "page" : undefined} onClick={() => setPage(id)}>{label}</button>)}</nav>}
           {snapshot && page !== "code" && page !== "margin" && (
             <div className="investment-between investment-snapshot">
               <label>
@@ -315,7 +318,7 @@ export default function InvestmentPanel({ assistantOpen, onAssistantChange: setA
           )}
           {page === "code" ? <CodeLab datasets={catalog.datasets ?? []} reports={catalog.scriptReports ?? []} datasetId={datasetId} reportId={scriptReportId}
             example={catalog.strategyRuntime?.example ?? ""} busy={busy} onDataset={setDatasetId} onReport={setScriptReportId}
-            onSync={() => void start({ operation: "marketSync", code: "002415.SZ", timeframe: "5m" })}
+            onSelection={setMarketRequest} onSync={request => void start(request)}
             onRun={spec => void start({ operation: "scriptBacktest", spec })} onContext={setCodeContext} onAsk={() => setAssistantOpen(true)} /> : page === "margin" ? <MarginView snapshots={catalog.marginSnapshots ?? []} selectedId={marginId} busy={busy} onSelect={setMarginId} onSync={() => void start({ operation: "marginSync" })} onContext={setMarginContext} /> : !snapshot ? (
             <ResearchEmpty busy={busy} onSync={() => void start({ operation: "sync" })} onAssistant={() => setAssistantOpen(true)} />
           ) : (

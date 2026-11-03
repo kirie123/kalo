@@ -23,8 +23,8 @@ export default function InvestmentAssistant({ context, open, onClose }: { contex
       <button disabled={chat.busy} onClick={() => ask("同步最新沪深两融和海康威视两融数据，说明交易日、来源与精度。")}>同步两融数据</button>
       <button disabled={chat.busy} onClick={() => ask("分析当前范围的融资余额变化、融资买入和融券情况，明确缺失、舍入精度与数据时点，不把余额变化当ETF净申购。")}>分析当前两融</button>
       </> : codePage ? <>
-      <button disabled={chat.busy} onClick={() => ask("同步海康威视5分钟真实数据，说明实际覆盖和质量检查结果。")}>同步分钟数据</button>
-      <button disabled={chat.busy} onClick={() => ask("检查当前策略草稿的逻辑、T+1底仓和费用假设；保留我的研究思路，指出需要验证的问题。")}>检查策略代码</button>
+      <button disabled={chat.busy} onClick={() => ask("按上下文的待同步证券与周期同步分钟真实数据；未填写证券时先询问。不要擅自改成海康威视或其他标的。说明实际覆盖和质量检查结果。")}>同步分钟数据</button>
+      <button disabled={chat.busy} onClick={() => ask("检查当前策略草稿的逻辑、所选证券库存规则与费用假设；保留我的研究思路，指出需要验证的问题。")}>检查策略代码</button>
       <button disabled={chat.busy} onClick={() => ask("按当前上下文中的代码草稿和参数实际运行代码回测，解释相对持有底仓的差额、成交与拒单。")}>运行当前代码</button>
       </> : <>
       <button disabled={chat.busy} onClick={() => ask("同步最新免费 ETF 数据，并说明数据覆盖和缺口。")}>同步最新数据</button>

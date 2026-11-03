@@ -94,7 +94,7 @@ export type Request =
   | { operation: "sync" }
   | { operation: "marginSync" }
   | { operation: "backtest"; spec: Spec }
-  | { operation: "marketSync"; code: string; timeframe: "5m" }
+  | { operation: "marketSync"; code: string; timeframe: "5m" | "15m" | "30m" | "60m"; settlementDays?: number }
   | { operation: "scriptBacktest"; spec: ScriptSpec };
 
 export interface Activity {

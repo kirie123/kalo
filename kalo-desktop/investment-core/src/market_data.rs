@@ -9,26 +9,33 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
-pub(crate) fn slots() -> Vec<u32> {
-    (0..24)
-        .map(|n| 9 * 60 + 35 + n * 5)
-        .chain((0..24).map(|n| 13 * 60 + 5 + n * 5))
+pub(crate) fn slots_for(minutes: u32) -> Vec<u32> {
+    (1..=120 / minutes)
+        .map(|n| 9 * 60 + 30 + n * minutes)
+        .chain((1..=120 / minutes).map(|n| 13 * 60 + n * minutes))
         .collect()
+}
+#[cfg(test)]
+pub(crate) fn slots() -> Vec<u32> {
+    slots_for(5)
 }
 
 pub fn normalize(
     value: &Value,
     daily: &[Bar],
     today: &str,
-) -> Result<(Vec<MarketBar>, Vec<String>), String> {
-    let rows = value["data"]["sz002415"]["m5"]
-        .as_array()
-        .ok_or("海康威视5分钟行情缺失")?;
+    minutes: u32,
+) -> Result<(Vec<MarketBar>, Vec<String>, Vec<String>), String> {
+    if ![5, 15, 30, 60].contains(&minutes) {
+        return Err("不支持的分钟周期".into());
+    }
+    let rows = value.as_array().ok_or("分钟行情缺失")?;
+    let mut blocked = Vec::new();
     let mut groups: BTreeMap<String, Vec<(u32, MarketBar)>> = BTreeMap::new();
     let mut last = String::new();
     for row in rows {
-        let stamp = row[0].as_str().ok_or("分钟K线时间缺失")?;
-        let dt = NaiveDateTime::parse_from_str(stamp, "%Y%m%d%H%M")
+        let stamp = row["day"].as_str().ok_or("分钟K线时间缺失")?;
+        let dt = NaiveDateTime::parse_from_str(stamp, "%Y-%m-%d %H:%M:%S")
             .map_err(|_| "分钟K线时间格式无效")?;
         if stamp <= last.as_str() {
             return Err("分钟K线乱序或重复".into());
@@ -40,14 +47,14 @@ pub fn normalize(
             continue;
         }
         let minute = dt.hour() * 60 + dt.minute();
-        if !slots().contains(&minute) {
-            return Err(format!("{stamp} 不在连续交易5分钟结束时刻内"));
+        if dt.second() != 0 || !slots_for(minutes).contains(&minute) {
+            return Err(format!("{stamp} 不在连续交易结束时刻内"));
         }
-        let vals = (1..=5)
-            .map(|i| number(&row[i]).ok_or("分钟OHLCV无效"))
+        let vals = ["open", "close", "high", "low", "volume"]
+            .iter()
+            .map(|i| number(&row[*i]).ok_or("分钟OHLCV无效"))
             .collect::<Result<Vec<_>, _>>()?;
-        let (open, close, high, low, volume) =
-            (vals[0], vals[1], vals[2], vals[3], vals[4] * 100.0);
+        let (open, close, high, low, volume) = (vals[0], vals[1], vals[2], vals[3], vals[4]);
         if low <= 0.0
             || low > open
             || low > close
@@ -71,10 +78,8 @@ pub fn normalize(
             return Err(format!("{day} 分钟价格与日线范围不一致"));
         }
         let factor = (d.close / d.adjusted_close) / (previous.close / previous.adjusted_close);
-        if (factor - 1.0).abs() > 0.002 {
-            return Err(format!(
-                "{day} 疑似除权除息，当前分钟撮合不支持，请使用公司行为已处理的数据集"
-            ));
+        if (factor - 1.0).abs() > 0.002 && !blocked.contains(&day) {
+            blocked.push(day.clone());
         }
         groups.entry(day.clone()).or_default().push((
             minute,
@@ -93,20 +98,18 @@ pub fn normalize(
     let first = groups.keys().next().cloned();
     let last = groups.keys().last().cloned();
     let mut result = Vec::new();
-    let mut warnings =
-        vec!["免费源仅提供近期分钟窗口；当前交易日不纳入冻结数据集，不代表多年历史覆盖。".into()];
+    let mut warnings = vec![
+        "免费源最多返回1970根分钟K线，覆盖随周期而变；当日与不完整边界日不纳入冻结数据。".into(),
+    ];
     for (day, rows) in groups {
         let actual: Vec<_> = rows.iter().map(|r| r.0).collect();
-        if actual != slots() {
+        if actual != slots_for(minutes) {
             if Some(&day) == first.as_ref() || Some(&day) == last.as_ref() {
-                warnings.push(format!(
-                    "排除边界不完整交易日 {day}（{}/48 根）",
-                    rows.len()
-                ));
+                warnings.push(format!("排除边界不完整交易日 {day}（{} 根）", rows.len()));
                 continue;
             }
             return Err(format!(
-                "{day} 盘中K线缺口（{}/48 根），不允许填充后回测",
+                "{day} 盘中K线缺口（{} 根），不允许填充后回测",
                 rows.len()
             ));
         }
@@ -116,8 +119,8 @@ pub fn normalize(
         }
         result.extend(rows.into_iter().map(|r| r.1));
     }
-    if result.len() < 96 {
-        return Err("至少需要两个完整交易日的5分钟行情".into());
+    if result.len() < 32 {
+        return Err("至少需要32根完整交易日行情，以预留30根指标预热".into());
     }
     let start = &result[0].session;
     let end = &result.last().unwrap().session;
@@ -126,49 +129,78 @@ pub fn normalize(
             return Err(format!("{} 整日分钟行情缺失，不能视为休市", day.date));
         }
     }
-    Ok((result, warnings))
+    blocked.retain(|day| result.iter().any(|b| &b.session == day));
+    Ok((result, warnings, blocked))
 }
 
-pub fn sync(root: &Path, code: &str, timeframe: &str) -> Result<Dataset, String> {
-    let security = security(code)?;
-    if timeframe != "5m" {
-        return Err("当前免费分钟适配器已校验5m周期，其他周期尚未接入".into());
-    }
+pub fn sync(
+    root: &Path,
+    input: &str,
+    timeframe: &str,
+    settlement: Option<u8>,
+) -> Result<Dataset, String> {
+    let code = crate::securities::code(input)?;
+    let minutes = crate::securities::minutes(timeframe)?;
+    let symbol = format!("{}{}", code[7..].to_lowercase(), &code[..6]);
     let client = Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(25))
         .connect_timeout(Duration::from_secs(8))
-        .user_agent("Mozilla/5.0 KaloInvestment/0.2")
+        .user_agent("Mozilla/5.0 KaloInvestment/0.3")
         .build()
         .map_err(|e| e.to_string())?;
     let today = Utc::now()
         .with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap())
         .format("%Y-%m-%d")
         .to_string();
-    eprintln!("同步海康威视5分钟原始行情");
+    eprintln!("核实 {code} 证券身份与交易规则");
+    let (quote, qid) = get_evidence(
+        &client,
+        root,
+        &format!("https://qt.gtimg.cn/q={symbol}"),
+        &[],
+        "https://gu.qq.com/",
+    )?;
+    let security = crate::securities::from_quote(
+        &code,
+        quote.as_str().ok_or("证券报价格式无效")?,
+        settlement,
+    )?;
+    eprintln!("同步 {} {timeframe} 历史", security.name);
     let (minute, mid) = get_evidence(
         &client,
         root,
-        "https://ifzq.gtimg.cn/appstock/app/kline/mkline",
-        &[("param", "sz002415,m5,,320".into())],
-        "https://gu.qq.com/",
+        "https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_data=/CN_MarketDataService.getKLineData",
+        &[
+            ("symbol", symbol.clone()),
+            ("scale", minutes.to_string()),
+            ("ma", "no".into()),
+            ("datalen", "1970".into()),
+        ],
+        "https://finance.sina.com.cn/",
     )?;
-    eprintln!("核对交易日、前收盘和公司行为");
+    eprintln!("核对交易日、日线与公司行为");
+    let url = "https://ifzq.gtimg.cn/appstock/app/fqkline/get";
     let (raw, rid) = get_evidence(
         &client,
         root,
-        "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-        &[("param", "sz002415,day,,,320,".into())],
+        url,
+        &[("param", format!("{symbol},day,,,2000,"))],
         "https://gu.qq.com/",
     )?;
     let (adj, aid) = get_evidence(
         &client,
         root,
-        "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-        &[("param", "sz002415,day,,,320,qfq".into())],
+        url,
+        &[("param", format!("{symbol},day,,,2000,qfq"))],
         "https://gu.qq.com/",
     )?;
-    let mut daily = parse_bars(&raw, "sz002415", false, &today)?;
-    let adjusted = parse_bars(&adj, "sz002415", true, &today)?;
+    let mut daily = parse_bars(&raw, &symbol, false, &today)
+        .map_err(|e| format!("{code} 日线校验失败：{e}。免费源未覆盖时不能生成替代历史。"))?;
+    let adjusted = parse_bars(&adj, &symbol, true, &today)?;
+    // Tencent caps adjusted history independently from raw history. Keep the
+    // shared calendar; normalize still rejects any minute outside that evidence.
+    let first_adjusted = &adjusted.first().ok_or("复权日历为空")?.date;
+    daily.retain(|b| &b.date >= first_adjusted);
     for bar in &mut daily {
         bar.adjusted_close = adjusted
             .iter()
@@ -176,7 +208,22 @@ pub fn sync(root: &Path, code: &str, timeframe: &str) -> Result<Dataset, String>
             .ok_or("复权日历缺口")?
             .close;
     }
-    let (bars, warnings) = normalize(&minute, &daily, &today)?;
+    let (bars, mut warnings, blocked_sessions) = normalize(&minute, &daily, &today, minutes)?;
+    warnings.push(
+        "涨跌幅按同步时已核实规则模拟，未还原历史ST变更及上市初期特殊规则；不支持跨除权除息账务。"
+            .into(),
+    );
+    if security.asset_type == "etf" {
+        warnings.push(format!(
+            "ETF 库存采用 T+{}，{}；ETF 不计股票印花税与过户费。",
+            security.settlement_days,
+            if settlement.is_some() {
+                "由同步时选择的交易规则指定，请核对基金交易机制"
+            } else {
+                "默认采用保守T+1；确认支持日内回转的ETF可选择T+0后重新同步"
+            }
+        ));
+    }
     let sessions = bars
         .iter()
         .map(|b| b.session.clone())
@@ -186,10 +233,11 @@ pub fn sync(root: &Path, code: &str, timeframe: &str) -> Result<Dataset, String>
     let source_hash = format!(
         "{:x}",
         Sha256::digest(
-            serde_json::to_vec(&serde_json::json!([minute, raw, adj])).map_err(|e| e.to_string())?
+            serde_json::to_vec(&serde_json::json!([quote, minute, raw, adj]))
+                .map_err(|e| e.to_string())?
         )
     );
-    Ok(Dataset {
+    let mut data = Dataset {
         kind: "marketDataset".into(),
         schema_version: 1,
         id: uuid::Uuid::new_v4().to_string(),
@@ -198,13 +246,16 @@ pub fn sync(root: &Path, code: &str, timeframe: &str) -> Result<Dataset, String>
         timeframe: timeframe.into(),
         timezone: "Asia/Shanghai".into(),
         price_basis: "raw".into(),
-        source: "腾讯5分钟 / 腾讯原始与前复权日线交叉校验".into(),
+        source: "新浪分钟 / 腾讯证券报价与原始、前复权日线".into(),
         source_hash,
-        raw_ids: vec![mid, rid, aid],
+        raw_ids: vec![qid, mid, rid, aid],
         bars,
         sessions,
         warnings,
-    })
+        blocked_sessions,
+    };
+    crate::market_archive::extend(root, &mut data, &daily)?;
+    Ok(data)
 }
 
 #[cfg(test)]
@@ -225,23 +276,16 @@ mod tests {
             });
             if d != "2026-10-26" {
                 for m in slots() {
-                    rows.push(serde_json::json!([
-                        format!("{}{:02}{:02}", d.replace('-', ""), m / 60, m % 60),
-                        "10",
-                        "10",
-                        "11",
-                        "9",
-                        "100"
-                    ]));
+                    rows.push(serde_json::json!({"day":format!("{d} {:02}:{:02}:00", m / 60, m % 60),"open":"10","close":"10","high":"11","low":"9","volume":"10000"}));
                 }
             }
         }
-        (serde_json::json!({"data":{"sz002415":{"m5":rows}}}), daily)
+        (serde_json::json!(rows), daily)
     }
     #[test]
     fn sessions_exclude_today_and_lunch_is_not_a_gap() {
         let (v, d) = fixture();
-        let (bars, _) = normalize(&v, &d, "2026-10-29").unwrap();
+        let (bars, _, _) = normalize(&v, &d, "2026-10-29", 5).unwrap();
         assert_eq!(bars.len(), 96);
         assert_eq!(bars[0].volume, 10000.0);
         assert!(bars[24].end.contains("13:05"));
@@ -250,16 +294,13 @@ mod tests {
     fn duplicate_gap_and_corporate_action_fail() {
         let (v, d) = fixture();
         let mut dup = v.clone();
-        dup["data"]["sz002415"]["m5"][1] = dup["data"]["sz002415"]["m5"][0].clone();
-        assert!(normalize(&dup, &d, "2026-10-30").is_err());
+        dup[1] = dup[0].clone();
+        assert!(normalize(&dup, &d, "2026-10-30", 5).is_err());
         let mut gap = v.clone();
-        gap["data"]["sz002415"]["m5"]
-            .as_array_mut()
-            .unwrap()
-            .remove(60);
-        assert!(normalize(&gap, &d, "2026-10-30").is_err());
+        gap.as_array_mut().unwrap().remove(60);
+        assert!(normalize(&gap, &d, "2026-10-30", 5).is_err());
         let mut action = d.clone();
         action[2].adjusted_close = 11.0;
-        assert!(normalize(&v, &action, "2026-10-30").is_err());
+        assert_eq!(normalize(&v, &action, "2026-10-30", 5).unwrap().2.len(), 2);
     }
 }

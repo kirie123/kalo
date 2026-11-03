@@ -3,7 +3,7 @@ use rhai::{Dynamic, Engine, Scope, AST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-pub const EXAMPLE: &str = r#"// 海康威视 / KDJ(9,3,3) / 卖出旧仓后回补
+pub const EXAMPLE: &str = r#"// 选定证券 / KDJ(9,3,3) / 卖出旧仓后回补
 // 修改阈值、条件和状态即可定义新策略；订单在下一根K线开盘撮合。
 fn on_bar(ctx) {
     let order = #{ side: "hold", quantity: 0, state: ctx.state };
@@ -28,16 +28,27 @@ fn on_bar(ctx) {
     order
 }"#;
 
+pub fn warmup_start(data: &Dataset) -> usize {
+    match data.blocked_sessions.last() {
+        None => 30,
+        Some(day) => data
+            .bars
+            .iter()
+            .position(|b| &b.session > day)
+            .map_or(data.bars.len(), |i| i + 30),
+    }
+}
+
 pub fn defaults(dataset: &Dataset) -> Option<ScriptSpec> {
     Some(ScriptSpec {
         dataset_id: dataset.id.clone(),
-        title: "海康威视 KDJ 底仓做T".into(),
+        title: format!("{} KDJ 底仓做T", dataset.security.name),
         source: EXAMPLE.into(),
-        start: dataset.bars.get(30)?.end.clone(),
+        start: dataset.bars.get(warmup_start(dataset))?.end.clone(),
         end: dataset.bars.last()?.end.clone(),
         cash: 100_000.0,
         base_position: 1000,
-        trade_size: 100,
+        trade_size: crate::securities::minimum(&dataset.security),
         commission_bps: 2.5,
         minimum_fee: 5.0,
         slippage_bps: 5.0,
@@ -46,8 +57,8 @@ pub fn defaults(dataset: &Dataset) -> Option<ScriptSpec> {
 pub fn contract() -> Value {
     json!({"language":"rhai","entry":"fn on_bar(ctx)","maxSourceBytes":16384,"maxOperationsPerBar":100000,
         "inputs":["code","date","time","history (至当前收盘，最多120根，OHLCV)","kdj / previousKdj (9,3,3; K,D初值50; ready)","cash","position","sellable","basePosition","tradeSize","state"],
-        "output":{"side":"hold | buy | sell","quantity":"非负整数股，买卖100股整手","state":"传递到下一根K线的JSON对象，可省略以保留"},
-        "execution":"次根开盘，跨日订单失效；T+1可卖库存，初始底仓计入资产；不开放文件、网络、时间与模块加载。",
+        "output":{"side":"hold | buy | sell","quantity":"非负整数股，数量须遵守security.lotSize及科创板最少200股、其他证券最少100股","state":"传递到下一根K线的JSON对象，可省略以保留"},
+        "execution":"次根开盘，跨日订单失效；按冻结security.settlementDays控制T+0/T+1库存，初始底仓计入资产；不开放文件、网络、时间与模块加载。",
         "range":"必须使用dataset.defaultSpec.start或更晚的时刻，开始之前至少留30根预热K线；不能直接用firstBar作为start。",
         "example":EXAMPLE})
 }
@@ -61,12 +72,20 @@ pub struct Kdj {
 }
 pub fn kdj(dataset: &Dataset) -> Vec<Kdj> {
     let (mut k, mut d) = (50.0, 50.0);
+    let mut segment = 0;
     dataset
         .bars
         .iter()
         .enumerate()
         .map(|(i, b)| {
-            if i < 8 {
+            if dataset.blocked_sessions.contains(&b.session)
+                && (i == 0 || dataset.bars[i - 1].session != b.session)
+            {
+                segment = i;
+                k = 50.0;
+                d = 50.0;
+            }
+            if i - segment < 8 {
                 return Kdj {
                     k,
                     d,

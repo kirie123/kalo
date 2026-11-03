@@ -13,6 +13,7 @@ pub struct Security {
     pub settlement_days: u8,
     pub price_limit: f64,
 }
+#[cfg(test)]
 pub fn security(code: &str) -> Result<Security, String> {
     if code != "002415.SZ" {
         return Err(
@@ -47,6 +48,8 @@ pub struct MarketBar {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Dataset {
+    #[serde(default)]
+    pub blocked_sessions: Vec<String>,
     pub kind: String,
     pub schema_version: u32,
     pub id: String,
@@ -110,6 +113,8 @@ pub struct ScriptEquity {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptReport {
+    #[serde(default = "default_timeframe")]
+    pub timeframe: String,
     pub kind: String,
     pub id: String,
     pub created_at: String,
@@ -126,4 +131,8 @@ pub struct ScriptReport {
     pub max_drawdown: f64,
     pub costs: f64,
     pub warnings: Vec<String>,
+}
+
+fn default_timeframe() -> String {
+    "5m".into()
 }

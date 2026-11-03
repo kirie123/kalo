@@ -32,6 +32,8 @@ pub fn fetch(
         "上交所数据"
     } else if url.contains("szse.cn") {
         "深交所数据"
+    } else if url.contains("sina.cn") {
+        "新浪分钟行情"
     } else {
         "东方财富净值"
     };
@@ -98,10 +100,32 @@ pub fn fetch(
         } else {
             &bytes
         };
+        if url.starts_with("https://qt.gtimg.cn/") {
+            return Ok(Value::String(
+                String::from_utf8(body.to_vec()).map_err(|_| "证券报价编码无效")?,
+            ));
+        }
+        if url.starts_with("https://quotes.sina.cn/") {
+            return parse_sina(body);
+        }
         return serde_json::from_slice(body)
             .map_err(|_| format!("{provider}返回格式异常，请稍后重试；没有生成替代数据。"));
     }
     unreachable!("each final attempt returns")
+}
+
+fn parse_sina(body: &[u8]) -> Result<Value, String> {
+    let text = std::str::from_utf8(body).map_err(|_| "新浪分钟编码无效")?;
+    // Parse the known JSONP envelope as text. Never execute remote JavaScript.
+    let json = text
+        .split_once("var _data=(")
+        .and_then(|(_, s)| s.trim().strip_suffix(");"))
+        .ok_or("新浪分钟返回格式异常")?;
+    let value: Value = serde_json::from_str(json).map_err(|_| "新浪分钟 JSON 无效")?;
+    if !value.is_array() {
+        return Err("免费源没有返回该证券的分钟历史，请换周期或稍后重试".into());
+    }
+    Ok(value)
 }
 
 #[cfg(test)]

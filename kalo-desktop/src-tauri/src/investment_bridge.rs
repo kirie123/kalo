@@ -163,9 +163,19 @@ fn dispatch(
                 .map(kalo_investment::analysis::compact_result)
                 .collect::<Result<Vec<_>, _>>()?;
             let compact = |key: &str| -> Result<Vec<Value>, String> {
-                catalog[key].as_array().ok_or("代码研究目录格式错误")?.iter().map(kalo_investment::analysis::compact_result).collect()
+                catalog[key].as_array().ok_or("代码研究目录格式错误")?.iter().map(|value| {
+                    let mut result = kalo_investment::analysis::compact_result(value)?;
+                    if result["kind"] == "scriptReport" {
+                        if let Some(obj) = result.as_object_mut() {
+                            obj.remove("orders"); obj.remove("rejectedOrders");
+                            obj.insert("ordersIncluded".into(), json!(false));
+                            obj.insert("detailLocation".into(), json!("完整逐笔明细在原生报告，目录仅用于选择实验；不得从摘要推断逐笔归因。"));
+                        }
+                    }
+                    Ok(result)
+                }).collect()
             };
-            Ok(json!({"snapshots":snapshots,"reports":reports,"datasets":compact("datasets")?,"scriptReports":compact("scriptReports")?,"marginSnapshots":compact("marginSnapshots")?,"strategyRuntime":kalo_investment::strategy_runtime::contract(),"supportedMarketData":[{"code":"002415.SZ","name":"海康威视","timeframe":"5m"}]}))
+            Ok(json!({"snapshots":snapshots,"reports":reports,"datasets":compact("datasets")?,"scriptReports":compact("scriptReports")?,"marginSnapshots":compact("marginSnapshots")?,"strategyRuntime":kalo_investment::strategy_runtime::contract(),"supportedMarketData":{"markets":["SH","SZ","BJ"],"assets":["stock","etf"],"timeframes":["5m","15m","30m","60m"],"codeFormat":"六位代码或代码.SH/SZ/BJ，报价核实身份。覆盖依赖免费源，缺口拒绝。","settlementDays":"股票固定1，ETF默认保守1，确认日内回转机制后可显式指定0"}}))
         }
         Operation::Flows { snapshot_id, days } => {
             let snapshot =

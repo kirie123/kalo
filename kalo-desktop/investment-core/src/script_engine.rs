@@ -12,11 +12,19 @@ fn cents(v: f64) -> i64 {
 fn yuan(v: i64) -> f64 {
     v as f64 / 100.0
 }
-fn fees(amount: i64, buy: bool, spec: &ScriptSpec) -> (i64, i64, i64) {
+fn fees(amount: i64, buy: bool, spec: &ScriptSpec, security: &Security) -> (i64, i64, i64) {
     // Current A-share tariff, restricted to datasets after its effective date.
     let commission = cents((yuan(amount) * spec.commission_bps / 10000.0).max(spec.minimum_fee));
-    let stamp = if buy { 0 } else { cents(yuan(amount) * 0.0005) };
-    let transfer = cents(yuan(amount) * 0.00001);
+    let stamp = if buy || security.asset_type == "etf" {
+        0
+    } else {
+        cents(yuan(amount) * 0.0005)
+    };
+    let transfer = if security.asset_type == "etf" {
+        0
+    } else {
+        cents(yuan(amount) * 0.00001)
+    };
     (commission, stamp, transfer)
 }
 struct Account {
@@ -31,6 +39,7 @@ fn execute(
     account: &mut Account,
     spec: &ScriptSpec,
     security: &Security,
+    minutes: u32,
 ) -> ScriptOrder {
     let mut row = ScriptOrder {
         signal_at: signal.end.clone(),
@@ -59,8 +68,10 @@ fn execute(
         row.reason = "下一根无实际成交，不能用陈旧价格撮合".into();
         return row;
     }
-    if intent.quantity == 0 || intent.quantity % security.lot_size != 0 {
-        row.reason = "订单须为正数100股整手".into();
+    if intent.quantity < crate::securities::minimum(security)
+        || intent.quantity % security.lot_size != 0
+    {
+        row.reason = "订单数量未满足该证券最低申报数量或数量步长".into();
         return row;
     }
     let buy = intent.side == "buy";
@@ -95,7 +106,7 @@ fn execute(
         while lo < hi {
             let mid = (lo + hi + 1) / 2;
             let amount = cents(price * mid as f64 * security.lot_size as f64);
-            let (c, s, t) = fees(amount, true, spec);
+            let (c, s, t) = fees(amount, true, spec, security);
             if amount + c + s + t <= account.cash {
                 lo = mid;
             } else {
@@ -104,22 +115,25 @@ fn execute(
         }
         quantity = lo * security.lot_size;
     }
-    if quantity == 0 {
+    if quantity < crate::securities::minimum(security) {
         row.reason = if capacity == 0 {
             "前根成交量容量不足"
         } else if buy {
             "可用现金不足"
         } else {
-            "T+1可卖底仓不足"
+            "可卖底仓不足或未满足最低申报数量（T+1新仓次日解锁）"
         }
         .into();
         return row;
     }
     let amount = cents(price * quantity as f64);
-    let (c, s, t) = fees(amount, buy, spec);
+    let (c, s, t) = fees(amount, buy, spec, security);
     if buy {
         account.cash -= amount + c + s + t;
         account.position += quantity;
+        if security.settlement_days == 0 {
+            account.sellable += quantity;
+        }
     } else {
         account.cash += amount - c - s - t;
         account.position -= quantity;
@@ -128,7 +142,7 @@ fn execute(
     row.quantity = quantity;
     row.executed_at = chrono::DateTime::parse_from_rfc3339(&bar.end)
         .ok()
-        .map(|time| (time - chrono::Duration::minutes(5)).to_rfc3339());
+        .map(|time| (time - chrono::Duration::minutes(i64::from(minutes))).to_rfc3339());
     row.price = price;
     row.commission = yuan(c);
     row.stamp_tax = yuan(s);
@@ -146,36 +160,31 @@ fn execute(
 }
 
 pub fn validate(data: &Dataset, spec: &ScriptSpec) -> Result<(), String> {
-    let canonical = security(&data.security.code)?;
-    if data.kind != "marketDataset" || data.security != canonical || data.bars.len() > 10000 {
-        return Err("证券主数据、数据类型或规模不受支持".into());
-    }
-    if data.schema_version != 1
-        || data.timeframe != "5m"
+    crate::securities::verify(&data.security)?;
+    let minutes = crate::securities::minutes(&data.timeframe)?;
+    if data.kind != "marketDataset"
+        || data.bars.len() > 10000
+        || data.schema_version != 1
         || data.price_basis != "raw"
         || data.timezone != "Asia/Shanghai"
-        || data.security.tick_size != canonical.tick_size
-        || data.security.lot_size != 100
-        || data.security.settlement_days != 1
-        || data.security.price_limit != canonical.price_limit
     {
-        return Err("不支持的数据版本、价格口径或证券交易规则".into());
+        return Err("不支持的数据类型、规模、版本或价格口径".into());
     }
     if data.id != spec.dataset_id
         || spec.start > spec.end
-        || data.bars.len() < 96
+        || data.bars.len() < 32
         || spec.title.trim().is_empty()
         || spec.title.len() > 200
     {
         return Err("数据集、标题或回测范围无效".into());
     }
     if spec.base_position > 10_000_000
-        || spec.base_position % 100 != 0
-        || spec.trade_size == 0
+        || spec.base_position % data.security.lot_size != 0
+        || spec.trade_size < crate::securities::minimum(&data.security)
         || spec.trade_size > 10_000_000
-        || spec.trade_size % 100 != 0
+        || spec.trade_size % data.security.lot_size != 0
     {
-        return Err("底仓和每笔数量须为100股整手且不超过1000万股".into());
+        return Err("底仓或每笔数量不符合冻结证券的数量规则（上限1000万股）".into());
     }
     for (v, min, max) in [
         (spec.cash, 0.0, 100_000_000.0),
@@ -199,6 +208,13 @@ pub fn validate(data: &Dataset, spec: &ScriptSpec) -> Result<(), String> {
         .ok_or("结束时间不在数据集中")?;
     if start < 30 || end <= start {
         return Err(format!("开始时刻之前须有30根预热K线，最早可选 {}；结束时刻须晚于开始时刻。请使用目录返回的 defaultSpec 区间。", data.bars[30].end));
+    }
+    if data
+        .blocked_sessions
+        .iter()
+        .any(|d| d >= &data.bars[start.saturating_sub(30)].session && d <= &data.bars[end].session)
+    {
+        return Err("所选区间或指标预热跨越除权除息，尚未支持分红送转账务。请选择同一公司行为区间并预留30根预热。".into());
     }
     let mut sessions: std::collections::BTreeMap<String, Vec<u32>> =
         std::collections::BTreeMap::new();
@@ -246,10 +262,10 @@ pub fn validate(data: &Dataset, spec: &ScriptSpec) -> Result<(), String> {
     }
     if sessions
         .values()
-        .any(|times| *times != crate::market_data::slots())
+        .any(|times| *times != crate::market_data::slots_for(minutes))
         || sessions.keys().cloned().collect::<Vec<_>>() != data.sessions
     {
-        return Err("冻结数据集交易日或5分钟时段存在缺口".into());
+        return Err("冻结数据集交易日或分钟时段存在缺口".into());
     }
     Ok(())
 }
@@ -260,6 +276,16 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
     let indicators = strategy_runtime::kdj(data);
     let start = data.bars.iter().position(|b| b.end == spec.start).unwrap();
     let end = data.bars.iter().position(|b| b.end == spec.end).unwrap();
+    let history_start = data.bars[..=start]
+        .iter()
+        .enumerate()
+        .filter(|(i, b)| {
+            data.blocked_sessions.contains(&b.session)
+                && (*i == 0 || data.bars[*i - 1].session != b.session)
+        })
+        .map(|(i, _)| i)
+        .last()
+        .unwrap_or(0);
     let initial_equity = spec.cash + spec.base_position as f64 * data.bars[start].open;
     if initial_equity <= 0.0 {
         return Err("初始现金和底仓资产不能同时为零".into());
@@ -288,10 +314,11 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
                 &mut account,
                 spec,
                 &data.security,
+                crate::securities::minutes(&data.timeframe)?,
             ));
         }
         let kdj = indicators[i];
-        let intent=runtime.call(json!({"code":data.security.code,"date":bar.session,"time":&bar.end[11..16],"history":&data.bars[i.saturating_sub(119)..=i],"kdj":kdj,"previousKdj":indicators[i-1],"cash":yuan(account.cash),"position":account.position,"sellable":account.sellable,"basePosition":spec.base_position,"tradeSize":spec.trade_size,"state":state})).map_err(|e|format!("{} {e}",bar.end))?;
+        let intent=runtime.call(json!({"code":data.security.code,"date":bar.session,"time":&bar.end[11..16],"history":&data.bars[i.saturating_sub(119).max(history_start)..=i],"kdj":kdj,"previousKdj":indicators[i-1],"cash":yuan(account.cash),"position":account.position,"sellable":account.sellable,"basePosition":spec.base_position,"tradeSize":spec.trade_size,"state":state})).map_err(|e|format!("{} {e}",bar.end))?;
         if let Some(next) = &intent.state {
             state = next.clone();
         }
@@ -321,6 +348,7 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
             &mut account,
             spec,
             &data.security,
+            crate::securities::minutes(&data.timeframe)?,
         ));
     }
     let last = equity.last().unwrap();
@@ -333,7 +361,14 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
         .sum();
     let mut warnings = data.warnings.clone();
     warnings.push("价格信号在收盘形成、下一根开盘撮合；跨日订单失效。成交量容量只使用前根已知成交量；涨跌停保守拒单，不模拟盘口队列。".into());
-    warnings.push("佣金含经手/监管费用假设；卖出印花税0.05%，双边过户费0.001%，滑点另计入成交价格。初始底仓计入资产，基准为同等现金与底仓持有组合。".into());
+    warnings.push(
+        if data.security.asset_type == "etf" {
+            "ETF不计股票印花税与过户费；佣金含交易费用假设，滑点计入成交价。"
+        } else {
+            "佣金含经手/监管费用假设；卖出印花税0.05%，双边过户费0.001%，滑点计入成交价。"
+        }
+        .into(),
+    );
     if account.position != spec.base_position {
         warnings.push(format!(
             "期末持仓{}股，初始底仓{}股；未强制回补，存在仓位偏离。",
@@ -342,6 +377,7 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
     }
     Ok(ScriptReport {
         kind: "scriptReport".into(),
+        timeframe: data.timeframe.clone(),
         id: uuid::Uuid::new_v4().to_string(),
         created_at: Utc::now().to_rfc3339(),
         dataset_hash: format!(
@@ -351,10 +387,11 @@ pub fn run(data: &Dataset, spec: &ScriptSpec) -> Result<ScriptReport, String> {
         engine_hash: format!(
             "{:x}",
             Sha256::digest(format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}{}{}",
                 include_str!("script_engine.rs"),
                 include_str!("strategy_runtime.rs"),
                 include_str!("market_model.rs"),
+                include_str!("securities.rs"),
                 include_str!("../Cargo.toml"),
                 include_str!("../Cargo.lock")
             ))
@@ -415,6 +452,7 @@ mod tests {
         }
         Dataset {
             kind: "marketDataset".into(),
+            blocked_sessions: vec![],
             schema_version: 1,
             id: "frozen".into(),
             created_at: String::new(),
@@ -498,16 +536,19 @@ mod tests {
             quantity: 200,
             state: None,
         };
-        let bought = execute(&buy, &b, Some(&b), &mut a, &s, &sec);
+        let bought = execute(&buy, &b, Some(&b), &mut a, &s, &sec, 5);
         assert_eq!(a.sellable, 100);
         assert_eq!(a.position, 200);
         assert_eq!(bought.stamp_tax, 0.0);
-        let sold = execute(&sell, &b, Some(&b), &mut a, &s, &sec);
+        let sold = execute(&sell, &b, Some(&b), &mut a, &s, &sec, 5);
         assert_eq!(sold.quantity, 100);
         assert_eq!(a.position, 100);
         assert_eq!(sold.stamp_tax, 0.5);
         assert_eq!(sold.transfer_fee, 0.01);
-        assert_eq!(execute(&sell, &b, Some(&b), &mut a, &s, &sec).quantity, 0);
+        assert_eq!(
+            execute(&sell, &b, Some(&b), &mut a, &s, &sec, 5).quantity,
+            0
+        );
     }
     #[test]
     fn cross_day_limit_and_capacity_block_orders() {
@@ -527,23 +568,120 @@ mod tests {
         let mut next = b.clone();
         next.session = "2026-11-03".into();
         assert_eq!(
-            execute(&intent, &b, Some(&next), &mut a, &s, &sec).quantity,
+            execute(&intent, &b, Some(&next), &mut a, &s, &sec, 5).quantity,
             0
         );
         next = b.clone();
         next.open = 11.0;
         assert_eq!(
-            execute(&intent, &b, Some(&next), &mut a, &s, &sec).quantity,
+            execute(&intent, &b, Some(&next), &mut a, &s, &sec, 5).quantity,
             0
         );
         let mut no_capacity = b.clone();
         no_capacity.volume = 0.0;
         assert_eq!(
-            execute(&intent, &no_capacity, Some(&b), &mut a, &s, &sec).quantity,
+            execute(&intent, &no_capacity, Some(&b), &mut a, &s, &sec, 5).quantity,
             0
         );
-        let blocked = execute(&intent, &b, Some(&no_capacity), &mut a, &s, &sec);
+        let blocked = execute(&intent, &b, Some(&no_capacity), &mut a, &s, &sec, 5);
         assert_eq!(blocked.quantity, 0);
         assert!(blocked.executed_at.is_none());
+    }
+
+    #[test]
+    fn etf_uses_mill_ticks_no_stock_tax_and_explicit_same_day_inventory() {
+        let mut sec = security("002415.SZ").unwrap();
+        sec.code = "510300.SH".into();
+        sec.exchange = "SSE".into();
+        sec.asset_type = "etf".into();
+        sec.tick_size = 0.001;
+        sec.settlement_days = 0;
+        let mut b = bar();
+        b.open = 4.123;
+        b.close = 4.123;
+        b.low = 4.0;
+        b.high = 4.2;
+        b.previous_close = 4.1;
+        let mut a = Account {
+            cash: 1000000,
+            position: 0,
+            sellable: 0,
+        };
+        let buy = Intent {
+            side: "buy".into(),
+            quantity: 100,
+            state: None,
+        };
+        let sell = Intent {
+            side: "sell".into(),
+            quantity: 100,
+            state: None,
+        };
+        let bought = execute(&buy, &b, Some(&b), &mut a, &spec(), &sec, 60);
+        assert!((bought.price - 4.123).abs() < 1e-8);
+        assert_eq!(a.sellable, 100);
+        assert_eq!(
+            bought.executed_at.as_deref(),
+            Some("2026-11-02T09:00:00+08:00")
+        );
+        let sold = execute(&sell, &b, Some(&b), &mut a, &spec(), &sec, 60);
+        assert_eq!(sold.quantity, 100);
+        assert_eq!(sold.stamp_tax, 0.0);
+        assert_eq!(sold.transfer_fee, 0.0);
+        assert_eq!(a.cash, 999000);
+        sec.settlement_days = 1;
+        execute(&buy, &b, Some(&b), &mut a, &spec(), &sec, 5);
+        assert_eq!(
+            execute(&sell, &b, Some(&b), &mut a, &spec(), &sec, 5).quantity,
+            0
+        );
+    }
+
+    #[test]
+    fn star_minimum_and_single_share_increment_are_both_enforced() {
+        let mut sec = security("002415.SZ").unwrap();
+        sec.code = "688981.SH".into();
+        sec.exchange = "SSE".into();
+        sec.lot_size = 1;
+        sec.price_limit = 0.2;
+        let mut a = Account {
+            cash: 1000000,
+            position: 1000,
+            sellable: 1000,
+        };
+        let b = bar();
+        let mut intent = Intent {
+            side: "buy".into(),
+            quantity: 199,
+            state: None,
+        };
+        assert_eq!(
+            execute(&intent, &b, Some(&b), &mut a, &spec(), &sec, 5).quantity,
+            0
+        );
+        intent.quantity = 201;
+        assert_eq!(
+            execute(&intent, &b, Some(&b), &mut a, &spec(), &sec, 5).quantity,
+            201
+        );
+    }
+
+    #[test]
+    fn long_history_actions_block_only_affected_range_and_warmup() {
+        let mut data = dataset();
+        data.blocked_sessions = vec!["2026-11-02".into()];
+        let safe = strategy_runtime::defaults(&data).unwrap();
+        assert_eq!(safe.start, data.bars[78].end);
+        assert!(validate(&data, &safe).is_ok());
+        let mut crossing = safe.clone();
+        crossing.start = data.bars[30].end.clone();
+        assert!(validate(&data, &crossing).unwrap_err().contains("除权"));
+        let indicators = strategy_runtime::kdj(&data);
+        assert!(!indicators[0].ready);
+        data.blocked_sessions = vec!["2026-11-03".into()];
+        let indicators = strategy_runtime::kdj(&data);
+        assert!(!indicators[48].ready);
+        assert_eq!(indicators[48].k, 50.0);
+        assert!(strategy_runtime::defaults(&data).is_none());
     }
 }

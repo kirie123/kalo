@@ -91,7 +91,7 @@ pub fn compact_result(value: &Value) -> Result<Value, String> {
         let data: crate::market_model::Dataset =
             serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
         return Ok(
-            json!({"kind":data.kind,"id":data.id,"createdAt":data.created_at,"security":data.security,"timeframe":data.timeframe,"source":data.source,"sourceHash":data.source_hash,"bars":data.bars.len(),"sessions":data.sessions,"firstBar":data.bars.first(),"lastBar":data.bars.last(),"warnings":data.warnings,"defaultSpec":crate::strategy_runtime::defaults(&data),"runtime":crate::strategy_runtime::contract()}),
+            json!({"kind":data.kind,"id":data.id,"createdAt":data.created_at,"security":data.security,"timeframe":data.timeframe,"source":data.source,"sourceHash":data.source_hash,"bars":data.bars.len(),"sessions":data.sessions,"firstBar":data.bars.first(),"lastBar":data.bars.last(),"warnings":data.warnings,"blockedSessions":data.blocked_sessions,"defaultSpec":crate::strategy_runtime::defaults(&data),"runtime":crate::strategy_runtime::contract()}),
         );
     }
     if value["kind"] == "scriptReport" {
@@ -102,9 +102,9 @@ pub fn compact_result(value: &Value) -> Result<Value, String> {
         let rows = orders.as_array().cloned().unwrap_or_default();
         obj.insert(
             "orders".into(),
-            json!(rows.iter().take(200).collect::<Vec<_>>()),
+            json!(rows.iter().take(20).collect::<Vec<_>>()),
         );
-        obj.insert("ordersTruncated".into(), json!(rows.len() > 200));
+        obj.insert("ordersTruncated".into(), json!(rows.len() > 20));
         obj.insert("orderCount".into(), json!(rows.len()));
         obj.insert(
             "costBreakdown".into(),
@@ -114,7 +114,7 @@ pub fn compact_result(value: &Value) -> Result<Value, String> {
                 "transferFee": rows.iter().filter_map(|o| o["transferFee"].as_f64()).sum::<f64>()
             }),
         );
-        obj.insert("inventoryRule".into(), json!("T+1只锁定当日新买股份，剩余旧仓仍可卖。例如底仓1000股、卖100再买100后，position=1000、sellable=900，仍可卖旧仓900股；并非每天最多做T一次。是否继续下单由代码条件决定。state里的计数为策略意图，不等于实际成交。归因须核对逐笔订单，不从8笔成交推断每笔均亏或每日仅一次。"));
+        obj.insert("inventoryRule".into(), json!("按security.settlementDays执行：0表示当日买入可卖；1表示T+1。T+1只锁定当日新买股份，剩余旧仓仍可卖。例如底仓1000股、卖100再买100后，position=1000、sellable=900，仍可卖旧仓900股；并非每天最多做T一次。是否继续下单由代码条件决定。state里的计数为策略意图，不等于实际成交。归因须核对逐笔订单，不从8笔成交推断每笔均亏或每日仅一次。"));
         obj.insert(
             "filledOrderCount".into(),
             json!(orders.as_array().map_or(0, |a| a

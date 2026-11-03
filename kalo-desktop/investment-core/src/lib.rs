@@ -1,10 +1,12 @@
 pub mod analysis;
 pub mod engine;
 pub mod margin;
+mod market_archive;
 pub mod market_data;
 pub mod market_model;
 pub mod model;
 pub mod script_engine;
+pub mod securities;
 pub mod sources;
 pub mod storage;
 pub mod strategy_runtime;
@@ -19,9 +21,18 @@ use std::path::Path;
 #[serde(tag = "operation", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Request {
     Sync {},
-    Backtest { spec: Spec },
-    MarketSync { code: String, timeframe: String },
-    ScriptBacktest { spec: market_model::ScriptSpec },
+    Backtest {
+        spec: Spec,
+    },
+    MarketSync {
+        code: String,
+        timeframe: String,
+        #[serde(default, rename = "settlementDays")]
+        settlement_days: Option<u8>,
+    },
+    ScriptBacktest {
+        spec: market_model::ScriptSpec,
+    },
     MarginSync {},
 }
 
@@ -65,10 +76,12 @@ fn compute(root: &Path, request: Request) -> Result<serde_json::Value, String> {
             let report = engine::run(&snapshot, &spec)?;
             serde_json::to_value(report).map_err(|e| e.to_string())
         }
-        Request::MarketSync { code, timeframe } => {
-            serde_json::to_value(market_data::sync(root, &code, &timeframe)?)
-                .map_err(|e| e.to_string())
-        }
+        Request::MarketSync {
+            code,
+            timeframe,
+            settlement_days,
+        } => serde_json::to_value(market_data::sync(root, &code, &timeframe, settlement_days)?)
+            .map_err(|e| e.to_string()),
         Request::ScriptBacktest { spec } => {
             let dataset = storage::read(root, "datasets", &spec.dataset_id)?;
             serde_json::to_value(script_engine::run(&dataset, &spec)?).map_err(|e| e.to_string())
