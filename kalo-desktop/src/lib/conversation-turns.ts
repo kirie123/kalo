@@ -26,43 +26,52 @@ export function processStartedAt(entries: TimelineEntry[]): number | undefined {
   return first;
 }
 
-/** Group adjacent activity, keeping every prose message and deliverable in place. */
+/** One process per run; only the settled final response and outputs stay outside. */
 export function foldConversationTurns(timeline: TimelineEntry[], live: boolean): ConversationRow[] {
   const rows: ConversationRow[] = [];
   let run: TimelineEntry[] = [];
 
   const flush = (active: boolean) => {
-    let process: TimelineEntry[] = [];
-    const flushProcess = (tail: boolean) => {
-      if (process.length === 0) return;
-      const stats = segmentStats(process);
-      rows.push({ kind: "segment", id: process[0].id, entries: process, stats,
-        running: active && (tail || stats.running), startedAt: processStartedAt(process) });
-      process = [];
-    };
+    const process: TimelineEntry[] = [];
+    const outputs: TimelineEntry[] = [];
+    // Only the last assistant can be the result. Never promote commentary
+    // before a failed/aborted call or a tool-only ending into a final answer.
+    const lastAssistant = run.filter((entry) => entry.kind === "assistant").at(-1);
+    const final = !active && lastAssistant?.kind === "assistant" && hasText(lastAssistant)
+      && !isFailure(lastAssistant) && lastAssistant.message.stopReason !== "toolUse"
+      && !lastAssistant.message.content.some((block) => block.type === "toolCall")
+      && !run.slice(run.indexOf(lastAssistant) + 1).some((entry) => entry.kind === "toolGroup")
+      ? lastAssistant : undefined;
     for (const entry of run) {
-      if (entry.kind === "toolGroup") {
-        // Deliverables have their own cards/panel; only failed presentation
-        // calls need a diagnostic row. Never change the stored timeline.
+      if (entry.kind === "artifacts" || entry.kind === "widget") {
+        outputs.push(entry);
+      } else if (entry.kind === "toolGroup") {
         const calls = entry.calls.filter((call) => call.toolName !== "present_files" || call.status === "error");
         if (calls.length > 0) process.push(calls.length === entry.calls.length ? entry : { ...entry, calls });
-        continue;
-      }
-      if (entry.kind === "assistant" && !isFailure(entry) && !hasText(entry)) {
-        // Tool-call placeholders must not add rows or change the group's identity.
-        if (entry.message.content.some((block) => block.type === "thinking" && block.thinking.trim())) {
-          process.push(entry.usage ? { ...entry, usage: undefined } : entry);
+      } else if (entry.kind === "assistant") {
+        if (entry === lastAssistant && isFailure(entry) && !entry.retriedError) {
+          outputs.push(entry);
+          continue;
         }
-        if (!entry.usage) continue;
-        flushProcess(false);
-        rows.push({ kind: "entry", entry: { ...entry, message: { ...entry.message,
-          content: entry.message.content.filter((block) => block.type !== "thinking") } } });
-        continue;
+        const thinking = entry.message.content.filter((block) => block.type === "thinking");
+        if (entry === final) {
+          if (thinking.length) process.push({ ...entry, usage: undefined,
+            message: { ...entry.message, content: thinking } });
+          outputs.push(thinking.length ? { ...entry,
+            message: { ...entry.message, content: entry.message.content.filter((block) => block.type !== "thinking") } } : entry);
+        } else {
+          if (hasText(entry) || thinking.length || isFailure(entry)) {
+            process.push(entry.usage ? { ...entry, usage: undefined } : entry);
+          }
+          if (entry.usage) outputs.push({ ...entry, message: { ...entry.message, content: [] } });
+        }
+      } else {
+        process.push(entry);
       }
-      flushProcess(false);
-      rows.push({ kind: "entry", entry });
     }
-    flushProcess(true);
+    if (process.length) rows.push({ kind: "segment", id: process[0].id, entries: process,
+      stats: segmentStats(process), running: active, startedAt: processStartedAt(run) });
+    rows.push(...outputs.map((entry): ConversationRow => ({ kind: "entry", entry })));
     run = [];
   };
 

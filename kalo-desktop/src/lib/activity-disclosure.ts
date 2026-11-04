@@ -27,5 +27,5 @@ export function activityHeading(stats: SegmentStats, running: boolean, elapsedMs
     ? formatProcessDuration(elapsedMs) : undefined;
   if (!running) return duration ? `用时 ${duration}` : "任务过程";
   const summary = activitySummary(stats).label;
-  return duration ? `${summary} · 已运行 ${duration}` : summary;
+  return duration ? `${summary}，已运行 ${duration}` : summary;
 }

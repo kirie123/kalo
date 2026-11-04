@@ -5,7 +5,7 @@ import { sameSegmentEntries, type SegmentStats } from "../lib/work-segment";
 import TimelineItem from "./TimelineItem";
 import { ToolCallList } from "./ToolCallGroup";
 
-/** Adjacent tools fold together; prose and deliverables remain in the transcript. */
+/** Whole-run process folds at settlement; the final response remains outside. */
 function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
   entries: TimelineEntry[];
   stats: SegmentStats;
@@ -64,14 +64,13 @@ function WorkSegment({ entries, stats, running, startedAt, onScrollAdjust }: {
         onClick={toggle}
         aria-expanded={open}
         aria-controls={contentId}
-        aria-label={`${heading}${stats.error ? "，含失败步骤" : ""}`}
+        aria-label={heading}
         title={summary.full}
         className="work-segment-head"
       >
         {running && <span className="activity-group-icon" aria-hidden="true"><span className="spinner" /></span>}
         <span className="activity-group-label">{heading}</span>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className={`activity-group-chevron ${open ? "rotate-90" : ""}`} aria-hidden="true"><path d="M6 3l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        {stats.error && <span className="activity-group-error">含失败步骤</span>}
       </button>
       {open && (
         <div id={contentId} className="work-segment-body">

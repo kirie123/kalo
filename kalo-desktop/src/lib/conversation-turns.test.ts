@@ -19,135 +19,121 @@ const changes: TimelineEntry = { id: "changes", kind: "changes", files: [], tota
 const usage = { calls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0 };
 
 describe("foldConversationTurns", () => {
-  it("folds adjacent tools but keeps every progress message in its original place", () => {
+  it("keeps intermediate prose, tools and thinking in one settled process", () => {
     const first = assistant("first", "先检查");
     const progress = assistant("progress", "找到原因，继续修复");
-    const final = assistant("final", "已经完成");
-    const rows = foldConversationTurns([user, first, tool(), tool("read"), progress, tool("test"), final, changes], false);
-    expect(rows.map((row) => row.kind)).toEqual(["entry", "entry", "segment", "entry", "segment", "entry", "entry"]);
-    expect(rows[2]).toMatchObject({ id: "tool", running: false, entries: [tool(), tool("read")] });
-    expect(rows[3]).toEqual({ kind: "entry", entry: progress });
-    expect(rows[5]).toEqual({ kind: "entry", entry: final });
+    const final = assistant("final", "已经完成", { usage });
+    const process = [first, tool(), thought(), progress, tool("test")];
+    const source = [user, ...process, final, changes];
+    const original = structuredClone(source);
+    const rows = foldConversationTurns(source, false);
+    expect(rows.map(row => row.kind)).toEqual(["entry", "segment", "entry", "entry"]);
+    expect(rows[1]).toMatchObject({ id: "first", entries: process, running: false, startedAt: 1000 });
+    expect(rows[2]).toEqual({ kind: "entry", entry: final });
+    expect(source).toEqual(original);
   });
 
-  it("auto-folds completed activity when prose starts while leaving the tail active", () => {
-    const timeline = [user, tool(), assistant("progress", "下一步"), tool("test")];
-    const rows = foldConversationTurns(timeline, true);
-    expect(rows[1]).toMatchObject({ id: "tool", running: false });
-    expect(rows[2]).toMatchObject({ kind: "entry", entry: { id: "progress" } });
-    expect(rows[3]).toMatchObject({ id: "test", running: true });
-    expect(foldConversationTurns(timeline, false)[3]).toMatchObject({ id: "test", running: false });
+  it("stays expanded through prose updates and folds only when the run settles", () => {
+    const progress = assistant("progress", "下一步", { streaming: true });
+    const active = [tool("tool", "running"), progress, tool("next")];
+    expect(foldConversationTurns(active, true)).toMatchObject([
+      { kind: "segment", id: "tool", running: true, entries: active },
+    ]);
+    const final = assistant("final", "最终结果", { usage });
+    const settled = foldConversationTurns([...active, final], true);
+    expect(settled[0]).toMatchObject({ id: "tool", running: false, entries: active });
+    expect(settled[1]).toEqual({ kind: "entry", entry: final });
   });
 
-  it("keeps concurrent running tools visible when prose arrives", () => {
-    const timeline = [tool("parallel", "running"), assistant("progress", "继续核实")];
-    expect(foldConversationTurns(timeline, true)[0]).toMatchObject({ running: true });
-    expect(foldConversationTurns(timeline, false)[0]).toMatchObject({ running: false });
+  it("keeps streaming text in the process until completion without inferring finality", () => {
+    const text = assistant("text", "正在生成", { streaming: true });
+    expect(foldConversationTurns([text], true)[0]).toMatchObject({ kind: "segment", entries: [text], running: true });
+    expect(foldConversationTurns([{ ...text, streaming: false }], false)[0].kind).toBe("entry");
   });
 
-  it("ignores empty placeholders without splitting activity or changing its id", () => {
-    const placeholder = assistant("placeholder", "");
-    const rows = foldConversationTurns([placeholder, tool(), placeholder, tool("next")], true);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: "tool", entries: [tool(), tool("next")], running: true });
-    expect(foldConversationTurns([assistant("empty", " ")], true)).toEqual([]);
-    expect(foldConversationTurns([{ ...tool(), calls: [] }], false)).toEqual([]);
-  });
-
-  it("keeps prose visible even when it announces a tool or is still streaming", () => {
-    const progress = assistant("progress", "接下来执行命令", { streaming: true });
+  it("does not promote commentary when the run ends with a tool", () => {
+    const progress = assistant("progress", "开始检查");
+    expect(foldConversationTurns([progress, tool()], false)).toMatchObject([
+      { kind: "segment", entries: [progress, tool()], running: false },
+    ]);
     progress.message.stopReason = "toolUse";
-    expect(foldConversationTurns([progress], true)).toEqual([{ kind: "entry", entry: progress }]);
+    expect(foldConversationTurns([progress], false)[0].kind).toBe("segment");
   });
 
-  it.each(["running", "success"] as const)("hides %s presentation calls while keeping both prose halves and artifacts visible", (status) => {
-    const present = tool("present", status);
-    present.toolName = "present_files";
-    present.calls[0].toolName = "present_files";
-    const before = assistant("before", "报告正文前半部分");
-    before.message.content.push({ type: "toolCall", id: "present", name: "present_files", arguments: { files: ["report.md"] } });
-    const after = assistant("after", "报告正文后半部分", { usage });
-    const artifact: TimelineEntry = { id: "artifact", kind: "artifacts", summary: { items: [], primary: null } };
-    const timeline = [before, present, artifact, after];
-    const source = structuredClone(timeline);
-    for (const live of [true, false]) {
-      expect(foldConversationTurns(timeline, live)).toEqual([before, artifact, after].map((entry) => ({ kind: "entry", entry })));
-      expect(foldConversationTurns([present], live)).toEqual([]);
-    }
-    expect(timeline).toEqual(source);
+  it("omits empty placeholders and empty tool groups", () => {
+    expect(foldConversationTurns([assistant("empty", " "), { ...tool(), calls: [] }], true)).toEqual([]);
+    expect(foldConversationTurns([assistant("empty", ""), tool()], true)[0]).toMatchObject({ id: "tool" });
   });
 
-  it("filters mixed activity without losing other tools, group identity or failure details", () => {
-    const mixed = tool("mixed");
-    const hidden = { ...mixed.calls[0], toolCallId: "present", toolName: "present_files" };
-    const failed = { ...hidden, toolCallId: "failed", status: "error" as const, result: "文件不存在" };
-    mixed.calls = [hidden, ...mixed.calls, failed];
-    const source = structuredClone(mixed);
-    const rows = foldConversationTurns([mixed], false);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: "segment", id: "mixed", stats: { error: true },
-      entries: [{ calls: [mixed.calls[1], failed] }] });
-    expect(mixed).toEqual(source);
+  it("moves final thinking into the process without mutating or duplicating the answer", () => {
+    const final = assistant("final", "结果", { usage });
+    final.message.content.unshift({ type: "thinking", thinking: "核实" });
+    const source = structuredClone(final);
+    const rows = foldConversationTurns([tool(), final], false);
+    expect(rows[0]).toMatchObject({ entries: [tool(), { usage: undefined, message: { content: [{ type: "thinking" }] } }] });
+    expect(rows[1]).toMatchObject({ entry: { usage, message: { content: [{ type: "text", text: "结果" }] } } });
+    expect(final).toEqual(source);
   });
 
-  it("groups thinking-only activity without moving mixed text/thinking blocks", () => {
-    const mixed = assistant("mixed", "结果", { usage });
-    mixed.message.content.push({ type: "thinking", thinking: "补充核实" }, { type: "text", text: "补充结果" });
-    const source = structuredClone(mixed);
-    const rows = foldConversationTurns([thought(), tool(), mixed], false);
-    expect(rows[0]).toMatchObject({ kind: "segment", id: "thought", entries: [thought(), tool()] });
-    expect(rows[1]).toEqual({ kind: "entry", entry: mixed });
-    expect(mixed).toEqual(source);
-  });
-
-  it("retains usage-only footers without duplicating their thinking", () => {
-    const last = { ...thought(), usage };
-    const source = structuredClone(last);
-    const rows = foldConversationTurns([last], false);
+  it("retains a usage-only footer and hides its thinking", () => {
+    const rows = foldConversationTurns([{ ...thought(), usage }], false);
     expect(rows[0]).toMatchObject({ kind: "segment", entries: [{ usage: undefined }] });
     expect(rows[1]).toMatchObject({ kind: "entry", entry: { usage, message: { content: [] } } });
-    expect(last).toEqual(source);
   });
 
-  it.each(["error", "aborted"] as const)("never hides %s messages", (stopReason) => {
-    const failure = assistant("failed", "", { message: { role: "assistant", content: [], stopReason, timestamp: 3000 } });
-    expect(foldConversationTurns([tool(), failure], false).at(-1)).toEqual({ kind: "entry", entry: failure });
+  it("keeps artifacts and widgets mounted outside a single process", () => {
+    const artifacts: TimelineEntry = { id: "artifacts", kind: "artifacts", summary: { items: [], primary: null } };
+    const widget: TimelineEntry = { id: "widget", kind: "widget", summary: { title: "图", widget_code: "<svg />", loading_messages: [], render_mode: "svg" } };
+    const final = assistant("final", "结果", { usage });
+    const rows = foldConversationTurns([tool(), artifacts, assistant("progress", "继续"), widget, tool("next"), final], false);
+    expect(rows.map(row => row.kind)).toEqual(["segment", "entry", "entry", "entry"]);
+    expect(rows.slice(1)).toEqual([artifacts, widget, final].map(entry => ({ kind: "entry", entry })));
   });
 
-  it("does not merge across outputs, retries, notices or compression", () => {
-    const boundaries: TimelineEntry[] = [
-      { id: "widget", kind: "widget", summary: { title: "图", widget_code: "<svg />", loading_messages: [], render_mode: "svg" } },
-      { id: "artifact", kind: "artifacts", summary: { items: [], primary: null } },
-      { id: "notice", kind: "notice", text: "状态提示" },
-      { id: "retry", kind: "retry", attempt: 1, maxAttempts: 3, delayMs: 1000, errorMessage: "重连" },
-      { id: "compact", kind: "compaction", summary: "摘要", auto: true },
-    ];
-    for (const boundary of boundaries) {
-      const rows = foldConversationTurns([tool("before"), boundary, tool("after")], false);
-      expect(rows.map((row) => row.kind)).toEqual(["segment", "entry", "segment"]);
-      expect(rows[1]).toEqual({ kind: "entry", entry: boundary });
-    }
+  it("hides successful presentation calls but retains failed tool details", () => {
+    const present = tool("present");
+    present.calls[0].toolName = "present_files";
+    expect(foldConversationTurns([present], false)).toEqual([]);
+    present.calls[0].status = "error";
+    expect(foldConversationTurns([present], false)[0]).toMatchObject({ kind: "segment", stats: { error: true }, entries: [present] });
   });
 
-  it("fences activity at users, changes cards and settled usage records", () => {
-    const rows = foldConversationTurns([tool("a", "running"), assistant("a", "完成", { usage }), changes,
-      tool("b"), assistant("b", "完成", { usage }), user, tool("c")], true);
-    expect(rows.filter((row) => row.kind === "segment").map((row) => [row.id, row.running])).toEqual([
+  it("includes retries, notices and compaction without breaking the process", () => {
+    const details: TimelineEntry[] = [tool(),
+      { id: "retry", kind: "retry", attempt: 1, maxAttempts: 3, delayMs: 1000, errorMessage: "重连", done: { success: true } },
+      { id: "notice", kind: "notice", text: "继续运行" },
+      { id: "compact", kind: "compaction", summary: "摘要", auto: true }, tool("next")];
+    expect(foldConversationTurns([...details, assistant("final", "完成")], false)[0]).toMatchObject({ kind: "segment", entries: details });
+  });
+
+  it.each(["error", "aborted"] as const)("retains terminal %s without presenting commentary as the result", stopReason => {
+    const failure = assistant("failure", "", { message: { role: "assistant", content: [], stopReason, timestamp: 3000 } });
+    const rows = foldConversationTurns([assistant("progress", "检查"), tool(), failure], false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].kind).toBe("segment");
+    expect(rows[1]).toEqual({ kind: "entry", entry: failure });
+  });
+
+  it("folds recovered assistant failures with the rest of the process", () => {
+    const failed = assistant("failed", "", { retriedError: true, message: { role: "assistant", content: [], stopReason: "error", timestamp: 1000 } });
+    const final = assistant("final", "重试成功", { usage });
+    expect(foldConversationTurns([failed, tool(), final], false)[0]).toMatchObject({ entries: [failed, tool()] });
+  });
+
+  it("separates user turns, settled autonomous runs and change summaries", () => {
+    const rows = foldConversationTurns([tool("a"), assistant("final-a", "完成", { usage }), changes,
+      tool("b"), assistant("final-b", "完成", { usage }), user, tool("c")], true);
+    expect(rows.filter(row => row.kind === "segment").map(row => [row.id, row.running])).toEqual([
       ["a", false], ["b", false], ["c", true],
     ]);
   });
 
-  it("flags tool errors in the summary and leaves the source unchanged", () => {
-    const timeline = [tool("failed", "error"), tool("next")];
-    const source = structuredClone(timeline);
-    expect(foldConversationTurns(timeline, false)[0]).toMatchObject({ stats: { error: true }, entries: timeline });
-    expect(timeline).toEqual(source);
-  });
-
-  it("supports history pages inside activity and stable ids as activity grows", () => {
-    expect(foldConversationTurns([tool(), assistant("final", "历史结果")], false)[0]).toMatchObject({ id: "tool", running: false });
-    expect(foldConversationTurns([tool()], true)[0]).toMatchObject({ id: "tool" });
-    expect(foldConversationTurns([tool(), tool("next")], false)[0]).toMatchObject({ id: "tool" });
+  it("rebuilds a completed history turn as one collapsed process with its final answer", () => {
+    const final = assistant("final", "历史结果");
+    const rows = foldConversationTurns([tool(), assistant("progress", "继续"), tool("next"), final], false);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ kind: "segment", id: "tool", running: false });
+    expect(rows[1]).toEqual({ kind: "entry", entry: final });
   });
 });
 

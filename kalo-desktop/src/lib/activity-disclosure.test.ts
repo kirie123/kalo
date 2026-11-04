@@ -33,7 +33,7 @@ describe("activity summary", () => {
 describe("activity heading", () => {
   const stats = { ...segmentStats([]), tools: [{ name: "bash", count: 4 }] };
   it("shows elapsed time while running and only the frozen duration after completion", () => {
-    expect(activityHeading(stats, true, 73000)).toBe("执行了 4 条命令 · 已运行 1 分钟 13 秒");
+    expect(activityHeading(stats, true, 73000)).toBe("执行了 4 条命令，已运行 1 分钟 13 秒");
     expect(activityHeading(stats, false, 73000)).toBe("用时 1 分钟 13 秒");
     expect(activityHeading(stats, false, 0)).toBe("用时 0 秒");
   });
