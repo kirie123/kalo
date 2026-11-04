@@ -60,6 +60,14 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "about", label: "关于", icon: "info" },
 ];
 
+const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
+  models: "管理模型服务与连接方式。", skills: "管理可供助手使用的技能。",
+  memory: "查看和整理助手保留的长期记忆。", data: "备份、迁移与管理本地资料。",
+  permission: "设置工具执行前需要确认的操作。", appearance: "选择皮肤与明暗模式。",
+  gateway: "连接消息渠道，查看网关状态。", tasks: "安排定时任务与自动执行。",
+  mcp: "连接外部工具与数据服务。", about: "查看版本与应用信息。",
+};
+
 const TAB_KEY = "kalo.settings.tab";
 
 function loadTab(): SettingsTab {
@@ -77,6 +85,8 @@ export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange,
     localStorage.setItem(TAB_KEY, id);
   };
 
+  const filteredTabs = TABS.filter((t) => `${t.label} ${t.id}`.toLowerCase().includes(query.toLowerCase().trim()));
+
   return (
     <div className="settings-workspace flex min-h-0 flex-1">
       {/* Left: tab navigation with the back button pinned to the bottom. */}
@@ -85,7 +95,7 @@ export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange,
         <label className="sidebar-search"><AppIcon name="search" size={16} /><input aria-label="搜索设置分类" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索设置" /></label>
         <div className="px-5 pb-2 pt-4 text-xs text-dim">偏好与连接</div>
         <nav className="flex flex-col gap-1 overflow-y-auto px-3 py-1">
-          {TABS.filter((t) => `${t.label} ${t.id}`.toLowerCase().includes(query.toLowerCase().trim())).map((t) => (
+          {filteredTabs.map((t) => (
             <button
               key={t.id}
               onClick={() => selectTab(t.id)}
@@ -98,6 +108,7 @@ export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange,
               {t.label}
             </button>
           ))}
+          {filteredTabs.length === 0 && <p className="settings-search-empty" role="status">没有匹配的分类，试试其他关键词。</p>}
         </nav>
         <div className="mt-auto border-t border-edge p-2">
           <button
@@ -117,7 +128,7 @@ export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange,
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="settings-content mx-auto">
           <h1>{TABS.find((t) => t.id === tab)?.label}</h1>
-          <p className="settings-description">按照自己的习惯，安排这个工作空间。</p>
+          <p className="settings-description">{TAB_DESCRIPTIONS[tab]}</p>
           {tab === "models" && <ModelSettings />}
           {tab === "skills" && <SkillsSettings />}
           {tab === "memory" && <MemorySettings onDataTransfer={() => selectTab("data")} />}

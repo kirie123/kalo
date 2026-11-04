@@ -70,20 +70,20 @@ export default function Workbench({ cwd: defaultCwd }: { cwd: string }) {
 
   return <div className="workbench">
     <aside className="workbench-sidebar">
-      <h2>工作台</h2><p>让每项委托都有交付</p>
+      <h2>工作台</h2>
       <button aria-current={tab === "inbox" ? "page" : undefined} onClick={() => setTab("inbox")}><AppIcon name="inbox" />需要你<span>{tasks.filter(needsAttention).length}</span></button>
       <button aria-current={tab === "all" ? "page" : undefined} onClick={() => setTab("all")}><AppIcon name="checklist" />全部任务<span>{tasks.length}</span></button>
-      <div className="workbench-sidebar-note">Router 确定目标<br />Worker 独立执行<br />有结果或问题时，再回来</div>
+      <div className="workbench-sidebar-note">任务在后台执行，结果与待确认事项会汇集在这里。</div>
     </aside>
     <section className="workbench-main">
-      <header><div><h1>{tab === "inbox" ? "需要你的，只有这些" : "每项委托，都有去处"}</h1><p>{tasks.filter(isActiveTask).length} 项进行中 · 应用退出会中断执行</p></div><button className="wb-button wb-primary" onClick={() => setCreating(v => !v)}><AppIcon name="plus" />新委托</button></header>
+      <header><div><h1>{tab === "inbox" ? "待处理" : "全部任务"}</h1><p className="wb-run-context"><span>{tasks.filter(isActiveTask).length} 项进行中</span><span>退出应用会中断执行</span></p></div><button className="wb-button wb-primary" onClick={() => setCreating(v => !v)}><AppIcon name="plus" />新委托</button></header>
       {(error || connectionError) && <div className="wb-error" role="alert">{error || connectionError}<button className="wb-button" onClick={() => { setError(""); void refresh(); }}>刷新状态</button></div>}
       {creating && <form className="wb-create" onSubmit={e => { e.preventDefault(); void perform({ action: "create", actionId: "", prompt, cwd, allowShell }); }}>
         <label>希望完成什么？<textarea value={prompt} onChange={e => setPrompt(e.target.value)} required maxLength={12000} placeholder="例如：整理这个目录的研究资料，生成一份带出处的摘要。" /></label>
         <label>工作目录<div className="wb-row"><input value={cwd} onChange={e => setCwd(e.target.value)} required /><button type="button" className="wb-button" onClick={() => { void open({ directory: true }).then(dir => { if (typeof dir === "string") setCwd(dir); }).catch(err => setError(String(err))); }}>选择目录</button></div></label>
         <label className="wb-checkbox"><input type="checkbox" checked={allowShell} onChange={e => setAllowShell(e.target.checked)} />允许执行本机命令（可访问本机资源，不是隔离沙箱）</label>
-        <p>默认只开放任务目录内的文件工具。Router 和 Worker 使用已配置的默认模型；本期不自动接管聊天或定时任务。</p>
-        <div className="wb-row"><button className="wb-button wb-primary" disabled={busy || !prompt.trim() || !cwd.trim()}>交给 Router</button><button type="button" className="wb-button" onClick={() => setCreating(false)}>取消</button></div>
+        <p>任务使用已配置的默认模型，默认只开放任务目录内的文件工具。执行本机命令需要勾选上方授权。</p>
+        <div className="wb-row"><button className="wb-button wb-primary" disabled={busy || !prompt.trim() || !cwd.trim()}>开始任务</button><button type="button" className="wb-button" onClick={() => setCreating(false)}>取消</button></div>
       </form>}
       {!loaded && !connectionError && <p className="wb-empty">正在连接任务服务…</p>}
       {loaded && <div className="wb-columns">
@@ -106,8 +106,8 @@ export default function Workbench({ cwd: defaultCwd }: { cwd: string }) {
               {!["completed", "stopped", "stopping"].includes(task.status) && <button className="wb-button" disabled={busy} onClick={() => setConfirmStop(true)}>停止任务</button>}
             </div>
             {confirmStop && <div className="wb-confirm">停止后不再自动恢复；已经执行的操作不会被撤回。<div className="wb-row"><button className="wb-button" disabled={busy} onClick={() => act("stop")}>确认停止</button><button className="wb-button" onClick={() => setConfirmStop(false)}>继续保留</button></div></div>}
-            <details><summary>目标与授权</summary><dl><dt>目标</dt><dd>{task.goal || "等待 Router 判断"}</dd><dt>验收条件</dt><dd>{task.acceptance || "等待 Router 判断"}</dd><dt>工具范围</dt><dd>目录内文件工具{task.allowShell ? " + 用户授权的本机命令" : "；未开放命令执行"}；不开放嵌套 agent、MCP 或外发</dd></dl></details>
-            <details open><summary>执行记录</summary><ol className="wb-history">{task.history.map((entry, index) => <li key={index}><small>{new Date(entry.at).toLocaleTimeString()}</small>{entry.text}</li>)}</ol><p>{task.runs.length} 次执行尝试 · {task.runs.at(-1)?.role === "router" ? "Router" : "Worker"}</p></details>
+            <details><summary>目标与授权</summary><dl><dt>目标</dt><dd>{task.goal || "等待确认"}</dd><dt>验收条件</dt><dd>{task.acceptance || "等待确认"}</dd><dt>工具范围</dt><dd>目录内文件工具{task.allowShell ? " + 用户授权的本机命令" : "；未开放命令执行"}；不开放嵌套 agent、MCP 或外发</dd></dl></details>
+            <details open><summary>执行记录</summary><ol className="wb-history">{task.history.map((entry, index) => <li key={index}><small>{new Date(entry.at).toLocaleTimeString()}</small>{entry.text}</li>)}</ol><p>{task.runs.length} 次执行尝试</p></details>
           </div>
         </article>}
       </div>}

@@ -34,6 +34,10 @@ svg { vertical-align: -.125em; }
 .composer-surface button:not(:disabled):active, .welcome-action:active { transform: scale(.98); }
 .navigation-rail button[aria-current="page"] { box-shadow: inset 0 0 0 1px var(--border); }
 .session-sidebar { border-right-color: transparent; }
+.composer-toolbar, .composer-footer { flex-wrap: wrap; row-gap: 6px; }
+.composer-toolbar > button { flex-shrink: 0; min-width: 30px; min-height: 30px; }
+.composer-footer > * { min-width: 0; max-width: 100%; }
+.composer-footer button { min-height: 30px; }
 
 .welcome-screen {
   display: flex;
@@ -43,6 +47,7 @@ svg { vertical-align: -.125em; }
   align-items: center;
   overflow-y: auto;
   padding: 40px clamp(20px, 4vw, 56px);
+  container: welcome / inline-size;
 }
 .welcome-heading { margin-top: auto; padding-top: 8px; text-align: center; }
 .welcome-heading + div { margin-bottom: auto; }
@@ -104,7 +109,12 @@ svg { vertical-align: -.125em; }
 
 @media (max-width: 900px) {
   .welcome-screen { padding: 28px 20px; }
+}
+@container welcome (max-width: 560px) {
   .welcome-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container welcome (max-width: 280px) {
+  .welcome-actions { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   .composer-surface, .composer-surface button, .sidebar-search, .navigation-rail button,
