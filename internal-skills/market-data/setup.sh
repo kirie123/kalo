@@ -23,7 +23,7 @@
 
 set -u
 
-MARKET="$HOME/.kalo/market"
+MARKET="${KALO_HOME:-$HOME/.kalo}/market"
 VENV="$MARKET/venv"
 SKILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 REQ="$SKILL_DIR/requirements.txt"

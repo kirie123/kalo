@@ -35,10 +35,7 @@ pub struct MemoryEntry {
 
 /// `~/.kalo` (`USERPROFILE`, then `HOME`).
 fn kalo_root() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo"))
+    Ok(crate::kalo_home::root()?)
 }
 
 /// `~/.kalo/memory`

@@ -146,6 +146,7 @@ pub fn terminal_open(
         .map_err(|e| format!("创建终端失败：{e}"))?;
 
     let mut cmd = CommandBuilder::new(default_shell());
+    cmd.env("KALO_HOME", crate::kalo_home::root()?);
     // The pty answers terminal queries from this; ConPTY ignores it.
     cmd.env("TERM", "xterm-256color");
     if let Some(dir) = cwd.as_deref().filter(|d| Path::new(d).is_dir()) {

@@ -34,7 +34,8 @@ import type {
   ThinkingLevel,
   ToolResultMessage,
 } from "../types";
-import { appendAttachment, readAttachmentDrafts, readFileDrafts } from "./attachment-intake";
+import { appendAttachment, readAttachmentDrafts, readClipboardDrafts, readFileDrafts } from "./attachment-intake";
+import { ingestAttachments } from "./attachment-state";
 import { applyBlockEvent, isBlockEvent, seedMessage } from "./assistant-stream";
 import {
   buildPromptPayload,
@@ -65,7 +66,7 @@ import {
   sameFlags,
   saveLastModel,
 } from "./chat-store-helpers";
-import { SessionRuntime, type SessionView } from "./chat-session";
+import { SESSION_VIEW_KEYS, SessionRuntime, type SessionView } from "./chat-session";
 import { publishBashWatch } from "./tool-watch-registry";
 import {
   createSession,
@@ -160,6 +161,7 @@ export interface ChatState {
   inputDraft?: string;
   /** Pending attachments, consumed by the next sendPrompt. */
   attachments: AttachmentDraft[];
+  attachmentPending: number;
   /**
    * 运行中敲下的消息排在这里（doc/2026-09-13-输入队列.md）：默认等本轮结束后依次
    * 自动发送，也可以逐条改成「立即插入」。条目在被投递出去之前完全归桌面端管，
@@ -206,32 +208,6 @@ export interface ChatState {
  */
 /** Engine-process-global catalogs + app-level bits shared by all runtimes. */
 type GlobalView = Pick<ChatState, "models" | "customModels" | "thinkingLevels" | "toasts" | "commands">;
-
-const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
-  "sessionId",
-  "engineSessionId",
-  "cwd",
-  "expertId",
-  "sessionName",
-  "timeline",
-  "todos",
-  "history",
-  "loadingOlder",
-  "isStreaming",
-  "isCompacting",
-  "currentModel",
-  "thinkingLevel",
-  "steeringMode",
-  "permissionMode",
-  "extensionQueue",
-  "pendingAsk",
-  "inputDraft",
-  "attachments",
-  "inputQueue",
-  "contextUsage",
-  "sessionFile",
-  "connecting",
-]);
 
 /** Session-view changes that alter pool-visible state (runningByFile / pendingSessions) must commit. */
 function affectsPoolFlags(p: Partial<SessionView>): boolean {
@@ -530,6 +506,7 @@ export class ChatStore {
       pendingAsk: undefined,
       inputDraft: undefined,
       attachments: [],
+      attachmentPending: 0,
       contextUsage: undefined,
       sessionFile: undefined,
     });
@@ -866,14 +843,18 @@ export class ChatStore {
 
   /** Read each path via the backend; unreadable files are skipped with a toast. */
   async addAttachments(paths: string[]) {
-    const warn = (m: string) => this.pushToast(m, "warning");
-    this.pushAttachments(await readAttachmentDrafts(paths, warn));
+    return this.intakeAttachments((warn) => readAttachmentDrafts(paths, warn));
   }
 
   /** Add attachments from webview File objects (clipboard paste / drag-drop). */
-  async addFiles(files: File[]) {
-    const warn = (m: string) => this.pushToast(m, "warning");
-    this.pushAttachments(await readFileDrafts(files, warn));
+  async addFiles(files: File[], options?: { clipboardPaths?: string[]; fallbackText?: string }) {
+    return this.intakeAttachments((warn) => options?.clipboardPaths
+      ? readClipboardDrafts(files, options.clipboardPaths, warn) : readFileDrafts(files, warn), options?.fallbackText);
+  }
+
+  private intakeAttachments(read: (warn: (message: string) => void) => Promise<AttachmentDraft[]>, fallbackText?: string) {
+    const rt = this.rt, warn = (m: string) => this.pushToast(m, "warning");
+    return ingestAttachments(() => read(warn), () => rt.view, (patch) => this.setRt(rt, patch), appendAttachment, warn, fallbackText);
   }
 
   removeAttachment(name: string) {
@@ -882,10 +863,7 @@ export class ChatStore {
 
   /** Append drafts onto the composer, deduping paths and renaming collisions. */
   private pushAttachments(drafts: AttachmentDraft[]) {
-    if (drafts.length === 0) return;
-    let next = this.rt.view.attachments;
-    for (const d of drafts) next = appendAttachment(next, d);
-    if (next !== this.rt.view.attachments) this.set({ attachments: next });
+    this.set({ attachments: drafts.reduce(appendAttachment, this.rt.view.attachments) });
   }
 
   // --------------------------------------------------------------------------
@@ -905,6 +883,7 @@ export class ChatStore {
    * put it back rather than silently lose it.
    */
   async sendPrompt(text: string, rt: SessionRuntime = this.rt, drafts?: AttachmentDraft[]): Promise<boolean> {
+    if (!drafts && rt.view.attachmentPending > 0) return false;
     const busy = rt.view.isStreaming || rt.dispatching;
     if (!drafts && shouldEnqueue({ isStreaming: busy, isCompacting: rt.view.isCompacting, queueLength: rt.view.inputQueue.length })) {
       return this.enqueueInput(text, rt);

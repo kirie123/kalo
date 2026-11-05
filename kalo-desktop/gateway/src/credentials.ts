@@ -16,7 +16,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { getKaloHome } from "./kalo-home";
 import { join } from "node:path";
 
 export interface FeishuCredentials {
@@ -29,7 +29,7 @@ export interface FeishuCredentials {
   boundAt: string;
 }
 
-export const agentDir = join(homedir(), ".kalo", "agent");
+export const agentDir = join(getKaloHome(), "agent");
 const credFile = join(agentDir, "feishu.json");
 const lockFile = join(agentDir, "feishu.lock");
 

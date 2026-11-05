@@ -14,7 +14,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-CACHE_DIR = Path.home() / ".kalo" / "market" / "cache"
+from .paths import kalo_home
+
+CACHE_DIR = kalo_home() / "market" / "cache"
 
 
 def _cache_file(source_id: str) -> Path:

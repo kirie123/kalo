@@ -156,6 +156,7 @@ impl GatewayManager {
         };
 
         let mut cmd = Command::new(&path);
+        crate::kalo_home::configure_command(&mut cmd)?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

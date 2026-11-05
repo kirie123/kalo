@@ -48,7 +48,10 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 
 def archive_root():
     home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or os.path.expanduser("~")
-    return os.path.join(home, ".kalo", "research", "glassnode")
+    root = os.environ.get("KALO_HOME") or os.path.join(home, ".kalo")
+    if not os.path.isabs(root):
+        raise ValueError("KALO_HOME 必须是绝对路径")
+    return os.path.join(root, "research", "glassnode")
 
 
 def _ssl_context():

@@ -1,5 +1,8 @@
 //! Personal data transfer commands; all data mutations run in an isolated startup mode.
 mod archive;
+mod location;
+mod location_copy;
+mod location_links;
 mod plan;
 mod platform;
 mod references;
@@ -32,8 +35,16 @@ pub(crate) fn data_root() -> TransferResult<PathBuf> {
     platform::root()
 }
 
+pub fn bootstrap_lock() -> TransferResult<File> {
+    let home = crate::kalo_home::user_home()?;
+    let lock = location::lock(&home)?;
+    location::recover(&home)?;
+    Ok(lock)
+}
+
 pub struct TransferState {
-    _profile_lock: File,
+    _location_lock: File,
+    _profile_lock: Mutex<Option<File>>,
     root: PathBuf,
     maintenance: bool,
     busy: Mutex<()>,
@@ -43,6 +54,7 @@ pub struct TransferState {
 
 impl TransferState {
     pub fn initialize() -> TransferResult<Self> {
+        let location_lock = bootstrap_lock()?;
         let root = platform::root()?;
         let lock = platform::profile_lock(&root)?;
         let inspection = transaction::pending(&root);
@@ -55,7 +67,8 @@ impl TransferState {
         };
         MAINTENANCE.store(maintenance, Ordering::SeqCst);
         Ok(Self {
-            _profile_lock: lock,
+            _location_lock: location_lock,
+            _profile_lock: Mutex::new(Some(lock)),
             root,
             maintenance,
             busy: Mutex::new(()),
@@ -70,6 +83,7 @@ impl TransferState {
         if self.leaving.load(Ordering::SeqCst) {
             return Err("正在返回 Kalo，请稍候".into());
         }
+        if location::pending(&crate::kalo_home::user_home()?) { return Err("目录迁移尚未恢复，请退出并重新打开 Kalo".into()); }
         if !self.maintenance {
             return Err("请先准备迁移，退出并重新打开 Kalo 进入数据管理".into());
         }
@@ -122,6 +136,7 @@ pub fn data_transfer_arm(armed: bool, state: State<TransferState>) -> TransferRe
     if armed {
         platform::atomic_write(&marker, b"1")?;
     } else if marker.exists() {
+        location::prepare(&state.root, None)?;
         fs::remove_file(marker).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -138,9 +153,67 @@ pub fn data_transfer_leave(state: State<TransferState>, app: AppHandle) -> Trans
     state.leaving.store(true, Ordering::SeqCst);
     // Tauri starts the replacement process before exiting the old one. Release only
     // after the transfer gate has closed, so the new process can acquire the lock.
-    fs2::FileExt::unlock(&state._profile_lock).map_err(|e| e.to_string())?;
+    state._profile_lock.lock().map_err(|e| e.to_string())?.take();
+    fs2::FileExt::unlock(&state._location_lock).map_err(|e| e.to_string())?;
     app.request_restart();
     Ok(())
+}
+
+#[tauri::command(async)]
+pub fn data_location_status(state: State<TransferState>) -> TransferResult<location::Status> {
+    let _guard = state.busy.try_lock().map_err(|_| "数据管理正在处理，请稍候")?;
+    location::status(&state.root, &crate::kalo_home::user_home()?)
+}
+
+#[tauri::command(async)]
+pub fn data_location_prepare(parent: Option<String>, state: State<TransferState>) -> TransferResult<()> {
+    let _guard = state.busy.try_lock().map_err(|_| "数据管理正在处理，请稍候")?;
+    if state.leaving.load(Ordering::SeqCst) { return Err("正在重启，请稍候".into()); }
+    if state.maintenance { state.require_maintenance()?; }
+    location::prepare(&state.root, parent.as_deref().map(std::path::Path::new))?;
+    if parent.is_none() && !state.maintenance {
+        let marker = platform::safe(&state.root, "transfers/maintenance")?;
+        if marker.exists() { fs::remove_file(marker).map_err(|e| e.to_string())?; }
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn data_location_commit(state: State<TransferState>, app: AppHandle) -> TransferResult<crate::kalo_home::Location> {
+    let _guard = state.busy.try_lock().map_err(|_| "数据管理正在处理，请稍候")?;
+    state.require_maintenance()?;
+    let home = crate::kalo_home::user_home()?;
+    let result = location::relocate(&state.root, &home, &progress(&app), || {
+        // Windows cannot rename a directory with this lock handle open. The home-level
+        // application lock remains held throughout cutover, recovery and locator commit.
+        state._profile_lock.lock().map_err(|e| e.to_string())?.take();
+        Ok(())
+    });
+    match result {
+        Ok(location) => {
+            state.leaving.store(true, Ordering::SeqCst);
+            fs2::FileExt::unlock(&state._location_lock).map_err(|e| e.to_string())?;
+            app.request_restart();
+            Ok(location)
+        }
+        Err(error) => {
+            if let Err(recovery) = location::recover(&home) {
+                *state.recovery_error.lock().map_err(|e| e.to_string())? = Some(recovery.clone());
+                return Err(format!("{error}。目录恢复尚未完成：{recovery}。请保留现场，处理后重新启动"));
+            }
+            let mut lock = state._profile_lock.lock().map_err(|e| e.to_string())?;
+            if lock.is_none() {
+                match platform::profile_lock(&state.root) {
+                    Ok(file) => *lock = Some(file),
+                    Err(recovery) => {
+                        *state.recovery_error.lock().map_err(|e| e.to_string())? = Some(recovery.clone());
+                        return Err(format!("{error}。无法重新锁定原目录：{recovery}，请重启"));
+                    }
+                }
+            }
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command(async)]
@@ -149,6 +222,7 @@ pub fn data_transfer_recover(state: State<TransferState>) -> TransferResult<()> 
         return Err("请先进入维护模式".into());
     }
     let _guard = state.busy.try_lock().map_err(|_| "请等待当前操作完成")?;
+    if location::pending(&crate::kalo_home::user_home()?) { return Err("目录迁移尚未恢复，请退出并重新打开 Kalo".into()); }
     let result = transaction::recover(&state.root);
     *state.recovery_error.lock().map_err(|e| e.to_string())? = result.clone().err();
     result

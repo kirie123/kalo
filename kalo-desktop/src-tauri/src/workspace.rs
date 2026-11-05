@@ -19,10 +19,7 @@ use std::path::{Path, PathBuf};
 
 /// `~/.kalo/workspaces`
 fn workspaces_root() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "无法定位用户主目录".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("workspaces"))
+    Ok(crate::kalo_home::root()?.join("workspaces"))
 }
 
 /// `chat-<n>` suffix of a directory name, or `None` for anything else.

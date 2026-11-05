@@ -1,6 +1,6 @@
 //! Historical session scanning.
 //!
-//! pi stores past sessions under `%USERPROFILE%/.kalo/agent/sessions/<encoded-cwd>/`
+//! pi stores past sessions under `KALO_HOME/agent/sessions/<encoded-cwd>/`
 //! as `*.jsonl` files. The first line of each file is a header:
 //! `{"type":"session","id":"...","timestamp":"...","cwd":"..."}`.
 //! Later lines may carry a display name (`type: "session_info"` with a
@@ -90,15 +90,9 @@ pub fn list_sessions() -> Result<Vec<ProjectGroup>, String> {
     Ok(out)
 }
 
-/// `%USERPROFILE%/.kalo/agent/sessions` (`HOME` as a fallback).
+/// `KALO_HOME/agent/sessions` (defaults to the user home directory's `.kalo`).
 fn sessions_root() -> Option<PathBuf> {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
-    Some(
-        PathBuf::from(home)
-            .join(".kalo")
-            .join("agent")
-            .join("sessions"),
-    )
+    Some(crate::kalo_home::root().ok()?.join("agent").join("sessions"))
 }
 
 /// Delete one session file. The canonicalized path must be a `.jsonl` file

@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { chatStore, useChatSelector } from "../lib/chat-store";
 import { listDir, searchFiles } from "../lib/pi-bridge";
 import { cwdBasename } from "../lib/projects";
+import { clipboardUriPaths, shouldAttachPastedText } from "../lib/paste";
 import { collectSubagents, summarizeSubagents } from "../lib/subagent-map";
 import type { FileMatch } from "../types";
 import AgentMapModal from "./AgentMapModal";
@@ -51,6 +52,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
     inputDraft: s.inputDraft,
     commands: s.commands,
     attachments: s.attachments,
+    attachmentPending: s.attachmentPending,
     isStreaming: s.isStreaming,
     isCompacting: s.isCompacting,
     connecting: s.connecting,
@@ -216,6 +218,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
   };
 
   const send = () => {
+    if (chatStore.getSnapshot().attachmentPending > 0) return;
     const value = text.trim();
     if (!value && chat.attachments.length === 0) return;
     setText("");
@@ -254,13 +257,21 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
     }
   };
 
-  // Ctrl+V: turn pasted files (images, documents, text files) into attachments.
-  // Plain-text pastes fall through to the textarea untouched.
+  // Files win over accompanying text. Only a single large paste is attached.
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (chatStore.getSnapshot().attachmentPending > 0) { e.preventDefault(); return; }
     const files = Array.from(e.clipboardData.files);
-    if (files.length === 0) return;
-    e.preventDefault();
-    void chatStore.addFiles(files);
+    const pasted = e.clipboardData.getData("text/plain");
+    const paths = clipboardUriPaths(e.clipboardData.getData("text/uri-list"));
+    if (files.length || paths.length || e.clipboardData.types.includes("Files") || !pasted) {
+      e.preventDefault();
+      void chatStore.addFiles(files, { clipboardPaths: paths });
+    } else if (shouldAttachPastedText(pasted)) {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const fallbackText = text.slice(0, el.selectionStart) + pasted + text.slice(el.selectionEnd);
+      void chatStore.addFiles([new File([pasted], "粘贴文本.txt", { type: "text/plain" })], { fallbackText });
+    }
   };
 
   // Drag & drop from the OS. The webview swallows HTML5 drop events
@@ -368,6 +379,9 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
 
         {/* Pending attachment chips. Hovering shows where the file came from;
             image chips open the lightbox on click. */}
+        {chat.attachmentPending > 0 && (
+          <div role="status" className="px-4 pt-3 text-xs text-dim">正在保存附件，请稍候…</div>
+        )}
         {chat.attachments.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
             {chat.attachments.map((a) => (
@@ -437,7 +451,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
                   ? "正在连接引擎，可先发消息…"
                   : "输入消息，Enter 发送，Shift+Enter 换行，可粘贴或拖入文件"
           }
-          disabled={chat.hasPendingAsk}
+          disabled={chat.hasPendingAsk || chat.attachmentPending > 0}
           className="min-h-14 max-h-48 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-dim disabled:cursor-not-allowed disabled:opacity-50"
         />
 
@@ -478,6 +492,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
             <button
               onClick={send}
               title="加入队列（本轮结束后发送）"
+              disabled={chat.attachmentPending > 0}
               className="rounded-full border border-edge p-2 text-dim hover:text-ink"
             >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -508,7 +523,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
           ) : (
             <button
               onClick={send}
-              disabled={!text.trim() && chat.attachments.length === 0}
+              disabled={chat.attachmentPending > 0 || (!text.trim() && chat.attachments.length === 0)}
               title="发送"
               className="rounded-full bg-accent p-2 text-[var(--accent-contrast)] hover:opacity-90 disabled:opacity-30"
             >

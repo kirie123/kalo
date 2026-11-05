@@ -5,10 +5,13 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod attachment_storage;
 mod investment;
 mod investment_bridge;
 #[cfg(debug_assertions)]
 mod investment_acceptance;
+mod clipboard_files;
+mod kalo_home;
 mod bundled_tools;
 mod data_transfer;
 mod files;
@@ -39,6 +42,7 @@ mod proc;
 mod skills;
 
 use files::{AttachmentData, DirDiff, DirEntry, FileBytes, FileText, TextSince};
+use clipboard_files::clipboard_file_paths;
 use gateway::GatewayManager;
 use git::GitStatus;
 use internal_skills::InstallReport;
@@ -352,7 +356,7 @@ fn app_paths() -> Result<serde_json::Value, String> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "cannot resolve user home directory".to_string())?;
-    let kalo_root = std::path::PathBuf::from(&home).join(".kalo");
+    let kalo_root = kalo_home::root()?;
     // A missing engine binary is not fatal here: the caller may only want the
     // paths, and it will get a clear error when it actually tries to spawn.
     let engine = session::engine_binary_path()
@@ -660,6 +664,10 @@ fn main() {
             eprintln!("用法：kalo --import-expert <专家包根目录>");
             std::process::exit(2);
         }
+        let _location_lock = match data_transfer::bootstrap_lock() {
+            Ok(lock) => lock,
+            Err(error) => { eprintln!("{error}"); std::process::exit(1); }
+        };
         match expert_import::expert_import(args[2].clone()) {
             Ok(expert) => println!("{}", serde_json::to_string_pretty(&expert).expect("serialize expert")),
             Err(error) => {
@@ -750,6 +758,9 @@ fn main() {
             investment::investment_catalog,
             investment::investment_activity,
             task_workers::workbench_request,
+            data_transfer::data_location_status,
+            data_transfer::data_location_prepare,
+            data_transfer::data_location_commit,
             data_transfer::data_transfer_status,
             data_transfer::data_transfer_arm,
             data_transfer::data_transfer_leave,
@@ -799,6 +810,7 @@ fn main() {
             dir_diff_names,
             read_attachment,
             save_attachment_bytes,
+            clipboard_file_paths,
             open_path,
             search_files,
             gateway_pair_start,

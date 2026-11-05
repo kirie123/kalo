@@ -26,7 +26,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getKaloHome } from "./kalo-home";
 import { dirname, join } from "node:path";
 import { log } from "./protocol";
 
@@ -132,7 +132,7 @@ const MAX_BACKOFF_MS = 10 * 60_000;
 /** After this many failures in a row the feed stops touching the network. */
 const QUIET_AFTER_FAILURES = 12;
 
-const feedsDir = join(homedir(), ".kalo", "feeds");
+const feedsDir = join(getKaloHome(), "feeds");
 const stateDir = join(feedsDir, "state");
 
 // ---------------------------------------------------------------------------

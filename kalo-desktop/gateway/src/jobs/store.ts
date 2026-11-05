@@ -10,7 +10,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getKaloHome } from "../kalo-home";
 import { join } from "node:path";
 import type { JobStatus } from "./types";
 
@@ -62,8 +62,7 @@ export interface JobRecord {
 }
 
 export function jobsDir(): string {
-  const home = process.env.USERPROFILE || process.env.HOME || homedir();
-  return join(home, ".kalo", "agent", "jobs");
+  return join(getKaloHome(), "agent", "jobs");
 }
 
 export class JobStore {

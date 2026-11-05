@@ -324,7 +324,7 @@ describe("seedDefaults", () => {
     // would spawn a headless session every weekday.
     expect(DEFAULT_TASKS.every((t) => t.kind === "watch")).toBe(true);
     // And it must go through the shim, not a hardcoded interpreter path.
-    expect(DEFAULT_TASKS[0].script).toContain("/.kalo/market/py");
+    expect(DEFAULT_TASKS[0].script).toContain('${KALO_HOME:-$HOME/.kalo}/market/py');
   });
 });
 
@@ -345,7 +345,7 @@ describe("bash spawn env", () => {
   test("keeps the key's original spelling and does not duplicate it", () => {
     // Windows carries `Path`, not `PATH`; two case-variant keys in one env
     // block are not something child_process can resolve deterministically.
-    const env = prependShellDir({ Path: "/usr/bin" }, shell);
+    const env = prependShellDir({ Path: "/usr/bin" }, shell, "win32");
     const pathKeys = Object.keys(env).filter((k) => k.toLowerCase() === "path");
     expect(pathKeys).toEqual(["Path"]);
     expect(env.Path).toBe(`${dirname(shell)}${delimiter}/usr/bin`);
@@ -353,6 +353,12 @@ describe("bash spawn env", () => {
 
   test("a missing PATH still gets the shell dir", () => {
     expect(prependShellDir({}, shell).PATH).toBe(dirname(shell));
+  });
+
+  test("POSIX only prepends to PATH, preserving an unrelated Path variable", () => {
+    const env = prependShellDir({ Path: "other", PATH: "/usr/bin" }, shell, "darwin");
+    expect(env.Path).toBe("other");
+    expect(env.PATH).toBe(`${dirname(shell)}${delimiter}/usr/bin`);
   });
 
   test("a shell resolved from PATH leaves the env untouched", () => {
@@ -369,10 +375,11 @@ describe("bash spawn env", () => {
     const resolved = resolveBash();
     if (isAbsolute(resolved)) {
       expect(env[key]!.startsWith(`${dirname(resolved)}${delimiter}`)).toBe(true);
+      expect(env[key]!.endsWith(`${delimiter}/job/path`)).toBe(true);
     } else {
       expect(env[key]).toBe("/job/path");
     }
-    expect(env[key]!.endsWith(`${delimiter}/job/path`)).toBe(true);
+    if (process.platform === "win32") expect(Object.keys(env).filter((k) => k.toLowerCase() === "path")).toHaveLength(1);
     expect(env.PI_SESSION_ID).toBe("s1");
   });
 });

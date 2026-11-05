@@ -15,9 +15,9 @@
  */
 
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME } from "../../config.ts";
+import { getKaloHome } from "../../utils/kalo-home.ts";
 
 /** One job as the gateway projects it (mirrors gateway/src/jobs/types.ts). */
 export interface JobSnapshot {
@@ -39,7 +39,7 @@ export interface JobsEndpoint {
 }
 
 export function endpointFile(): string {
-	return join(homedir(), CONFIG_DIR_NAME, "agent", "jobs", "endpoint.json");
+	return join(getKaloHome(CONFIG_DIR_NAME), "agent", "jobs", "endpoint.json");
 }
 
 /** Read the published descriptor, or null when no gateway is running. */

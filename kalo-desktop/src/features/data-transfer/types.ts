@@ -16,3 +16,4 @@ export interface TransferStatus { maintenance: boolean; armed: boolean; recovery
 export interface TransferProgress { phase: string; completed: number; total: number }
 export interface TransferDetails { local: string; incoming: string }
 export interface TransferDecision { path: string; choice: TransferChoice }
+export interface DataLocationStatus { root: string; target: string | null; backup: string | null }

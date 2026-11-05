@@ -18,12 +18,12 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TSchema } from "typebox";
 import { Type } from "typebox";
 import { CONFIG_DIR_NAME } from "../../config.ts";
 import type { AgentToolResult, ExtensionAPI } from "../../core/extensions/types.ts";
+import { getKaloHome } from "../../utils/kalo-home.ts";
 
 // ---------------------------------------------------------------------------
 // Config & status files
@@ -49,7 +49,7 @@ interface McpServerStatus {
 }
 
 function agentDir(): string {
-	return join(homedir(), CONFIG_DIR_NAME, "agent");
+	return join(getKaloHome(CONFIG_DIR_NAME), "agent");
 }
 
 function loadConfig(): Record<string, McpServerDef> {

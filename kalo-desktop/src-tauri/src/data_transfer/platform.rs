@@ -9,13 +9,7 @@ use unicode_casefold::UnicodeCaseFold;
 use unicode_normalization::UnicodeNormalization;
 
 pub fn root() -> TransferResult<PathBuf> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "无法找到用户目录".to_string())?;
-    if !Path::new(&home).is_absolute() {
-        return Err("用户目录必须是有效绝对路径".into());
-    }
-    Ok(PathBuf::from(home).join(".kalo"))
+    crate::kalo_home::root()
 }
 
 pub fn key(path: &str) -> String {
@@ -134,6 +128,15 @@ pub fn resolve(root: &Path, document: &str, reference: &str) -> TransferResult<P
             }
             Component::CurDir => {}
             _ => normalized.push(c.as_os_str()),
+        }
+    }
+    // Historical absolute note links may use a former root after relocating this profile.
+    // Only recorded roots are remapped; `safe` still rejects links/escapes below the new root.
+    if !normalized.starts_with(root) {
+        if let Some(location) = crate::kalo_home::read_location(&crate::kalo_home::user_home()?)? {
+            if location.root == root {
+                if let Some(mapped) = location.remap_reference(&normalized) { normalized = mapped; }
+            }
         }
     }
     let rel = normalized

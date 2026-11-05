@@ -21,10 +21,11 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { getKaloHome } from "./kalo-home";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { log } from "./protocol";
 import { terminateProcessTree } from "./process-tree";
+import { mergeSpawnEnv } from "./spawn-env";
 
 // ---------------------------------------------------------------------------
 // Task model (mirrors ~/.kalo/agent/schedules.json)
@@ -92,7 +93,7 @@ const WATCH_TIMEOUT_MS = 60_000;
 const MAX_ALERT_OUTPUT = 1500;
 const MAX_BUFFER = 256 * 1024;
 
-const agentDir = join(homedir(), ".kalo", "agent");
+const agentDir = join(getKaloHome(), "agent");
 const storeFile = join(agentDir, "schedules.json");
 
 /**
@@ -145,12 +146,12 @@ export function resolveBash(): string {
  * A non-absolute `shell` (plain `"bash"` resolved from PATH on unix) has no
  * directory of its own to add; the env is returned untouched.
  */
-export function prependShellDir(env: NodeJS.ProcessEnv, shell: string): NodeJS.ProcessEnv {
+export function prependShellDir(env: NodeJS.ProcessEnv, shell: string, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
   if (!isAbsolute(shell)) return env;
   const dir = dirname(shell);
   // Windows spells it `Path` in some processes; update the existing key so
   // the child cannot end up with two case-variant PATH entries.
-  const key = Object.keys(env).find((name) => name.toLowerCase() === "path") ?? "PATH";
+  const key = platform === "win32" ? Object.keys(env).find((name) => name.toLowerCase() === "path") ?? "PATH" : "PATH";
   const current = env[key] ?? "";
   return { ...env, [key]: current ? `${dir}${delimiter}${current}` : dir };
 }
@@ -163,7 +164,7 @@ export function prependShellDir(env: NodeJS.ProcessEnv, shell: string): NodeJS.P
  * (the engine's own PATH has no Git dirs either; only the wrapper adds them).
  */
 export function bashSpawnEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const merged: NodeJS.ProcessEnv = extra ? { ...process.env, ...extra } : { ...process.env };
+  const merged = mergeSpawnEnv(process.env, extra);
   return prependShellDir(merged, resolveBash());
 }
 
@@ -196,10 +197,10 @@ export const DEFAULT_TASKS: ScheduleTask[] = [
     kind: "watch",
     // 收盘之后，且刻意避开整点——整点是所有人的默认值。
     schedule: "12 17 * * 1-5",
-    cwd: join(homedir(), ".kalo", "market"),
+    cwd: join(getKaloHome(), "market"),
     // 走 ~/.kalo/market/py 这个 shim，而不是写死某个解释器路径：
     // 哪个 Python 由 shim 在运行时决定（见 src-tauri/src/market_env.rs）。
-    script: '"$HOME/.kalo/market/py" "$HOME/.kalo/skills/market-data/md.py" macro append',
+    script: '"${KALO_HOME:-$HOME/.kalo}/market/py" "${KALO_HOME:-$HOME/.kalo}/skills/market-data/md.py" macro append',
     matchMode: "nonEmpty",
     // 环境没就绪时 shim 走 stderr + exit 1，会告警一次；一天最多一次。
     cooldownMin: 1440,

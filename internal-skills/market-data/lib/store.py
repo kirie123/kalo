@@ -15,7 +15,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-MARKET_DIR = Path.home() / ".kalo" / "market"
+from .paths import kalo_home
+
+MARKET_DIR = kalo_home() / "market"
 DAILY_FILE = MARKET_DIR / "daily.jsonl"
 
 

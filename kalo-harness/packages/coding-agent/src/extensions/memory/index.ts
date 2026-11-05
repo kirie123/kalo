@@ -18,11 +18,11 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { CONFIG_DIR_NAME } from "../../config.ts";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
+import { getKaloHome } from "../../utils/kalo-home.ts";
 
 interface Memory {
 	slug: string;
@@ -42,7 +42,7 @@ const MAX_RESULT_BODY_CHARS = 1500;
 function memoryDir(): string {
 	const override = process.env.KALO_MEMORY_DIR;
 	if (override?.trim()) return override;
-	return join(homedir(), CONFIG_DIR_NAME, "memory");
+	return join(getKaloHome(CONFIG_DIR_NAME), "memory");
 }
 
 /** Summary = first non-empty body line (Markdown heading marks stripped), truncated to 80 chars. */

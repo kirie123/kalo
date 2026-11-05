@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { dataTransferArm, dataTransferStatus } from "../../lib/pi-bridge";
 import { pendingDrafts, preserveDraft, type PendingDraft } from "./drafts";
+import DataLocationCard from "./DataLocationCard";
 
 export default function DataTransferSettings() {
   const [armed, setArmed] = useState(false);
@@ -25,6 +26,8 @@ export default function DataTransferSettings() {
   };
 
   return <section className="transfer-panel">
+    <DataLocationCard key={String(armed)} disabled={busy} onPrepared={() => { void dataTransferStatus().then((s) => setArmed(s.armed)).catch((e) => setError(String(e))); }} />
+    <h2>跨设备导入与导出</h2>
     <p>把个人记忆、笔记、分类和引用附件导出为一个资料包，再导入另一台 Windows 或 macOS 设备。</p>
     <p className="text-dim">迁移需要独立的数据管理窗口，期间不启动对话引擎、网关和后台任务。请同时暂停外部编辑器或同步软件对这些文件的修改。</p>
     {error && <p role="alert" className="transfer-error">{error}</p>}

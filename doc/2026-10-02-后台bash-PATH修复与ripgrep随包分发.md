@@ -22,8 +22,8 @@
 
 在 `scheduler.ts` 新增并导出：
 
-- `prependShellDir(env, shell)`：纯函数。`shell` 是绝对路径时，把它所在的目录前置到 `env` 的 PATH；大小写不敏感地找已有键（Windows 常见 `Path`），没有才用 `PATH`；`shell` 非绝对路径时原样返回。
-- `bashSpawnEnv(extra?)`：把 `extra` 合并到 `process.env`（`extra` 优先）**之后**再调 `prependShellDir`，保证作业自带的 PATH（来自引擎的 `getShellEnv()`）不会把修复顶掉。
+- `prependShellDir(env, shell)`：纯函数。`shell` 是绝对路径时，把它所在的目录前置到 `env` 的 PATH；Windows 大小写不敏感地找已有键，macOS/Linux 只更新 `PATH`；`shell` 非绝对路径时原样返回。
+- `bashSpawnEnv(extra?)`：先用纯函数 `mergeSpawnEnv` 合并父进程和任务环境，再前置 shell 目录。Windows 按大小写不敏感的键合并，后出现的任务值覆盖父值并只保留一个键；macOS/Linux 按精确键合并。不会修改传入对象。
 
 三处 spawn 统一改用 `bashSpawnEnv`：
 
@@ -37,6 +37,7 @@
 
 - Windows 的 PATH 键可能是 `Path`；按已有键更新，避免同一 env 里出现两个大小写不同的 PATH 键。
 - mac / linux：`resolveBash()` 返回 `"bash"`（非绝对路径）→ 不做任何事，行为不变。
+- 2026-10-30 回归：父环境含 `Path`、任务传入 `PATH` 时，普通对象展开会保留两个键，前置 shell 目录又取到旧 `Path`，导致任务 PATH 丢失。修复覆盖两种大小写覆盖方向、父环境自身重复键、空值/删除和 POSIX 大小写区分。集成测试同时区分绝对 shell 与裸 `bash`，后者不应强制出现 PATH 分隔符前缀。
 
 ## 2. 修复 B：ripgrep 随包分发
 
@@ -104,6 +105,7 @@
 ## 4. 测试与验证
 
 - gateway（`bun test` + `bun run typecheck`）：`prependShellDir` 的 PATH 前置、键大小写、非绝对 shell 不变；`bashSpawnEnv(extra)` 在合并 `extra` 后 shell 目录仍在最前。
+- 2026-10-30：Windows 网关类型检查及 164 个测试通过，包含任务环境覆盖、重复键归一和 macOS/Linux 精确键语义回归；桌面端 changed-aware 检查通过。
 - 脚本：`node scripts/fetch-ripgrep.mjs --platform windows-x64` 抓取并执行 staged 二进制的 `--version`；`KALO_RG_FROM=<tar.gz>` 验证 tar 分支；重复执行与 `--check` 验证跳过逻辑。
 - Rust（`cargo test`）：`bundled_tools` 的首次安装、升级、保留用户改动、force、源优先级、命名与权限。
 - 端到端（手工）：打包后确认安装包内 `binaries/rg-*`；启动应用后 `~/.kalo/agent/bin/rg --version`；在后台 job 里 `command -v tail && command -v rg` 均有路径。

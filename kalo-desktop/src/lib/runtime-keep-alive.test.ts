@@ -60,6 +60,13 @@ describe("background keep-alive status", () => {
 });
 
 describe("ordinary parked LRU", () => {
+  it("does not evict the owner of a pending attachment save", () => {
+    const active = runtime(2);
+    const pending = { ...runtime(1), view: { isStreaming: false, attachmentPending: 1 } };
+    expect(selectIdleEvictions([active, pending], active, 0)).toEqual([]);
+    pending.view.attachmentPending = 0;
+    expect(selectIdleEvictions([active, pending], active, 0)).toEqual([pending]);
+  });
   it("excludes active, streaming, connecting and background-protected runtimes from both candidates and quota", () => {
     const active = runtime(0);
     const streaming = runtime(1, false, true);

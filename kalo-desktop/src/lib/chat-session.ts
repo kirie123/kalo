@@ -24,11 +24,20 @@ export type SessionView = Pick<
   | "pendingAsk"
   | "inputDraft"
   | "attachments"
+  | "attachmentPending"
   | "inputQueue"
   | "contextUsage"
   | "sessionFile"
   | "connecting"
 >;
+
+export const SESSION_VIEW_KEYS = new Set<keyof SessionView>([
+  "sessionId", "engineSessionId", "cwd", "expertId", "sessionName",
+  "timeline", "todos", "history", "loadingOlder", "isStreaming", "isCompacting",
+  "currentModel", "thinkingLevel", "steeringMode", "permissionMode", "extensionQueue",
+  "pendingAsk", "inputDraft", "attachments", "attachmentPending", "inputQueue",
+  "contextUsage", "sessionFile", "connecting",
+]);
 
 /** Session-scoped fields reset for every fresh runtime. */
 function freshView(cwd = "", expertId?: string): SessionView {
@@ -49,6 +58,7 @@ function freshView(cwd = "", expertId?: string): SessionView {
     extensionQueue: [],
     pendingAsk: undefined,
     attachments: [],
+    attachmentPending: 0,
     inputQueue: [],
     contextUsage: undefined,
   };

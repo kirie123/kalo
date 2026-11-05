@@ -63,7 +63,7 @@ const SHIM: &str = r#"#!/usr/bin/env bash
 # 只想临时换解释器的话有更省事的办法：export KALO_MARKET_PYTHON=/path/to/python
 set -u
 
-MARKET="$HOME/.kalo/market"
+MARKET="${KALO_HOME:-$HOME/.kalo}/market"
 CACHE="$MARKET/.python-path"
 
 # 打印版本号即代表可用：≥3.10 且非预发布。
@@ -163,10 +163,7 @@ exec "$PY" "$@"
 
 /// Where the shim and the data live. `~/.kalo/market`, same as `cache.py`.
 fn market_dir() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("market"))
+    Ok(crate::kalo_home::root()?.join("market"))
 }
 
 /// What one `ensure_shim` pass did.
@@ -369,6 +366,7 @@ except Exception as exc:
 "#;
 
     let mut cmd = Command::new(resolve_bash());
+    crate::kalo_home::configure_command(&mut cmd)?;
     cmd.arg(&shim).arg("-c").arg(snippet);
     let out = match no_window(&mut cmd).output() {
         Ok(out) => out,

@@ -349,6 +349,11 @@ export function saveAttachmentBytes(name: string, dataBase64: string): Promise<A
   return invoke<AttachmentDraft>("save_attachment_bytes", { name, dataBase64 });
 }
 
+/** Native file-copy clipboard; called only while handling an explicit paste. */
+export function clipboardFilePaths(): Promise<string[]> {
+  return invoke<string[]>("clipboard_file_paths");
+}
+
 /** Open with the system default app (reveal=false) or show in the OS file manager (reveal=true). */
 export function openPath(path: string, reveal = false): Promise<void> {
   return invoke<void>("open_path", { path, reveal });
@@ -767,6 +772,9 @@ export function onTerminalExit(id: string, cb: (info: TerminalExitInfo) => void)
 
 // Personal data transfer is a desktop filesystem contract, not an engine RPC.
 export const dataTransferStatus = () => invoke<TransferStatus>("data_transfer_status");
+export const dataLocationStatus = () => invoke<import("../features/data-transfer/types").DataLocationStatus>("data_location_status");
+export const dataLocationPrepare = (parent: string | null) => invoke<void>("data_location_prepare", { parent });
+export const dataLocationCommit = () => invoke<{ version: number; root: string; backup: string }>("data_location_commit");
 export const dataTransferArm = (armed: boolean) => invoke<void>("data_transfer_arm", { armed });
 export const dataTransferLeave = () => invoke<void>("data_transfer_leave");
 export const dataTransferRecover = () => invoke<void>("data_transfer_recover");

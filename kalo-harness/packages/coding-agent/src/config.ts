@@ -3,6 +3,7 @@ import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
 import { spawnProcessSync } from "./utils/child-process.ts";
+import { getKaloHome } from "./utils/kalo-home.ts";
 import { normalizePath } from "./utils/paths.ts";
 
 // =============================================================================
@@ -517,7 +518,7 @@ export function getAgentDir(): string {
 	if (envDir) {
 		return expandTildePath(envDir);
 	}
-	return join(homedir(), CONFIG_DIR_NAME, "agent");
+	return join(getKaloHome(CONFIG_DIR_NAME), "agent");
 }
 
 /** Get path to user's custom themes directory */

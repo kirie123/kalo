@@ -25,10 +25,7 @@ pub struct SkillMeta {
 
 /// `~/.kalo/skills` (`USERPROFILE`, then `HOME`).
 fn user_skills_root() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("skills"))
+    Ok(crate::kalo_home::root()?.join("skills"))
 }
 
 fn project_skills_root(cwd: &str) -> PathBuf {

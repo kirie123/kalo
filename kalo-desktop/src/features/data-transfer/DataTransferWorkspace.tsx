@@ -8,6 +8,7 @@ import {
   prepareDataImport, resolveDataImport, undoDataImport,
 } from "../../lib/pi-bridge";
 import TransferPreviewView from "./TransferPreview";
+import DataLocationCard from "./DataLocationCard";
 import type { TransferChoice, TransferItem, TransferJournal, TransferPreview, TransferProgress, TransferStatus } from "./types";
 
 const states: Record<string, string> = { committed: "已完成", undone: "已撤销", rolledBack: "已回滚", prepared: "准备中", applying: "写入中", undoing: "撤销中" };
@@ -90,6 +91,7 @@ export default function DataTransferWorkspace({ initialStatus }: { initialStatus
       {error && <p role="alert" className="transfer-error">{error}</p>}
       {message && <p role="status" className="transfer-card">{message}</p>}
       {busy && <div role="status" aria-live="polite" className="transfer-progress"><span>{progress?.phase || "正在处理，请勿关闭窗口…"}</span>{progress && <><progress max={Math.max(1, progress.total)} value={progress.completed} /><span>{progress.completed} / {progress.total}</span></>}</div>}
+      <DataLocationCard maintenance disabled={blocked || !!preview} run={run} />
       {!preview && <div className="transfer-columns">
         <section className="transfer-card"><h2>导出资料包</h2><p>包含引用的本地附件，图片路径会转换为可跨设备使用的相对路径。</p>
           <div className="transfer-actions"><label><input type="checkbox" checked={memory} disabled={busy} onChange={(e) => setMemory(e.target.checked)} />个人记忆</label><label><input type="checkbox" checked={notes} disabled={busy} onChange={(e) => setNotes(e.target.checked)} />全部笔记与分类</label></div>

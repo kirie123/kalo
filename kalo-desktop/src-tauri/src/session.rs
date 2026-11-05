@@ -208,6 +208,7 @@ impl PiProcess {
         let pi_path = resolve_pi_path()?;
 
         let mut cmd = Command::new(&pi_path);
+        crate::kalo_home::configure_command(&mut cmd)?;
         let args = if task.is_some() { vec![OsString::from("--mode"), OsString::from("rpc")] } else { engine_args(Path::new(cwd)) };
         cmd.args(args)
             .current_dir(cwd)

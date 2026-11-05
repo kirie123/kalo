@@ -102,10 +102,7 @@ impl ExpertCtx {
 
 /// `~/.kalo/experts.json`
 pub(crate) fn registry_file() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("experts.json"))
+    Ok(crate::kalo_home::root()?.join("experts.json"))
 }
 
 fn validate(expert: &Expert) -> Result<(), String> {

@@ -95,10 +95,7 @@ pub struct KnowledgeSearchHit {
 }
 
 fn knowledge_root() -> Result<PathBuf, String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve user home directory".to_string())?;
-    Ok(PathBuf::from(home).join(".kalo").join("knowledge"))
+    Ok(crate::kalo_home::root()?.join("knowledge"))
 }
 
 /// The single gate every traversal goes through: `.`-prefixed directories

@@ -18,7 +18,9 @@ from typing import Any
 
 import requests
 
-FILINGS_DIR = Path.home() / ".kalo" / "filings"
+from .paths import kalo_home
+
+FILINGS_DIR = kalo_home() / "filings"
 ORG_CACHE = FILINGS_DIR / ".orgid.json"
 
 TIMEOUT = 30

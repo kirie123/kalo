@@ -12,9 +12,8 @@
 
 use std::fs;
 use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use base64::Engine;
 use serde::Serialize;
@@ -23,8 +22,6 @@ const DEFAULT_MAX_BYTES: usize = 256 * 1024;
 const BINARY_PROBE_BYTES: usize = 8 * 1024;
 /// Images above this go to the model as a path instead of inline bytes.
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
-/// Upper bound on a single pasted payload (bytes, before base64 decoding).
-const MAX_PASTE_BYTES: usize = 32 * 1024 * 1024;
 /// Cap for `read_file_bytes`. Base64 inflates by 4/3 and the payload crosses
 /// the IPC bridge as a JSON string, so this is deliberately far below what the
 /// text preview allows per call.
@@ -253,8 +250,8 @@ pub fn read_file_bytes(path: &str, max_bytes: Option<usize>) -> Result<FileBytes
 /// `Makefile`) without protecting anything, since we no longer parse content.
 pub fn read_attachment(path: &str) -> Result<AttachmentData, String> {
     let p = Path::new(path);
-    if !p.is_file() {
-        return Err(format!("not a file: {path}"));
+    if !p.is_file() && !p.is_dir() {
+        return Err(format!("文件或目录不存在：{path}"));
     }
     let name = p
         .file_name()
@@ -267,7 +264,7 @@ pub fn read_attachment(path: &str) -> Result<AttachmentData, String> {
 
     // Oversized images fall through to a path reference rather than failing:
     // the model can still read (and downscale) them on demand.
-    if IMAGE_EXTS.contains(&ext.as_str()) {
+    if p.is_file() && IMAGE_EXTS.contains(&ext.as_str()) {
         if let Some(image) = read_image_attachment(p, &name, &ext)? {
             return Ok(image);
         }
@@ -286,59 +283,7 @@ pub fn read_attachment(path: &str) -> Result<AttachmentData, String> {
 /// session is reopened weeks later, which rules out both a temp directory and
 /// any age-based cleanup. `~/.kalo/attachments` therefore only grows.
 pub fn save_attachment_bytes(name: &str, data_base64: &str) -> Result<AttachmentData, String> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64)
-        .map_err(|e| format!("invalid base64 payload: {e}"))?;
-    if bytes.len() > MAX_PASTE_BYTES {
-        return Err("文件过大".to_string());
-    }
-    let file_name = sanitize_file_name(name);
-    let dir = unique_attachment_dir()?;
-    fs::create_dir_all(&dir).map_err(|e| format!("cannot create attachment dir: {e}"))?;
-    let path = dir.join(&file_name);
-    fs::write(&path, &bytes).map_err(|e| format!("cannot write attachment: {e}"))?;
-    Ok(AttachmentData::File {
-        name: file_name,
-        path: path.to_string_lossy().into_owned(),
-    })
-}
-
-/// Reduce an untrusted name to a plain file name: no separators, no `..`,
-/// never empty.
-fn sanitize_file_name(name: &str) -> String {
-    let base = name
-        .rsplit(|c| c == '/' || c == '\\')
-        .next()
-        .unwrap_or(name)
-        .trim()
-        .trim_matches('.');
-    let cleaned: String = base
-        .chars()
-        .filter(|c| !matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') && !c.is_control())
-        .collect();
-    if cleaned.is_empty() {
-        "attachment".to_string()
-    } else {
-        cleaned
-    }
-}
-
-/// A directory unique per call under `~/.kalo/attachments`, so two pastes of
-/// the same file name cannot clobber each other.
-fn unique_attachment_dir() -> Result<PathBuf, String> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "cannot resolve home directory".to_string())?;
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    Ok(PathBuf::from(home)
-        .join(".kalo")
-        .join("attachments")
-        .join(format!("{}-{nanos}-{n}", std::process::id())))
+    crate::attachment_storage::save(name, data_base64)
 }
 
 /// Read an image small enough to inline. `None` means "too big" — the caller
@@ -722,6 +667,19 @@ fn same_bytes(a: &Path, b: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn directory_attachments_are_references_not_recursive_reads() {
+        let dir = std::env::temp_dir().join(format!("kalo-dir-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.to_string_lossy();
+        match read_attachment(&path).unwrap() {
+            AttachmentData::File { path: actual, .. } => assert_eq!(actual, path),
+            _ => panic!("directory must be a path reference"),
+        }
+        fs::remove_dir(&dir).unwrap();
+        assert!(read_attachment(&path).is_err());
+    }
 
     #[test]
     fn url_detection_covers_the_schemes_the_ui_opens() {

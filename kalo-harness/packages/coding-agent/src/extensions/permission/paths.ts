@@ -12,8 +12,8 @@
  * prefixes — otherwise `D:\work` would swallow `D:\work-old`.
  */
 
-import { homedir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
+import { getKaloHome } from "../../utils/kalo-home.ts";
 
 /**
  * Split an absolute path into comparable segments. Case is folded because both
@@ -60,7 +60,7 @@ export function protectedWritePaths(agentDir: string): string[] {
 
 /** Default agent dir; mirrors `getAgentDir()` without importing the config module. */
 export function defaultAgentDir(): string {
-	return resolve(homedir(), ".kalo", "agent");
+	return resolve(getKaloHome(), "agent");
 }
 
 /** Whether writing `target` would touch a protected file. */

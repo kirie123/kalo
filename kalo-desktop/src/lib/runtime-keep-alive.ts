@@ -9,7 +9,7 @@ export function backgroundKeepAliveStatus(req: RpcExtensionUIRequest): boolean |
 interface ParkedRuntime {
   backgroundKeepAlive: boolean;
   lastActive: number;
-  view: { isStreaming: boolean; connecting?: boolean };
+  view: { isStreaming: boolean; connecting?: boolean; attachmentPending?: number };
 }
 
 /** Ordinary LRU only: explicit close/restart must not use this selection. */
@@ -19,7 +19,7 @@ export function selectIdleEvictions<T extends ParkedRuntime>(
   maxParked: number,
 ): T[] {
   const idle = [...runtimes].filter(
-    (rt) => rt !== active && !rt.view.isStreaming && !rt.view.connecting && !rt.backgroundKeepAlive,
+    (rt) => rt !== active && !rt.view.isStreaming && !rt.view.connecting && !rt.view.attachmentPending && !rt.backgroundKeepAlive,
   );
   return idle.sort((a, b) => a.lastActive - b.lastActive).slice(0, Math.max(0, idle.length - maxParked));
 }
