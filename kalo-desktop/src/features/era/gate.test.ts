@@ -27,6 +27,7 @@ function spec(over: Partial<EraRunSpec> = {}): EraRunSpec {
     evolves: ["solution.py"],
     scoreMeaning: "",
     eraBin: null,
+    contract: null,
     ...over,
   };
 }

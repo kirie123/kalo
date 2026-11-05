@@ -53,6 +53,8 @@ export interface EraRunSpec {
    * no longer a spec that cannot run.
    */
   eraBin: string | null;
+  /** Optional task contract path, relative to the workspace. */
+  contract: string | null;
 }
 
 /** Defaults mirror era's own argparse defaults (`era/cli.py:59-123`). */
@@ -73,6 +75,7 @@ export const SPEC_DEFAULTS = {
 
 /** Fields the spec may carry. Anything else is an error, not a silent drop. */
 const KNOWN_KEYS = new Set([
+  "contract",
   "version",
   "name",
   "task",
@@ -155,6 +158,10 @@ export function parseSpec(text: string): SpecParse {
   }
 
   try {
+    if (o.contract !== undefined && o.contract !== null &&
+        (typeof o.contract !== "string" || !o.contract.trim() || /[\r\n\0]/.test(o.contract))) {
+      throw new Error("contract 必须是非空文件路径");
+    }
     const spec: EraRunSpec = {
       version: 1,
       name: typeof o.name === "string" && o.name.trim() ? o.name.trim() : "run",
@@ -179,6 +186,7 @@ export function parseSpec(text: string): SpecParse {
       evolves: Array.isArray(o.evolves) ? o.evolves.filter((x): x is string => typeof x === "string") : [],
       scoreMeaning: typeof o.scoreMeaning === "string" ? o.scoreMeaning : "",
       eraBin: typeof o.eraBin === "string" && o.eraBin.trim() ? o.eraBin.trim() : null,
+      contract: typeof o.contract === "string" ? o.contract.trim() : null,
     };
     return { ok: true, spec };
   } catch (e) {
@@ -198,6 +206,7 @@ export function shq(s: string): string {
 
 /** Everything machine-specific that the spec deliberately does not carry. */
 export interface EraLaunchOptions {
+  contractPath?: string;
   /** Absolute path to the run's output directory (must not exist yet). */
   outDir: string;
   /** Absolute path to the seed directory. */
@@ -271,6 +280,7 @@ export function buildServeCommand(spec: EraRunSpec, opts: EraLaunchOptions): str
     args.push("--holdout-eval", shq(spec.holdoutEval), "--holdout-when", spec.holdoutWhen);
   }
   if (spec.ideas) args.push("--ideas", shq(spec.ideas));
+  if (spec.contract) args.push("--contract", shq(opts.contractPath ?? spec.contract));
   if (spec.extraInstruction) args.push("--extra-instruction", shq(spec.extraInstruction));
   return args.join(" ");
 }
@@ -302,6 +312,7 @@ export function serializeSpec(spec: EraRunSpec): string {
   if (spec.holdoutWhen !== SPEC_DEFAULTS.holdoutWhen) o.holdoutWhen = spec.holdoutWhen;
   if (spec.recombineEvery !== SPEC_DEFAULTS.recombineEvery) o.recombineEvery = spec.recombineEvery;
   if (spec.ideas) o.ideas = spec.ideas;
+  if (spec.contract) o.contract = spec.contract;
   if (spec.extraInstruction) o.extraInstruction = spec.extraInstruction;
   // `eraBin` is intentionally not written back: it is a machine-level fact,
   // and round-tripping it would re-introduce it into specs that get shared.

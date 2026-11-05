@@ -126,6 +126,8 @@ export default function EraGate({ workspace, spec, seedDir, onStart, onAskAgent,
           <dd>{spec.evalCmd}</dd>
           <dt>方向</dt>
           <dd>{spec.metricGoal === "max" ? "越大越好" : "越小越好"}</dd>
+          <dt className="text-dim">验收规则</dt>
+          <dd>{spec.contract ?? "未配置（本次仅比较搜索分数）"}</dd>
           {spec.scoreMeaning && (
             <>
               <dt>分数含义</dt>

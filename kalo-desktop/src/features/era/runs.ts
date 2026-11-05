@@ -183,6 +183,9 @@ export async function startRun(workspace: string, spec: EraRunSpec): Promise<Sta
     agentBin: paths.engineBin,
     eraCmd: resolved.location.cmd,
     evalCmd: withPython(spec.evalCmd, resolved.location.python),
+    contractPath: spec.contract
+      ? (/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(spec.contract) ? spec.contract : `${workspace}/${spec.contract}`)
+      : undefined,
   });
   const jobId = await jobStart({
     label: `演化 ${spec.name}`,

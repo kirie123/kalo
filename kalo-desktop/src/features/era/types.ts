@@ -12,7 +12,12 @@
  */
 
 /** Record kinds written to `<out>/trace.jsonl` (era/events.py TRACE_KINDS). */
+import type { AcceptanceStage, AcceptedArtifact, AcceptanceRequirement } from "./acceptance";
+
 export type EraTraceKind =
+  | "contract_frozen"
+  | "acceptance_stage"
+  | "acceptance_finished"
   | "run_started"
   | "config_warning"
   | "select"
@@ -99,6 +104,13 @@ export interface EraNode {
 
 /** The whole folded run. */
 export interface EraTree {
+  contractId: string | null;
+  contractName: string | null;
+  acceptanceRequirements: AcceptanceRequirement[];
+  acceptanceStatus: string;
+  acceptanceReason: string;
+  acceptanceStages: AcceptanceStage[];
+  accepted: AcceptedArtifact | null;
   nodes: EraNode[];
   /** Node ids in creation order — the order era writes them. */
   order: number[];

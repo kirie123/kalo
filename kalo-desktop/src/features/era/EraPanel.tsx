@@ -20,6 +20,7 @@ import { chatStore } from "../../lib/chat-store";
 import { jobStop, openPath, readTextSince } from "../../lib/pi-bridge";
 import type { BackgroundJob } from "../../types";
 import EraGate from "./EraGate";
+import EraAcceptance from "./EraAcceptance";
 import EraNodeDetail from "./EraNodeDetail";
 import EraSetup from "./EraSetup";
 import EraWizard from "./EraWizard";
@@ -363,7 +364,7 @@ function RunView({ run, onBack }: { run: EraRunRef; onBack: () => void }) {
       .map((n) => ({ x: n.id, y: n.score as number, key: n.id }));
     const out: ChartSeries[] = [
       { id: "nodes", label: "每个节点", points, shape: "scatter", color: "var(--dim, #888)" },
-      { id: "best", label: "当前最好", points: bestSoFarSeries(tree), color: "var(--ok)" },
+      { id: "best", label: "原始分数历史最好", points: bestSoFarSeries(tree), color: "var(--ok)" },
     ];
     const holdout = tree.nodes
       .filter((n) => n.holdoutScore !== null && n.holdoutOk !== false)
@@ -407,7 +408,7 @@ function RunView({ run, onBack }: { run: EraRunRef; onBack: () => void }) {
 
       {/* Headline numbers */}
       <div className="grid grid-cols-4 gap-2">
-        <Stat label="最好分数" value={fmt(best?.score ?? null)} sub={best ? best.name : ""} />
+        <Stat label="搜索冠军分数" value={fmt(best?.score ?? null)} sub={best ? `${best.name}${tree.config.best_by === "lcb" ? " · 按保守分选优" : ""}` : ""} />
         <Stat
           label="进度"
           value={`${tree.nodes.filter((n) => n.parent !== null).length}${tree.budget ? ` / ${tree.budget}` : ""}`}
@@ -424,6 +425,8 @@ function RunView({ run, onBack }: { run: EraRunRef; onBack: () => void }) {
           sub={tree.unparsedLines ? `${tree.unparsedLines} 行无法解析` : ""}
         />
       </div>
+
+      <EraAcceptance tree={tree} onOpen={() => openPath(`${run.dir}/accepted`, false)} />
 
       {tree.warnings.map((w, i) => (
         <div key={i} className="rounded-md border border-[var(--warn,#d29922)] px-3 py-2 text-xs">

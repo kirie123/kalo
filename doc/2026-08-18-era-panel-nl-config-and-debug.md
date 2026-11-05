@@ -305,3 +305,7 @@ era 特有（全部关在 `src/features/era/` 里）：
 
 - **V-0**：`era` 没装在当前环境（`era: command not found`），没能手工跑通 `examples/poly`，也就没能实测 `.era/engine-trace.jsonl` 的字段。代码上按「未知事件降级显示 type」处理，不会因此崩。
 - **V-5 导出最优程序**：没做。
+
+### 2026-10-28 补充
+
+任务契约与分级验收已接入，详见 [契约与验收设计](2026-10-28-era-contract-acceptance.md)。`era-run.json` 可指定 `contract`；面板区分搜索冠军与完整验收产物，并提供通过后的目录入口。新增离线 `era serve` 日志样本用于跨项目协议验证；这不替代桌面 UI 手工验收。

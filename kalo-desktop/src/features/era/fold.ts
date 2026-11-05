@@ -17,6 +17,7 @@
  */
 
 import type { EraEventLine, EraNode, EraNodeState, EraTraceRecord, EraTree } from "./types";
+import { parseAcceptanceResult, parseAcceptanceStage, parseRequirements, acceptanceLabel } from "./acceptance";
 
 /** How many folded event lines to keep for the event-stream view. */
 const MAX_EVENT_LINES = 400;
@@ -97,8 +98,8 @@ export function bestNode(tree: EraTree): EraNode | null {
   const sign = tree.metricGoal === "max" ? 1 : -1;
   let best = scored[0];
   for (const n of scored.slice(1)) {
-    const a = sign * (n.score as number);
-    const b = sign * (best.score as number);
+    const a = sign * (n.selectionScore ?? n.score as number);
+    const b = sign * (best.selectionScore ?? best.score as number);
     if (a > b || (a === b && n.id < best.id)) best = n;
   }
   return best;
@@ -140,6 +141,8 @@ export class EraFolder {
   private seqCounter = 0;
   private readonly byId = new Map<number, EraNode>();
   private readonly tree: EraTree = {
+    contractId: null, contractName: null, acceptanceRequirements: [], acceptanceStatus: "NOT_CONFIGURED",
+    acceptanceReason: "", acceptanceStages: [], accepted: null,
     nodes: [],
     order: [],
     config: {},
@@ -179,6 +182,8 @@ export class EraFolder {
     this.byId.clear();
     this.lines = [];
     Object.assign(this.tree, {
+      contractId: null, contractName: null, acceptanceRequirements: [], acceptanceStatus: "NOT_CONFIGURED",
+      acceptanceReason: "", acceptanceStages: [], accepted: null,
       nodes: [],
       order: [],
       config: {},
@@ -208,6 +213,8 @@ export class EraFolder {
       nodes: [...this.byId.values()].sort((a, b) => a.id - b.id).map((n) => ({ ...n })),
       order: [...this.tree.order],
       warnings: [...this.tree.warnings],
+      acceptanceStages: this.tree.acceptanceStages.map((s) => ({ ...s, checks: [...s.checks] })),
+      acceptanceRequirements: this.tree.acceptanceRequirements.map((s) => ({ ...s, checks: [...s.checks] })),
     };
   }
 
@@ -251,6 +258,23 @@ export class EraFolder {
   private apply(rec: EraTraceRecord): void {
     const tsMs = rec.ts !== undefined && num(rec.ts) !== null ? (rec.ts as number) * 1000 : null;
     switch (rec.kind) {
+      case "contract_frozen":
+        this.tree.acceptanceRequirements = parseRequirements(rec.stages);
+        this.tree.contractId = str(rec.contract_id) || null;
+        this.tree.contractName = str(rec.name) || null;
+        this.tree.acceptanceStatus = "NOT_RUN";
+        return;
+      case "acceptance_stage":
+        this.tree.acceptanceStages.push(parseAcceptanceStage(rec));
+        if (rec.scope === "final") this.tree.acceptanceStatus = "RUNNING";
+        return;
+      case "acceptance_finished": {
+        const result = parseAcceptanceResult(rec.acceptance, rec.accepted, this.tree.contractId, this.tree.acceptanceRequirements);
+        this.tree.acceptanceStatus = result.status;
+        this.tree.acceptanceReason = result.reason;
+        this.tree.accepted = result.accepted;
+        return;
+      }
       case "run_started": {
         const config = (rec.config as Record<string, unknown>) ?? {};
         this.tree.config = config;
@@ -366,6 +390,12 @@ export class EraFolder {
         return;
       }
       case "run_finished": {
+        if (rec.acceptance) {
+          const result = parseAcceptanceResult(rec.acceptance, rec.accepted, this.tree.contractId, this.tree.acceptanceRequirements);
+          this.tree.acceptanceStatus = result.status;
+          this.tree.acceptanceReason = result.reason;
+          this.tree.accepted = result.accepted;
+        }
         this.tree.finished = true;
         this.tree.finishedAtMs = tsMs;
         this.tree.bestNodeId = intOrNull(rec.best_node_id);
@@ -405,6 +435,10 @@ export class EraFolder {
 /** True when a record reports something that went wrong. */
 export function isFailure(rec: EraTraceRecord): boolean {
   switch (rec.kind) {
+    case "acceptance_stage":
+      return rec.status !== "PASS";
+    case "acceptance_finished":
+      return (rec.acceptance as Record<string, unknown> | null)?.status !== "PASS";
     case "evaluated":
       return !bool(rec.eval_ok, false);
     case "mutation_finished":
@@ -428,6 +462,12 @@ function fmt(n: number | null, digits = 6): string {
 /** One-line human projection of a record. The raw JSON stays available. */
 export function describe(rec: EraTraceRecord): string {
   switch (rec.kind) {
+    case "contract_frozen":
+      return `验收规则已固定：${str(rec.name)}`;
+    case "acceptance_stage":
+      return `${rec.scope === "final" ? "最终验收" : "快速检查"} ${str(rec.stage)}：${str(rec.status)} ${str(rec.reason)}`;
+    case "acceptance_finished":
+      return acceptanceLabel(str((rec.acceptance as Record<string, unknown> | null)?.status));
     case "run_started": {
       const cfg = (rec.config as Record<string, unknown>) ?? {};
       return `开始：预算 ${String(cfg.budget ?? "?")} 次扩展，目标 ${String(cfg.metric_goal ?? "max")}`;
