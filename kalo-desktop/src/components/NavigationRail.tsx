@@ -1,14 +1,12 @@
 import AppIcon, { type IconName } from "./AppIcon";
 
-export type AppPage = "chat" | "workbench" | "settings" | "era" | "notes" | "automation" | "experts" | "investment";
+export type AppPage = "chat" | "workbench" | "settings" | "era" | "notes" | "automation" | "investment";
 
 const items: Array<{ page: AppPage; icon: IconName; label: string }> = [
   { page: "chat", icon: "home", label: "对话" },
   { page: "workbench", icon: "inbox", label: "工作台" },
   { page: "notes", icon: "note", label: "笔记" },
   { page: "automation", icon: "clock", label: "自动化" },
-  { page: "experts", icon: "users", label: "数字专家" },
-  { page: "era", icon: "sprout", label: "演化" },
   { page: "investment", icon: "chart", label: "投行" },
 ];
 

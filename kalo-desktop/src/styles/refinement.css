@@ -19,7 +19,9 @@ svg { vertical-align: -.125em; }
   transition: box-shadow 180ms var(--ease-settle), background-color 180ms var(--ease-settle);
 }
 .composer-surface:focus-within { box-shadow: var(--shadow-focus), var(--shadow-composer); }
-.composer-surface > textarea { min-height: 76px; padding: 18px 18px 8px; }
+/* Compact by design: the transcript is the page's subject, the composer is a
+   control. 76px of empty text box read as a second content column. */
+.composer-surface > textarea { min-height: 56px; padding: 14px 16px 6px; }
 .sidebar-search { transition: box-shadow 180ms var(--ease-settle); }
 .sidebar-search:focus-within { box-shadow: var(--shadow-focus); }
 :is(input.border, textarea.border, select.border):focus-visible {

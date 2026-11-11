@@ -58,10 +58,12 @@
 .investment-chart-legend i { display: inline-block; width: 16px; height: 2px; background: var(--text); }
 .investment-chart-legend i.benchmark { background: var(--tone-blue); margin-inline-start: 10px; }
 .investment-sparkline { width: 112px; height: 32px; }
-.investment-table { margin: 12px 0 24px; max-height: 560px; }
+.investment-table { margin: 12px 0 24px; }
 .investment table { border-collapse: separate; border-spacing: 0; }
 .investment :is(th, td) { padding: 12px 14px; font-variant-numeric: tabular-nums; }
-.investment th { position: sticky; top: 0; background: var(--bg-sidebar); font-weight: 400; padding-block: 9px; z-index: 1; }
+/* 表头不再 position: sticky：表格随页面滚动（.investment-table 不再自开纵向滚动），
+   而粘性表头只有在表格自己是滚动容器时才跟得住，两件事不能兼得。 */
+.investment th { background: var(--bg-sidebar); font-weight: 400; padding-block: 9px; }
 .investment td { font-size: 14px; }
 .investment tr:hover td { background: var(--bg-card); }
 .investment .number { text-align: end; direction: ltr; }
@@ -96,6 +98,8 @@
 .investment-flow-bars { display: grid; gap: 8px; margin: 20px 0 32px; }
 .investment-flow-bars button { display: grid; grid-template-columns: 145px minmax(50px, 1fr) 95px; align-items: center; gap: 16px; width: 100%; border: 0; border-radius: 0; padding: 9px 0; text-align: start; background: transparent; }
 .investment-flow-bars strong { text-align: end; font-size: 14px; font-weight: 500; }
+/* 缺口行不再把「数据不足」四个字塞进金额列：一枚小标，右对齐后与数字列同一基线。 */
+.investment-flow-bars strong .investment-badge { font-size: 11px; }
 .investment-flow-track { display: block; height: 20px; border-inline-start: .5px solid var(--border); }
 .investment-flow-track i { display: block; height: 100%; background: var(--danger); opacity: .65; border-radius: 0 2px 2px 0; }
 .investment-flow-track i.is-negative { background: var(--ok); }

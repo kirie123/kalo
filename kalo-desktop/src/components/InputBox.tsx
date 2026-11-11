@@ -458,7 +458,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
         {/* Toolbar — capability switches on the left, context scope + send on
             the right. The working directory and the model live in the footer
             below the card, so this row stays readable. */}
-        <div className="composer-toolbar flex items-center gap-3 px-3 pb-3 pt-1">
+        <div className="composer-toolbar flex items-center gap-3 px-3 pb-2 pt-1">
           <button
             onClick={() => void pickAttachments()}
             title="添加附件"
@@ -536,7 +536,7 @@ export default function InputBox({ promptContext }: { promptContext?: string } =
       </div>
 
       {/* Footer below the card: where the run happens, and with what model. */}
-      <div className="composer-footer mt-2 flex items-center gap-1 px-1.5">
+      <div className="composer-footer mt-1.5 flex items-center gap-1 px-1.5">
         <button
           onClick={() => void pickCwd()}
           title={chat.cwd ? `工作目录：${chat.cwd}` : "选择工作目录"}

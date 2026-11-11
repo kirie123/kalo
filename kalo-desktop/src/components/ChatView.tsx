@@ -40,7 +40,7 @@ export default function ChatView({ promptContext }: { promptContext?: string } =
     <div ref={rootRef} className="relative flex min-h-0 flex-1 flex-col">
       <MessageList />
       {/* zoom (not transform) so the composer keeps its normal layout box. */}
-      <div className="shrink-0 px-4 pb-4 pt-1" style={{ zoom }}>
+      <div className="shrink-0 px-4 pb-3 pt-1" style={{ zoom }}>
         <TodoPanel />
         <AskUserPanel />
         <InputBox promptContext={promptContext} />

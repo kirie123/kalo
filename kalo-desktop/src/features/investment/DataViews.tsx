@@ -44,17 +44,18 @@ export function FlowView({
       <div className="investment-flow-bars">{rows.map(({ instrument, flow }) => <button key={instrument.code} onClick={() => onSelect(instrument.code)}>
         <span>{instrument.name}<small>{instrument.code}</small></span>
         <span className="investment-flow-track"><i className={flow.total != null && flow.total < 0 ? "is-negative" : ""} style={{ width: `${flow.total == null ? 0 : Math.abs(flow.total) / maximum * 100}%` }} /></span>
-        <strong className={flow.total != null && flow.total < 0 ? "investment-down" : "investment-up"}>{flow.total == null ? "数据不足" : `${flow.total > 0 ? "+" : ""}${formatMoney(flow.total / 1e8)}`}</strong>
+        <strong className={flow.total != null && flow.total < 0 ? "investment-down" : "investment-up"}>{flow.total == null ? <span className="investment-badge">缺口</span> : `${flow.total > 0 ? "+" : ""}${formatMoney(flow.total / 1e8)}`}</strong>
       </button>)}</div>
-      <div className="investment-section-title"><h2>窗口明细</h2><span>缺口标的不参与排名</span></div>
+      {/* 明细只留标的口径两列：所属日对整表是同一个值，放进小节标题即可，
+          省掉的整列让「净申购」有空间右对齐。 */}
+      <div className="investment-section-title"><h2>窗口明细</h2><span>缺口标的不参与排名{rows[0] ? ` · 截至 ${rows[0].flow.date}` : ""}</span></div>
       <div className="investment-table">
         <table>
           <thead>
             <tr>
               <th>标的</th>
-              <th>净申购 / 亿元</th>
-              <th>有效日 / 窗口</th>
-              <th>所属日</th>
+              <th className="number">净申购 / 亿元</th>
+              <th className="number">有效日 / 窗口</th>
             </tr>
           </thead>
           <tbody>
@@ -67,13 +68,12 @@ export function FlowView({
                       <small>{i.code}</small>
                     </button>
                   </td>
-                  <td>
-                    {f.total == null ? "数据不足" : formatMoney(f.total / 1e8)}
+                  <td className="number">
+                    {f.total == null ? <span className="investment-badge">缺 {days - f.count} 日</span> : formatMoney(f.total / 1e8)}
                   </td>
-                  <td>
+                  <td className="number">
                     {f.count} / {days}
                   </td>
-                  <td>{f.date}</td>
                 </tr>
               );
             })}

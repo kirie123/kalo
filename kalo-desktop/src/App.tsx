@@ -5,7 +5,6 @@ import ChatView, { ExtensionModal, ToastContainer } from "./components/ChatView"
 import EmptyState from "./components/EmptyState";
 import EraPanel from "./features/era/EraPanel";
 import InvestmentPanel from "./features/investment/InvestmentPanel";
-import ExpertsPanel from "./features/experts/ExpertsPanel";
 import Workbench from "./features/workbench/Workbench";
 import FeedsSettings from "./components/FeedsSettings";
 import JobsCenter from "./components/JobsCenter";
@@ -206,8 +205,9 @@ export default function App() {
   // 「知识笔记」is a full main-pane workspace of its own (three columns), so
   // it takes the pane the same way 演化 does rather than opening a modal.
   const onOpenNotes = useCallback(() => setPage("notes"), []);
-  // 「数字专家」同样是整页面板：列表 + 详情，「开始会话」一键回到聊天页。
-  const onOpenExperts = useCallback(() => setPage("experts"), []);
+  // 「数字专家」现在是设置页的一个分类：专家面板是列表 + 详情两栏，
+  // 放在设置右栏比单开一页更容易和「导入 / 记忆 / 定时任务」一起被找到。
+  const onOpenExperts = useCallback(() => onOpenSettings("experts"), [onOpenSettings]);
 
   // 文件 → 选择工作目录…: same picker as the composer's cwd button.
   const pickCwd = useCallback(() => {
@@ -264,7 +264,7 @@ export default function App() {
           { kind: "item", label: "工作台", checked: page === "workbench", onClick: () => setPage("workbench") },
           { kind: "item", label: "自动化", checked: page === "automation", onClick: onOpenAutomation },
           { kind: "item", label: "笔记", checked: page === "notes", onClick: onOpenNotes },
-          { kind: "item", label: "数字专家", checked: page === "experts", onClick: onOpenExperts },
+          { kind: "item", label: "数字专家", onClick: onOpenExperts },
           { kind: "item", label: "演化", checked: page === "era", onClick: onOpenEra },
           { kind: "sep" },
           ...THEME_OPTIONS.map(
@@ -313,11 +313,9 @@ export default function App() {
         ? "演化"
         : page === "notes"
           ? "笔记"
-          : page === "experts"
-            ? "数字专家"
-            : page === "automation"
-              ? "自动化"
-              : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
+          : page === "automation"
+            ? "自动化"
+            : chat.sessionName || cwdBasename(chat.cwd) || "Kalo";
 
   // 引导层。放在 TitleBar 之下、内容区之上：无边框窗口的拖动与关闭都靠那条
   // 标题栏，盖住它等于把人关在引导里。
@@ -362,7 +360,7 @@ export default function App() {
           {/* Slim header: cwd on the left, file-panel toggle on the right */}
           {page !== "settings" && page !== "investment" && <header className="workspace-header flex shrink-0 items-center justify-between gap-2 border-b border-edge px-5">
             <span className="truncate text-xs text-dim" title={chat.cwd || undefined}>
-              {page === "workbench" ? "工作台 · 委托与交付" : page === "era" ? "演化实验" : page === "notes" ? "个人空间 / 笔记" : page === "experts" ? "数字专家" : page === "automation" ? "自动化 · 定时任务与数据源" : cwdBasename(chat.cwd) || "个人工作空间"}
+              {page === "workbench" ? "工作台 · 委托与交付" : page === "era" ? "演化实验" : page === "notes" ? "个人空间 / 笔记" : page === "automation" ? "自动化 · 定时任务与数据源" : cwdBasename(chat.cwd) || "个人工作空间"}
             </span>
             <div className="flex items-center gap-1">
               <JobsCenter />
@@ -383,8 +381,6 @@ export default function App() {
                 </div>
               ) : page === "notes" ? (
                 <NotesPanel onDataTransfer={() => onOpenSettings("data")} />
-              ) : page === "experts" ? (
-                <ExpertsPanel onLeaveToChat={() => setPage("chat")} />
               ) : page === "automation" ? (
                 <div className="automation-page flex min-h-0 flex-1">
                   {/* 左栏：设置（任务 + 数据源），靠左不再居中 */}

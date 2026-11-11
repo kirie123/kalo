@@ -23,6 +23,7 @@ import AppearanceSettings from "./AppearanceSettings";
 import AppIcon, { type IconName } from "./AppIcon";
 import type { SkinPref, ThemePref } from "../lib/appearance";
 import DataTransferSettings from "../features/data-transfer/DataTransferSettings";
+import ExpertsPanel from "../features/experts/ExpertsPanel";
 
 interface SettingsPageProps {
   theme: ThemePref;
@@ -39,6 +40,7 @@ export type SettingsTab =
   | "models"
   | "skills"
   | "memory"
+  | "experts"
   | "data"
   | "permission"
   | "appearance"
@@ -51,6 +53,7 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "models", label: "模型", icon: "model" },
   { id: "skills", label: "技能", icon: "puzzle" },
   { id: "memory", label: "记忆", icon: "memory" },
+  { id: "experts", label: "数字专家", icon: "users" },
   { id: "data", label: "数据管理", icon: "folder" },
   { id: "permission", label: "权限", icon: "shield" },
   { id: "appearance", label: "外观", icon: "palette" },
@@ -62,7 +65,8 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
 
 const TAB_DESCRIPTIONS: Record<SettingsTab, string> = {
   models: "管理模型服务与连接方式。", skills: "管理可供助手使用的技能。",
-  memory: "查看和整理助手保留的长期记忆。", data: "备份、迁移与管理本地资料。",
+  memory: "查看和整理助手保留的长期记忆。", experts: "导入、查看数字专家与专家团，并查看其记忆与定时任务。",
+  data: "备份、迁移与管理本地资料。",
   permission: "设置工具执行前需要确认的操作。", appearance: "选择皮肤与明暗模式。",
   gateway: "连接消息渠道，查看网关状态。", tasks: "安排定时任务与自动执行。",
   mcp: "连接外部工具与数据服务。", about: "查看版本与应用信息。",
@@ -124,23 +128,30 @@ export default function SettingsPage({ theme, skin, onThemeChange, onSkinChange,
         </div>
       </aside>
 
-      {/* Right: the active tab's panel. */}
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="settings-content mx-auto">
-          <h1>{TABS.find((t) => t.id === tab)?.label}</h1>
-          <p className="settings-description">{TAB_DESCRIPTIONS[tab]}</p>
-          {tab === "models" && <ModelSettings />}
-          {tab === "skills" && <SkillsSettings />}
-          {tab === "memory" && <MemorySettings onDataTransfer={() => selectTab("data")} />}
-          {tab === "data" && <DataTransferSettings />}
-          {tab === "permission" && <PermissionSettings />}
-          {tab === "appearance" && <AppearanceSettings theme={theme} skin={skin} onThemeChange={onThemeChange} onSkinChange={onSkinChange} />}
-          {tab === "gateway" && <GatewaySettings />}
-          {tab === "tasks" && <TasksSettings />}
-          {tab === "mcp" && <McpSettings />}
-          {tab === "about" && <AboutSettings />}
+      {/* Right: the active tab's panel. 数字专家是「列表 + 详情」两栏面板，自己管滚动，
+          塞进 settings-content 的窄栏会被挤成三列，因此它占满右栏且不套外层滚动容器。 */}
+      {tab === "experts" ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <ExpertsPanel onLeaveToChat={onBack} />
         </div>
-      </div>
+      ) : (
+        <div className="min-w-0 flex-1 overflow-y-auto">
+          <div className="settings-content mx-auto">
+            <h1>{TABS.find((t) => t.id === tab)?.label}</h1>
+            <p className="settings-description">{TAB_DESCRIPTIONS[tab]}</p>
+            {tab === "models" && <ModelSettings />}
+            {tab === "skills" && <SkillsSettings />}
+            {tab === "memory" && <MemorySettings onDataTransfer={() => selectTab("data")} />}
+            {tab === "data" && <DataTransferSettings />}
+            {tab === "permission" && <PermissionSettings />}
+            {tab === "appearance" && <AppearanceSettings theme={theme} skin={skin} onThemeChange={onThemeChange} onSkinChange={onSkinChange} />}
+            {tab === "gateway" && <GatewaySettings />}
+            {tab === "tasks" && <TasksSettings />}
+            {tab === "mcp" && <McpSettings />}
+            {tab === "about" && <AboutSettings />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

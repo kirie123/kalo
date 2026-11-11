@@ -212,9 +212,12 @@
   display: block;
 }
 .investment-table {
-  overflow: auto;
   margin: 18px 0;
-  max-height: 600px;
+  /* 横向滚动留给宽表（两融 / 成交明细），纵向一律交给 .investment-main：
+     这里再开一层纵向滚动会与页面滚动条并排，滚轮落到哪层全看指针位置。
+     容器高度由内容决定，overflow-y: hidden 只关掉自开滚动、不裁内容。 */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .investment table {
   border-collapse: collapse;
