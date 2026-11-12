@@ -137,4 +137,25 @@ describe("task runtime with the real AgentSession and offline faux model", () =>
 		expect(calls.find((c) => c.operation === "gate")?.body).toEqual({ tool: "read", input: { path: homedir() } });
 		expect(executions).toEqual([]);
 	});
+
+	it("KALO_TASK_TOOLS narrows the worker tool set and never widens it", async () => {
+		// The gateway sends the profile's allowlist; bash is absent from both the list and the ceiling.
+		vi.stubEnv("KALO_TASK_TOOLS", "read,task_report,task_ask,task_context,bash");
+		const { harness, executions } = await setup("worker");
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("write", { path: "x" }), fauxToolCall("bash", {})], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage([fauxToolCall("task_report", { state: "ready", summary: "已读资料" })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("交付完成"),
+		]);
+		await harness.session.prompt("只读任务");
+		// A narrowed set removes tools; a listed tool the engine never had (bash without allowShell) stays gone.
+		expect(executions).toEqual([]);
+		const active = harness.session.getActiveToolNames?.() ?? [];
+		expect(active).not.toContain("write");
+		expect(active).not.toContain("bash");
+	});
 });

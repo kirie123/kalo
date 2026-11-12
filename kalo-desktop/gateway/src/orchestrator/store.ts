@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { Task } from "./model";
+import { normalize, type Task } from "./model";
 
 /** Open only after the gateway owns the data-root singleton lock. */
 export class TaskStore {
@@ -11,12 +11,12 @@ export class TaskStore {
   }
   atomic<T>(fn: () => T): T { return this.db.transaction(fn)(); }
   all(): Task[] {
-    return (this.db.query("SELECT body FROM tasks").all() as { body: string }[]).map(row => JSON.parse(row.body) as Task);
+    return (this.db.query("SELECT body FROM tasks").all() as { body: string }[]).map(row => normalize(JSON.parse(row.body) as Task));
   }
   get(id: string): Task {
     const row = this.db.query("SELECT body FROM tasks WHERE id=?").get(id) as { body: string } | null;
     if (!row) throw new Error("任务不存在，请刷新列表");
-    return JSON.parse(row.body) as Task;
+    return normalize(JSON.parse(row.body) as Task);
   }
   put(task: Task): void { this.db.query("INSERT OR REPLACE INTO tasks(id,body) VALUES(?,?)").run(task.id, JSON.stringify(task)); }
   once(id: string, fingerprint: string, fn: () => void): void {

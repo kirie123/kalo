@@ -25,6 +25,10 @@ struct Start {
     token: String,
     session_file: Option<String>,
     allow_shell: bool,
+    /// Effective tool allowlist computed by the gateway. Absent from an older gateway: the
+    /// engine falls back to its built-in list and the gateway gate still enforces.
+    #[serde(default)]
+    tools: Vec<String>,
 }
 
 fn reply(app: &AppHandle, value: serde_json::Value) {
@@ -259,6 +263,13 @@ fn launch(app: &AppHandle, start: &Start) -> Result<(), String> {
             return Err("恢复路径不属于会话目录".into());
         }
     }
+    if !start
+        .tools
+        .iter()
+        .all(|t| !t.is_empty() && t.len() <= 40 && t.bytes().all(|c| c.is_ascii_lowercase() || c == b'_'))
+    {
+        return Err("无效的任务工具清单".into());
+    }
     let launch = TaskLaunch {
         role: start.role.clone(),
         endpoint: start.endpoint.clone(),
@@ -266,6 +277,7 @@ fn launch(app: &AppHandle, start: &Start) -> Result<(), String> {
         session_file: start.session_file.clone(),
         session_dir,
         allow_shell: start.allow_shell,
+        tools: start.tools.clone(),
     };
     let mut process = PiProcess::spawn_task(&id, &start.cwd, app.clone(), &launch)?;
     process.source = "workbench".into();

@@ -7,7 +7,7 @@ export default function taskRuntimeExtension(pi: ExtensionAPI): void {
 	const role = process.env.KALO_TASK_ROLE;
 	if (role !== "router" && role !== "worker") return;
 	const client = new TaskClient(process.env.KALO_TASK_ENDPOINT ?? "", process.env.KALO_TASK_TOKEN ?? "");
-	const allowed =
+	const ceiling =
 		role === "router"
 			? ["task_context", "task_decide", "task_ask"]
 			: [
@@ -22,6 +22,9 @@ export default function taskRuntimeExtension(pi: ExtensionAPI): void {
 					"grep",
 					...(process.env.KALO_TASK_ALLOW_SHELL === "1" ? ["bash"] : []),
 				];
+	// The gateway narrows the ceiling by worker profile; it can never widen it.
+	const granted = process.env.KALO_TASK_TOOLS?.split(",").filter(Boolean);
+	const allowed = granted ? ceiling.filter((name) => granted.includes(name)) : ceiling;
 	let terminal = false;
 	const result = (value: unknown) => ({
 		content: [{ type: "text" as const, text: JSON.stringify(value) }],

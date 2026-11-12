@@ -1,8 +1,9 @@
-import type { TaskStatus, TaskView } from "../../shared/workbench";
+import type { TaskStatus, TaskView, WorkerProfile } from "../../shared/workbench";
 export const TASK_LABELS: Record<TaskStatus, string> = {
-  routing: "Router 接单中", queued: "等待 Worker", running: "Worker 执行中", settling: "执行结算中",
+  todo: "待办", routing: "Router 接单中", queued: "等待 Worker", running: "Worker 执行中", settling: "执行结算中",
   waiting: "等你回答", review: "待验收", completed: "已完成", failed: "需要恢复", stopping: "停止中", stopped: "已停止",
 };
+export const PROFILE_LABELS: Record<WorkerProfile, string> = { research: "调研", code: "编码", data: "数据" };
 export const needsAttention = (task: Pick<TaskView, "status">): boolean => ["waiting", "review", "failed"].includes(task.status);
 export const isActiveTask = (task: Pick<TaskView, "status">): boolean => ["routing", "queued", "running", "settling", "stopping"].includes(task.status);
 export function taskSummary(task: TaskView): string {

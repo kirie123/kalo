@@ -237,3 +237,57 @@ describe("durable Router / Worker lifecycle", () => {
     expect(f.store.get(t.id).history.some(h => h.text.includes("未留下可恢复会话"))).toBe(true);
   });
 });
+
+describe("todo, dispatch and worker profiles", () => {
+  test("a draft parks in todo with no run; dispatch queues a worker with the chosen profile; withdraw returns it before start", () => {
+    const f = fixture();
+    f.service.request({ action: "create", actionId: "c", prompt: "调研竞品", cwd: f.cwd, allowShell: true, draft: true });
+    const t = f.store.all()[0];
+    expect(t.status).toBe("todo");
+    expect(t.runs).toHaveLength(0);
+    expect(f.messages.some(m => m.type === "task_worker_start")).toBe(false);
+    f.service.request({ action: "dispatch", actionId: "d", taskId: t.id, profile: "research" });
+    // The dispatch tick already claimed the slot, so withdraw is refused once starting.
+    expect(f.run(t.id).role).toBe("worker");
+    expect(f.run(t.id).profile).toBe("research");
+    const start = f.messages.find(m => m.type === "task_worker_start");
+    expect(start?.type === "task_worker_start" && start.tools.includes("bash")).toBe(false);
+    expect(() => f.service.request({ action: "withdraw", actionId: "w", taskId: t.id })).toThrow("尚未启动");
+  });
+
+  test("withdraw succeeds while the run is still queued behind a busy slot", () => {
+    const f = fixture();
+    const busy = f.task(); f.route(busy.id); // occupies the only workspace slot
+    f.service.request({ action: "create", actionId: "c", prompt: "再做一件", cwd: f.cwd, allowShell: false, draft: true });
+    const t = f.store.all().find(x => x.status === "todo")!;
+    f.service.request({ action: "dispatch", actionId: "d", taskId: t.id });
+    expect(f.store.get(t.id).status).toBe("queued");
+    expect(f.run(t.id).status).toBe("queued");
+    f.service.request({ action: "withdraw", actionId: "w", taskId: t.id });
+    expect(f.store.get(t.id).status).toBe("todo");
+    expect(f.store.get(t.id).runs.every(r => r.status === "ended")).toBe(true);
+    expect(() => f.service.request({ action: "dispatch", actionId: "d2", taskId: busy.id })).toThrow("待办");
+  });
+
+  test("the gate follows the run's frozen profile: research never gets bash even with allowShell", () => {
+    const f = fixture();
+    f.service.request({ action: "create", actionId: "c", prompt: "读资料", cwd: f.cwd, allowShell: true, profile: "research", draft: true });
+    const t = f.store.all()[0];
+    f.service.request({ action: "dispatch", actionId: "d", taskId: t.id });
+    const worker = f.run(t.id);
+    expect(() => f.tool(worker, "gate", { tool: "bash", input: { command: "pwd" } })).toThrow("授权范围");
+    expect(f.tool(worker, "gate", { tool: "write", input: { path: "report.md" } })).toEqual({ ok: true });
+    expect(() => f.service.request({ action: "create", actionId: "x", prompt: "p", cwd: f.cwd, allowShell: false, profile: "admin" })).toThrow("未知执行类型");
+  });
+
+  test("retry counts resumes and rows from before profiles default to code", () => {
+    const f = fixture(); const t = f.task(); const r = f.run(t.id);
+    const legacy = f.store.get(t.id) as unknown as Record<string, unknown>;
+    delete legacy.profile; delete legacy.resumeCount;
+    f.store.put(legacy as never);
+    expect(f.store.get(t.id).profile).toBe("code");
+    f.service.failed(r.id, "启动失败");
+    f.service.request({ action: "retry", actionId: "r", taskId: t.id });
+    expect(f.store.get(t.id).resumeCount).toBe(1);
+  });
+});

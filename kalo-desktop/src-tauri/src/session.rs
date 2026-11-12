@@ -173,6 +173,7 @@ pub struct TaskLaunch {
     pub session_file: Option<String>,
     pub session_dir: PathBuf,
     pub allow_shell: bool,
+    pub tools: Vec<String>,
 }
 
 impl PiProcess {
@@ -228,6 +229,7 @@ impl PiProcess {
                 .env("KALO_TASK_ENDPOINT", &task.endpoint)
                 .env("KALO_TASK_TOKEN", &task.token)
                 .env("KALO_TASK_ALLOW_SHELL", if task.allow_shell { "1" } else { "0" });
+            if task.tools.is_empty() { cmd.env_remove("KALO_TASK_TOOLS"); } else { cmd.env("KALO_TASK_TOOLS", task.tools.join(",")); }
             if let Some(file) = &task.session_file { cmd.arg("--session").arg(file); }
         }
         crate::proc::no_window(&mut cmd);
