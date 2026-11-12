@@ -12,6 +12,8 @@ export function overlaps(a: string, b: string): boolean {
 
 export function workspace(value: string): string {
   if (!isAbsolute(value)) throw new Error("工作目录必须是绝对路径");
+  // A missing directory is the common model mistake; report it as such instead of a raw ENOENT.
+  if (!existsSync(value)) throw new Error(`工作目录不存在：${value}`);
   const path = realpathSync(value);
   if (!statSync(path).isDirectory()) throw new Error("工作目录不存在或不是目录");
   return path;

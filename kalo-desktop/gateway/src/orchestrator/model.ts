@@ -1,5 +1,5 @@
-import type { TaskRole, TaskView, WorkerProfile } from "../../../shared/workbench";
-export type { TaskRole, TaskView, WorkbenchRequest, WorkerProfile } from "../../../shared/workbench";
+import type { OrchestratorMessage, TaskRole, TaskView, WorkerProfile } from "../../../shared/workbench";
+export type { OrchestratorMessage, OrchestratorView, TaskRole, TaskView, WorkbenchRequest, WorkerProfile } from "../../../shared/workbench";
 export { WORKER_PROFILES } from "../../../shared/workbench";
 
 export interface Run {
@@ -12,7 +12,21 @@ export interface Run {
   error?: string; settled?: boolean; ready?: boolean; receipts: Record<string, string>;
 }
 /** Rows written before profiles existed lack these fields; `normalize` fills them on read. */
-export interface Task extends Omit<TaskView, "runs"> { generation: number; runs: Run[] }
+export interface Task extends Omit<TaskView, "runs"> {
+  generation: number; runs: Run[];
+  /** The single global dispatcher row. It is hidden from the task list and owns no goal. */
+  kind?: "orchestrator";
+  /** Orchestrator only: worker notices waiting for the next wake, oldest first. */
+  pending?: string[];
+  /** Orchestrator only: person messages waiting for the current turn to end, oldest first. */
+  personQueue?: string[];
+  /** Orchestrator only: when the newest notice arrived, for wake debouncing. */
+  lastNoticeAt?: string;
+  /** Orchestrator only: the conversation shown in the workbench panel, oldest first. */
+  messages?: OrchestratorMessage[];
+  /** Facts the orchestrator handed a worker, delivered with that task's next run. */
+  notes?: string[];
+}
 export function normalize(task: Task): Task {
   task.profile ??= "code";
   task.resumeCount ??= 0;
@@ -30,7 +44,18 @@ export function workerTools(profile: WorkerProfile, allowShell: boolean): string
   return tools;
 }
 export const ROUTER_TOOLS: readonly string[] = ["task_context", "task_decide", "task_ask"];
+/** The orchestrator routes and reports; it has no file, shell or network tool, by construction. */
+export const ORCHESTRATOR_TOOLS: readonly string[] = [
+  "task_context",
+  "task_read",
+  "task_route",
+  "task_note",
+  "task_request_status",
+  "task_reply",
+  "task_ask",
+];
 export function runTools(run: Pick<Run, "role" | "profile">, task: Pick<Task, "profile" | "allowShell">): string[] {
+  if (run.role === "orchestrator") return [...ORCHESTRATOR_TOOLS];
   return run.role === "router" ? [...ROUTER_TOOLS] : workerTools(run.profile ?? task.profile, task.allowShell);
 }
 export interface StartWorker {

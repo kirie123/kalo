@@ -9,7 +9,7 @@ import type { FeedInfo, FeedSpec } from "./feeds";
 import type { JobProbe, JobRule } from "./jobs/store";
 import type { JobSnapshot } from "./jobs/types";
 import type { ScheduleTask, ScheduleTaskInfo } from "./scheduler";
-import type { TaskView, WorkbenchRequest } from "../../shared/workbench";
+import type { OrchestratorView, TaskView, WorkbenchRequest } from "../../shared/workbench";
 import type { WorkerMessage } from "./orchestrator/model";
 
 /** job_start payload: everything the caller may specify for a command job. */
@@ -67,7 +67,7 @@ export type InCommand =
 export type OutMessage =
   | WorkerMessage
   | { type: "workbench_changed" }
-  | { type: "workbench_reply"; requestId: string; ok: boolean; tasks?: TaskView[]; error?: string }
+  | { type: "workbench_reply"; requestId: string; ok: boolean; tasks?: TaskView[]; orchestrator?: OrchestratorView; error?: string }
   | { type: "pair_qr"; qrDataUrl: string; expiresIn: number }
   | { type: "status"; state: GatewayState; user?: string; message?: string }
   | { type: "error"; message: string }

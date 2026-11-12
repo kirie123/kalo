@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TaskView, WorkbenchRequest } from "../../../shared/workbench";
+import type { OrchestratorView, TaskView, WorkbenchRequest } from "../../../shared/workbench";
 import { onWorkbenchChanged, workbenchRequest } from "../../lib/pi-bridge";
 import { isActiveTask, needsAttention } from "../../lib/workbench-view";
 import AppIcon from "../../components/AppIcon";
+import AssistantPanel from "./AssistantPanel";
 import BoardView from "./BoardView";
 import CreateTask from "./CreateTask";
 import ListView from "./ListView";
@@ -17,6 +18,7 @@ const LAYOUTS: { id: Layout; label: string }[] = [{ id: "list", label: "列表" 
 
 export default function Workbench({ cwd: defaultCwd }: { cwd: string }) {
   const [tasks, setTasks] = useState<TaskView[]>([]);
+  const [orchestrator, setOrchestrator] = useState<OrchestratorView>();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [connectionError, setConnectionError] = useState("");
@@ -38,7 +40,10 @@ export default function Workbench({ cwd: defaultCwd }: { cwd: string }) {
     try {
       const reply = await workbenchRequest({ action: "list" });
       if (!reply.ok || !reply.tasks) throw new Error(reply.error || "工作台没有返回任务列表");
-      if (alive.current) { setTasks(reply.tasks); setLoaded(true); setConnectionError(""); }
+      if (alive.current) {
+        setTasks(reply.tasks); setLoaded(true); setConnectionError("");
+        if (reply.orchestrator) setOrchestrator(reply.orchestrator);
+      }
     } catch (err) { if (alive.current) setConnectionError(`工作台暂不可用：${String(err)}`); }
     finally { refreshing.current = false; }
   }, []);
@@ -60,7 +65,9 @@ export default function Workbench({ cwd: defaultCwd }: { cwd: string }) {
       if (actionId.current?.fingerprint !== fingerprint) actionId.current = { fingerprint, id: crypto.randomUUID() };
       const reply = await workbenchRequest({ ...request, actionId: actionId.current.id } as WorkbenchRequest);
       if (!reply.ok || !reply.tasks) throw new Error(reply.error || "任务操作失败");
-      setTasks(reply.tasks); actionId.current = null;
+      setTasks(reply.tasks);
+      if (reply.orchestrator) setOrchestrator(reply.orchestrator);
+      actionId.current = null;
       if (request.action === "create") { setCreating(false); setFilter("all"); setSelected(reply.tasks[0]?.id ?? ""); }
     } catch (err) { setError(String(err)); }
     finally { setBusy(false); }
@@ -92,6 +99,7 @@ export default function Workbench({ cwd: defaultCwd }: { cwd: string }) {
         </div>
       </header>
       {(error || connectionError) && <div className="wb-error" role="alert">{error || connectionError}<button className="wb-button" onClick={() => { setError(""); void refresh(); }}>刷新状态</button></div>}
+      <AssistantPanel view={orchestrator} busy={busy} perform={perform} onError={setError} />
       {creating && <CreateTask defaultCwd={defaultCwd} busy={busy} perform={perform} onCancel={() => setCreating(false)} onError={setError} />}
       {!loaded && !connectionError && <p className="wb-empty">正在连接任务服务…</p>}
       {loaded && <div className={`wb-layout wb-layout-${layout}`} data-detail={task ? "open" : undefined}>

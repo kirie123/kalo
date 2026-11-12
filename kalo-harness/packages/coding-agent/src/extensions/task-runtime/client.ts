@@ -14,7 +14,7 @@ export class TaskClient {
 	}
 
 	async request(
-		operation: "context" | "gate" | "ask" | "report" | "decide",
+		operation: "context" | "gate" | "ask" | "report" | "decide" | "read" | "route" | "note" | "reply",
 		body: unknown,
 		signal?: AbortSignal,
 	): Promise<unknown> {

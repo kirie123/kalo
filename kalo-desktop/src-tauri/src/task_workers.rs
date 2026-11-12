@@ -238,7 +238,7 @@ fn launch(app: &AppHandle, start: &Start) -> Result<(), String> {
             return Ok(());
         }
     }
-    if !matches!(start.role.as_str(), "router" | "worker") {
+    if !matches!(start.role.as_str(), "orchestrator" | "router" | "worker") {
         return Err("未知任务角色".into());
     }
     let port = start

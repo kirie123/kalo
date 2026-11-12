@@ -16,13 +16,16 @@ function fixture(reconcile = true) {
   mkdirSync(cwd); mkdirSync(sessionsRoot);
   const store = new TaskStore(join(root, "tasks.sqlite"));
   const messages: WorkerMessage[] = [];
-  const host: TaskHost = { send: message => messages.push(message), changed() {}, endpoint: () => "http://127.0.0.1:12345", sessionsRoot };
+  const orchestratorDir = join(root, "assistant");
+  mkdirSync(orchestratorDir);
+  const host: TaskHost = { send: message => messages.push(message), changed() {}, endpoint: () => "http://127.0.0.1:12345", sessionsRoot, orchestratorDir };
   const service = new TaskService(store, host);
   if (reconcile) service.inventory([]);
   cleanups.push(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   const create = (dir = cwd, allowShell = false) => {
     service.request({ action: "create", actionId: randomUUID(), prompt: "整理资料并生成摘要", cwd: dir, allowShell });
-    return store.all().find(t => !ids.has(t.id))!;
+    // The orchestrator row is bookkeeping, never a task the fixture should pick up.
+    return store.all().find(t => !ids.has(t.id) && t.kind !== "orchestrator")!;
   };
   const ids = new Set<string>();
   const task = (dir = cwd, allowShell = false) => {
@@ -43,8 +46,92 @@ function fixture(reconcile = true) {
     settle(r);
     return run(id);
   };
-  return { root, cwd, sessionsRoot, store, service, host, messages, task, run, tool, settle, route };
+  return { root, cwd, sessionsRoot, orchestratorDir, store, service, host, messages, task, run, tool, settle, route };
 }
+
+describe("orchestrator dispatch", () => {
+  const wakeTurn = (f: ReturnType<typeof fixture>) => {
+    const row = f.store.all().find(t => t.kind === "orchestrator")!;
+    const run = activeRun(row);
+    if (!run) return undefined;
+    f.tool(run, "context", { protocol: 1, role: "orchestrator" });
+    f.service.started(run.id);
+    return run;
+  };
+
+  test("a person's message creates the dispatcher row, wakes one run, and shows in the panel", () => {
+    const f = fixture();
+    expect(f.store.all().some(t => t.kind === "orchestrator")).toBe(false);
+    f.service.request({ action: "orchestrate", actionId: "m1", text: "帮我看一下竞品" });
+    const row = f.store.all().find(t => t.kind === "orchestrator")!;
+    expect(row.messages?.at(-1)).toMatchObject({ role: "user", text: "帮我看一下竞品" });
+    const run = wakeTurn(f);
+    expect(run?.role).toBe("orchestrator");
+    // The dispatcher runs in its own directory, not in any task's workspace.
+    const start = f.messages.find(m => m.type === "task_worker_start");
+    expect(start?.type === "task_worker_start" && start.cwd).toBe(f.orchestratorDir);
+    // The dispatcher is not a task the person sees.
+    expect(f.service.list().some(t => t.id === row.id)).toBe(false);
+  });
+
+  test("task_route creates and dispatches in one call and keeps per-item failures separate", () => {
+    const f = fixture();
+    f.service.request({ action: "orchestrate", actionId: "m1", text: "拆两个任务" });
+    const run = wakeTurn(f)!;
+    const reply = f.tool(run, "route", {
+      callId: "r1",
+      items: [
+        { prompt: "整理资料", cwd: f.cwd, acceptance: "摘要有出处", profile: "research" },
+        { prompt: "越界", cwd: join(f.root, "missing"), acceptance: "x" },
+        { prompt: "调研却要 shell", cwd: f.cwd, profile: "research", allowShell: true },
+      ],
+    }) as { results: { task?: unknown; error?: string }[] };
+    expect(reply.results[0].task).toBeDefined();
+    expect(reply.results[1].error).toContain("工作目录");
+    expect(reply.results[2].error).toContain("调研");
+    const created = f.store.all().filter(t => t.kind !== "orchestrator");
+    expect(created).toHaveLength(1);
+    expect(created[0].status).toBe("queued");
+    expect(activeRun(created[0])?.role).toBe("worker");
+  });
+
+  test("the dispatcher cannot read files, resume work or accept results", () => {
+    const f = fixture();
+    f.service.request({ action: "orchestrate", actionId: "m1", text: "试试越权" });
+    const run = wakeTurn(f)!;
+    for (const name of ["read", "write", "bash", "grep", "web_fetch", "task_report", "agent", "task_resume"]) {
+      expect(() => f.tool(run, "gate", { tool: name, input: {} })).toThrow("授权范围");
+    }
+    expect(() => f.tool(run, "report", { callId: "x", state: "ready", summary: "s" })).toThrow("不能调用");
+    expect(f.tool(run, "gate", { tool: "task_route", input: {} })).toEqual({ ok: true });
+  });
+
+  test("a note reaches the worker's next run and starts no run of its own", () => {
+    const f = fixture();
+    const task = f.task();
+    f.service.request({ action: "orchestrate", actionId: "m1", text: "附注一条" });
+    const run = wakeTurn(f)!;
+    const before = f.store.get(task.id).runs.length;
+    f.tool(run, "note", { callId: "n1", taskId: task.id, text: "另一个任务已确定用中文" });
+    expect(f.store.get(task.id).runs).toHaveLength(before);
+    // A note alone never starts a run: it waits for the worker's next turn.
+    expect(f.store.get(task.id).notes?.length).toBe(1);
+  });
+
+  test("attention states notify the dispatcher; routine progress does not", () => {
+    const f = fixture();
+    f.service.request({ action: "orchestrate", actionId: "m1", text: "等结果" });
+    wakeTurn(f);
+    f.settle(activeRun(f.store.all().find(t => t.kind === "orchestrator")!)!);
+    const worker = f.route(f.task().id);
+    f.tool(worker, "context", { protocol: 1, role: "worker" });
+    f.service.started(worker.id);
+    f.tool(worker, "ask", { callId: "q", question: "用哪个范围？" });
+    f.settle(worker);
+    const row = f.store.all().find(t => t.kind === "orchestrator")!;
+    expect(row.pending?.some(n => n.includes("等你回答"))).toBe(true);
+  });
+});
 
 describe("durable Router / Worker lifecycle", () => {
   test("question releases only after settlement and exit; answer resumes the original session and delivery needs acceptance", () => {

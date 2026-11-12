@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { existsSync, statSync } from "node:fs";
-import { activeRun, FILE_TOOL_NAMES, object, record, runTools, sessionId, text, view, WORKER_PROFILES, type Run, type Task, type TaskRole, type WorkerMessage, type WorkerProfile } from "./model";
+import { activeRun, FILE_TOOL_NAMES, object, ORCHESTRATOR_TOOLS, record, runTools, sessionId, text, view, WORKER_PROFILES, type Run, type Task, type TaskRole, type WorkerMessage, type WorkerProfile } from "./model";
+import { appendNotice, noticeFor, parseRead, pushMessage, shouldWake, taskLine, wakePrompt } from "./orchestrator";
 import { contained, overlaps, workspace } from "./paths";
 import { TaskStore } from "./store";
 
@@ -16,12 +17,37 @@ export interface TaskHost {
   changed(): void;
   endpoint(): string;
   sessionsRoot: string;
+  /** Working directory for the orchestrator process: it has no task directory of its own. */
+  orchestratorDir: string;
 }
 
 export class TaskService {
   private reconciled = false;
   constructor(readonly store: TaskStore, private host: TaskHost) {}
-  list() { return this.store.all().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(view); }
+  /** The orchestrator row is bookkeeping, never a task the person sees. */
+  list() {
+    return this.store.all().filter(t => t.kind !== "orchestrator")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(view);
+  }
+  /** The existing orchestrator row, without creating one: a gateway with nothing to say stays clean. */
+  private existingOrchestrator(): Task | undefined {
+    return this.store.all().find(t => t.kind === "orchestrator");
+  }
+
+  /** The single global dispatcher, created on first use so an older data dir upgrades in place. */
+  orchestrator(): Task {
+    const existing = this.existingOrchestrator();
+    if (existing) return existing;
+    const now = new Date().toISOString();
+    const row: Task = {
+      id: randomUUID(), kind: "orchestrator", title: "工作台助理", prompt: "", cwd: "",
+      allowShell: false, generation: 0, status: "todo", goal: "", acceptance: "", summary: "",
+      profile: "research", resumeCount: 0, pending: [], personQueue: [], messages: [],
+      artifacts: [], history: [], runs: [], createdAt: now, updatedAt: now,
+    };
+    this.store.put(row);
+    return row;
+  }
   start(): void { this.host.send({ type: "task_worker_inspect" }); }
 
   request(raw: unknown): void {
@@ -48,6 +74,22 @@ export class TaskService {
           this.enqueue(task, "router", prompt);
         }
         this.store.put(task);
+        return;
+      }
+      // Orchestrator actions carry no taskId: they must not reach the task lookup below.
+      if (req.action === "orchestrate") {
+        this.sayToOrchestrator(text(req.text, "给助理的话", 12000));
+        return;
+      }
+      if (req.action === "orchestrator_answer") {
+        const row = this.orchestrator();
+        if (!row.question || row.question.id !== req.questionId) throw new Error("问题已过期，请刷新后再回答");
+        const answer = text(req.answer, "回答");
+        delete row.question;
+        row.messages = pushMessage(row.messages, "user", answer);
+        row.personQueue = [...(row.personQueue ?? []), answer];
+        this.store.put(row);
+        this.wake();
         return;
       }
       const task = this.store.get(text(req.taskId, "任务 ID", 200));
@@ -102,12 +144,73 @@ export class TaskService {
     this.changed();
   }
 
+  /** A person's message to the dispatcher: shown at once, delivered when the current turn ends. */
+  private sayToOrchestrator(message: string): void {
+    const row = this.orchestrator();
+    row.messages = pushMessage(row.messages, "user", message);
+    row.personQueue = [...(row.personQueue ?? []), message];
+    record(row, "收到用户消息");
+    this.store.put(row);
+    this.wake();
+  }
+
+  /** Append a worker notice and debounce, so a burst of results becomes one turn. */
+  private notifyOrchestrator(notice: string): void {
+    const row = this.orchestrator();
+    row.pending = appendNotice(row.pending ?? [], notice);
+    row.lastNoticeAt = new Date().toISOString();
+    this.store.put(row);
+  }
+
+  /**
+   * Start one orchestrator run if it is idle and something is waiting. Notices batch; a person's
+   * message never waits for debounce but still waits for the current turn to end.
+   */
+  private wake(): void {
+    // Nothing queued means no wake, and no reason to create the dispatcher row at all.
+    const row = this.existingOrchestrator();
+    if (!row) return;
+    const busy = activeRun(row);
+    if (busy?.status === "queued" || busy?.status === "starting") return;
+    const pending = row.pending?.length ?? 0;
+    const person = row.personQueue?.length ?? 0;
+    if (!shouldWake(pending, person, Boolean(busy && busy.status !== "closing"), row.lastNoticeAt, Date.now())) return;
+    const prompt = wakePrompt(row.personQueue ?? [], row.pending ?? []);
+    row.personQueue = [];
+    row.pending = [];
+    delete row.lastNoticeAt;
+    this.enqueue(row, "orchestrator", prompt, row.sessionFile);
+    // The orchestrator row has no lifecycle of its own: it returns to todo between turns.
+    row.status = "running";
+    this.store.put(row);
+  }
+
+  /** What the workbench panel shows: status, the conversation, and any pending question. */
+  orchestratorView() {
+    const row = this.orchestrator();
+    const run = activeRun(row);
+    return {
+      status: (run ? (run.status === "queued" ? "starting" : run.status === "closing" ? "closing" : "running") : "idle") as "idle" | "starting" | "running" | "closing",
+      messages: row.messages ?? [],
+      ...(row.question ? { question: row.question } : {}),
+      pending: (row.pending?.length ?? 0) + (row.personQueue?.length ?? 0),
+    };
+  }
+
   private enqueue(task: Task, role: TaskRole, prompt: string, sessionFile?: string): void {
     if (activeRun(task)) throw new Error("当前执行尚未退出，不能并发启动同一任务");
     task.generation++;
-    task.runs.push({ id: randomUUID(), token: randomUUID(), generation: task.generation, role, status: "queued", prompt, sessionFile, receipts: {},
+    // Notes ride along with the worker's next run and are then consumed: they grant no authority
+    // and never start a run on their own.
+    let text = prompt;
+    if (role === "worker" && task.notes?.length) {
+      text = `${prompt}\n\n助理附注（仅供参考，不扩大授权）：\n${task.notes.map(n => `- ${n}`).join("\n")}`;
+      task.notes = [];
+    }
+    task.runs.push({ id: randomUUID(), token: randomUUID(), generation: task.generation, role, status: "queued", prompt: text, sessionFile, receipts: {},
       ...(role === "worker" ? { profile: task.profile } : {}) });
     task.status = role === "router" ? "routing" : "queued";
+    if (role === "orchestrator") task.status = "running";
     task.summary = "";
   }
 
@@ -147,8 +250,8 @@ export class TaskService {
       return;
     }
     run.status = "running";
-    task.status = run.role === "router" ? "routing" : "running";
-    record(task, `${run.role === "router" ? "Router" : "Worker"} 引擎已就绪`);
+    task.status = run.role === "orchestrator" ? "running" : run.role === "router" ? "routing" : "running";
+    record(task, `${run.role === "router" ? "Router" : run.role === "orchestrator" ? "助理" : "Worker"} 引擎已就绪`);
     this.store.put(task);
     this.host.changed();
     this.host.send({ type: "task_worker_prompt", runId, prompt: run.prompt });
@@ -198,6 +301,18 @@ export class TaskService {
     const { task, run } = found;
     run.status = "ended";
     run.endedAt = new Date().toISOString();
+    // The orchestrator row lives on: a finished turn returns it to idle, and a failed turn must not
+    // become a "task needing recovery" the person never created. A question it asked must survive,
+    // otherwise the panel would have nothing to answer.
+    if (task.kind === "orchestrator") {
+      task.status = "todo";
+      if (run.report?.kind === "question") record(task, "助理提出了问题，等待用户回答");
+      else if (run.error) record(task, `助理本轮未完成：${run.error}`);
+      this.store.put(task);
+      this.changed();
+      this.wake();
+      return true;
+    }
     if (task.status === "stopping") { task.status = "stopped"; record(task, "执行器已退出，任务已停止"); }
     else if (run.error || !run.settled || !run.report) {
       task.status = "failed";
@@ -214,6 +329,9 @@ export class TaskService {
       record(task, task.status === "review" ? "Worker 已结算，成果等待验收" : task.summary);
     }
     this.store.put(task);
+    // Only states a person must act on reach the orchestrator; routine progress stays in the task.
+    const notice = noticeFor(task, task.summary || run.report?.summary || "");
+    if (notice) this.notifyOrchestrator(notice);
     this.changed();
     return true;
   }
@@ -221,16 +339,18 @@ export class TaskService {
   tick(): void {
     if (!this.reconciled) { this.start(); return; }
     const tasks = this.store.all().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    let routers = 0, workers = 0;
+    let routers = 0, workers = 0, orchestrators = 0;
     const busy = new Set<string>();
     for (const task of tasks) {
       const run = activeRun(task);
       if (!run || run.status === "queued") continue;
-      if (run.role === "router") routers++; else { workers++; busy.add(task.cwd); }
+      if (run.role === "orchestrator") orchestrators++;
+      else if (run.role === "router") routers++;
+      else { workers++; busy.add(task.cwd); }
       if (run.startedAt && Date.now() - Date.parse(run.startedAt) > 15 * 60_000 && run.status !== "closing") {
         run.error = "执行超过 15 分钟，已请求中止；可检查进度后重试";
         run.status = "closing";
-        task.status = "settling";
+        task.status = task.kind === "orchestrator" ? "todo" : "settling";
         this.store.put(task);
         this.host.changed();
       }
@@ -239,17 +359,23 @@ export class TaskService {
     for (const task of tasks) {
       const run = activeRun(task);
       if (run?.status !== "queued") continue;
-      if (run.role === "router" ? routers >= 1 : workers >= 2 || [...busy].some(cwd => overlaps(cwd, task.cwd))) continue;
-      if (run.role === "router") routers++; else { workers++; busy.add(task.cwd); }
+      if (run.role === "orchestrator") {
+        // One global dispatcher, never serialized against a task's workspace.
+        if (orchestrators >= 1) continue;
+        orchestrators++;
+      } else if (run.role === "router" ? routers >= 1 : workers >= 2 || [...busy].some(cwd => overlaps(cwd, task.cwd))) continue;
+      else if (run.role === "router") routers++; else { workers++; busy.add(task.cwd); }
       run.status = "starting";
       run.startedAt = new Date().toISOString();
       this.store.put(task); // durable dispatch intention before the side effect
       try {
         this.host.send({ type: "task_worker_start", taskId: task.id, runId: run.id, role: run.role,
-          cwd: task.cwd, sessionFile: run.sessionFile,
+          cwd: task.kind === "orchestrator" ? this.host.orchestratorDir : task.cwd, sessionFile: run.sessionFile,
           endpoint: this.host.endpoint(), token: run.token, allowShell: task.allowShell, tools: runTools(run, task) });
       } catch (error) { this.failed(run.id, `派发失败：${String(error)}`); }
     }
+    // Notices wait out their debounce here, so a burst of worker results becomes one wake turn.
+    this.wake();
   }
 
   /** Per-run bearer identity, not a model-supplied taskId. */
@@ -266,9 +392,10 @@ export class TaskService {
       }
       if (typeof body.sessionFile === "string") {
         run.sessionFile = contained(join(this.host.sessionsRoot, task.id), body.sessionFile);
-        if (run.role === "worker") task.sessionFile = run.sessionFile;
+        if (run.role === "worker" || run.role === "orchestrator") task.sessionFile = run.sessionFile;
       }
       this.store.put(task);
+      if (run.role === "orchestrator") return this.orchestratorContext(task);
       return { role: run.role, prompt: task.prompt, goal: task.goal, acceptance: task.acceptance, cwd: task.cwd,
         allowShell: task.allowShell, profile: run.profile ?? task.profile, tools: runTools(run, task), history: task.history.slice(-12) };
     }
@@ -287,6 +414,19 @@ export class TaskService {
       return { recorded: true };
     }
     if (run.report) throw new Error("本轮已有交付或问题，请结束当前轮");
+    if (run.role === "orchestrator") {
+      // The dispatcher's protocol: create work, hand a fact, deliver to the person, ask the person.
+      // It never reports on a task it does not own, so those operations are unreachable here.
+      const values = this.orchestratorTool(run, body, operation);
+      if (operation === "ask" || operation === "reply") {
+        task.status = "settling";
+        run.report = { kind: operation === "ask" ? "question" : "ready", summary: values as string };
+      } else run.receipts[callId] = fingerprint;
+      this.store.put(task);
+      this.host.changed();
+      return { recorded: true, ...(values && typeof values === "object" ? values : { result: values }),
+        instruction: "已登记。本轮到此为止，不要继续调用工具。" };
+    }
     if (operation === "ask") {
       const question = text(body.question, "问题", 2000);
       const options = body.options === undefined ? [] : body.options;
@@ -329,4 +469,132 @@ export class TaskService {
     return undefined;
   }
   private changed(): void { this.host.changed(); this.tick(); }
+
+  /** What the dispatcher may know: task lines, never files, transcripts or worker internals. */
+  private orchestratorContext(row: Task): unknown {
+    const tasks = this.store.all().filter(t => t.kind !== "orchestrator");
+    const active = tasks.filter(t => ["routing", "queued", "running", "settling", "stopping"].includes(t.status));
+    return {
+      role: "orchestrator",
+      workspaces: [...new Set(tasks.map(t => t.cwd))].slice(-20),
+      counts: {
+        todo: tasks.filter(t => t.status === "todo").length,
+        active: active.length,
+        attention: tasks.filter(t => ["waiting", "review", "failed"].includes(t.status)).length,
+      },
+      pending: row.pending ?? [],
+      tools: runTools({ role: "orchestrator" }, row),
+    };
+  }
+
+  /**
+   * The dispatcher's whole protocol. Every operation is bounded here, not in the prompt:
+   * it can read task lines, create and dispatch work, hand a worker one fact, and talk to the
+   * person. It cannot read files, run commands, resume a stopped task or accept a result.
+   */
+  private orchestratorTool(run: Run, body: Record<string, unknown>, operation: string): unknown {
+    if (operation === "read") {
+      const request = parseRead({
+        resource: typeof body.resource === "string" ? body.resource : "",
+        ...(typeof body.offset === "number" ? { offset: body.offset } : {}),
+        ...(typeof body.limit === "number" ? { limit: body.limit } : {}),
+      });
+      if (request.resource === "profile") return { profile: "orchestrator", tools: ORCHESTRATOR_TOOLS };
+      if (request.resource === "task") {
+        const task = this.store.get(request.id!);
+        if (task.kind === "orchestrator") throw new Error("不能读取助理自身作为任务");
+        return {
+          task: { ...taskLine(task), goal: task.goal, acceptance: task.acceptance, summary: task.summary,
+            cwd: task.cwd, allowShell: task.allowShell, resumeCount: task.resumeCount,
+            question: task.question?.text },
+          history: task.history.slice(-request.limit).map(h => h.text),
+          runs: task.runs.slice(-8).map(r => ({ role: r.role, status: r.status, startedAt: r.startedAt, endedAt: r.endedAt, error: r.error })),
+        };
+      }
+      const all = this.store.all().filter(t => t.kind !== "orchestrator")
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const page = all.slice(request.offset, request.offset + request.limit).map(taskLine);
+      return {
+        tasks: page, total: all.length,
+        ...(request.offset + page.length < all.length ? { next_offset: request.offset + page.length } : {}),
+      };
+    }
+    if (operation === "route") {
+      if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 10)
+        throw new Error("task_route 需要 1~10 个任务项");
+      // Each item stands alone: one refused item never discards the others.
+      return {
+        results: body.items.map((raw, index) => {
+          try {
+            return { index, task: this.createFromRoute(object(raw)) };
+          } catch (error) {
+            return { index, error: String(error instanceof Error ? error.message : error) };
+          }
+        }),
+      };
+    }
+    if (operation === "note") {
+      const id = text(body.taskId, "任务 ID", 200);
+      const note = text(body.text, "附注", 300);
+      const task = this.store.get(id);
+      if (task.kind === "orchestrator") throw new Error("不能给自己写附注");
+      if (["completed", "stopped"].includes(task.status)) throw new Error("任务已结束，附注不会送达");
+      // A note grants no authority: it rides along with the worker's next run, it does not start one.
+      task.notes = [...(task.notes ?? []), note].slice(-5);
+      record(task, `助理附注：${note}`);
+      this.store.put(task);
+      return { recorded: true, task: taskLine(task) };
+    }
+    if (operation === "reply") {
+      const purpose = body.purpose;
+      if (purpose !== "result" && purpose !== "attention" && purpose !== "answer")
+        throw new Error("task_reply 的 purpose 只能是 result、attention 或 answer；进度不要汇报");
+      const reply = text(body.text, "回复", 4000);
+      if (purpose === "attention" && !body.taskId) throw new Error("attention 需要指向具体任务");
+      const row = this.orchestrator();
+      row.messages = pushMessage(row.messages, "orchestrator", reply);
+      this.store.put(row);
+      return reply;
+    }
+    if (operation === "ask") {
+      const question = text(body.question, "问题", 2000);
+      const options = body.options === undefined ? [] : body.options;
+      if (!Array.isArray(options) || options.length > 5 || options.some(v => typeof v !== "string" || v.length > 200))
+        throw new Error("问题选项格式错误");
+      const row = this.orchestrator();
+      row.question = { id: randomUUID(), text: question, options };
+      row.messages = pushMessage(row.messages, "orchestrator", question);
+      this.store.put(row);
+      return question;
+    }
+    throw new Error("助理不能调用此操作");
+  }
+
+  /** Create one task from a route item. Validation is per item so a batch can partially succeed. */
+  private createFromRoute(item: Record<string, unknown>) {
+    const prompt = text(item.prompt, "委托内容", 12000);
+    const now = new Date().toISOString();
+    const profile = profileOf(item.profile, "code");
+    const allowShell = item.allowShell === true;
+    if (profile === "research" && allowShell) throw new Error("调研类任务不能开放本机命令");
+    let parentId: string | undefined;
+    if (item.parentId !== undefined) parentId = this.store.get(text(item.parentId, "父任务 ID", 200)).id;
+    const task: Task = {
+      id: randomUUID(), title: text(item.title ?? prompt.slice(0, 60), "标题", 160),
+      prompt, cwd: workspace(text(item.cwd, "工作目录")),
+      goal: item.goal === undefined ? "" : text(item.goal, "目标", 4000),
+      acceptance: item.acceptance === undefined ? "" : text(item.acceptance, "验收条件", 4000),
+      allowShell, generation: 0, status: "todo", summary: "",
+      profile, resumeCount: 0, ...(parentId ? { parentId } : {}),
+      artifacts: [], history: [], runs: [], createdAt: now, updatedAt: now,
+    };
+    record(task, "助理接单");
+    // Dispatch by default: the point of routing is that work starts without another round trip.
+    if (item.dispatch !== false) {
+      record(task, `已派发给 Worker（${profile}）`);
+      this.enqueue(task, "worker", prompt);
+    }
+    this.store.put(task);
+    return taskLine(task);
+  }
 }
